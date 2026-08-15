@@ -1,0 +1,25 @@
+{
+  "name": "@agent-hq-orchestron/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@agent-hq-orchestron/file-store": "*",
+    "@agent-hq-orchestron/shared": "*",
+    "@fastify/cors": "^10.1.0",
+    "@fastify/sensible": "^6.0.5",
+    "@fastify/websocket": "^10.0.1",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.12",
+    "pino-pretty": "^11.2.1",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.4"
+  }
+}

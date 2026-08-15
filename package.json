@@ -1,0 +1,24 @@
+{
+  "name": "agent-hq-orchestron",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web-based supervisor for coding agents (Claude, Codex, OpenCode)",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace=@agent-hq-orchestron/api\" \"npm run dev --workspace=@agent-hq-orchestron/web\"",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "init": "bash scripts/init.sh"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
