@@ -12,11 +12,13 @@
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
+    "test:e2e": "VITE_CONFIG_NATIVE_IGNORE_WARNING=true npx vitest run --config test/e2e/vitest.config.ts",
     "init": "bash scripts/init.sh"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=20"
