@@ -20,5 +20,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@fastify/websocket": "^11.3.0",
+    "gray-matter": "^4.0.3"
   }
 }
