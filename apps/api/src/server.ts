@@ -19,6 +19,7 @@ import { ClaudeAdapter } from './adapters/claude.js'
 import { projectsPlugin } from './routes/projects.js'
 import { sessionsPlugin } from './routes/sessions.js'
 import { delegationPlugin } from './routes/delegation.js'
+import { streamPlugin } from './routes/stream.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -78,6 +79,7 @@ fastify.get('/api/health', async () => {
 await fastify.register(projectsPlugin(projectRegistry))
 await fastify.register(sessionsPlugin(sessionManager, hookRunner, templateResolver, delegationTracker, projectRegistry))
 await fastify.register(delegationPlugin(delegationTracker, sessionManager))
+await fastify.register(streamPlugin(sessionManager, config.dataDir))
 
 try {
   await fastify.listen({ port: config.port, host: config.bindHost })
