@@ -20,7 +20,7 @@ export default function GraphPage({
 
   const [rootInput, setRootInput] = useState('')
 
-  const root = resolvedRoot ?? rootInput.trim() || undefined
+  const root = (resolvedRoot ?? rootInput.trim()) || undefined
 
   const { data: sessions = [] } = useQuery<SessionMetadata[]>({
     queryKey: ['sessions'],

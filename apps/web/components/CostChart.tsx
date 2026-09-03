@@ -40,9 +40,10 @@ export function CostChart({ data }: Props) {
         />
         <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `$${v.toFixed(3)}`} />
         <Tooltip
-          formatter={(value: number, name: string) =>
-            name === 'cost' ? [`$${value.toFixed(4)}`, 'Cost'] : [value, 'Sessions']
-          }
+          formatter={(value, name) => {
+            const v = Number(value)
+            return name === 'cost' ? [`$${v.toFixed(4)}`, 'Cost'] : [v, 'Sessions']
+          }}
         />
         <Line
           type="monotone"

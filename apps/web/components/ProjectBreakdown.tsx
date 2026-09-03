@@ -37,7 +37,7 @@ export function ProjectBreakdown({ data }: Props) {
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.08)" />
             <XAxis dataKey="project" tick={{ fontSize: 10 }} />
             <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => `$${v.toFixed(2)}`} />
-            <Tooltip formatter={(v: number) => [`$${v.toFixed(4)}`, 'Cost']} />
+            <Tooltip formatter={(v) => [`$${Number(v).toFixed(4)}`, 'Cost']} />
             <Bar dataKey="cost" fill="#3b82f6" radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
