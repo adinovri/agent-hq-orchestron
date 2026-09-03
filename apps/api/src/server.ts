@@ -22,6 +22,8 @@ import { delegationPlugin } from './routes/delegation.js'
 import { streamPlugin } from './routes/stream.js'
 import { SnapshotService } from './domain/snapshot-service.js'
 import { scanOrphans } from './startup/orphan-scanner.js'
+import { MetricsCollector } from './domain/metrics-collector.js'
+import { metricsPlugin } from './routes/metrics.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -41,6 +43,7 @@ try {
 const adapter = new ClaudeAdapter()
 const sessionManager = new SessionManager({ dataDir: config.dataDir, maxConcurrent: config.maxConcurrent }, adapter)
 const snapshotService = new SnapshotService(config.dataDir)
+const metricsCollector = new MetricsCollector(config.dataDir)
 const projectRegistry = new ProjectRegistry(config.dataDir)
 const delegationTracker = new DelegationTracker(config.dataDir)
 const hookRunner = new HookRunner({ dataDir: config.dataDir })
@@ -83,6 +86,7 @@ await fastify.register(projectsPlugin(projectRegistry))
 await fastify.register(sessionsPlugin(sessionManager, hookRunner, templateResolver, delegationTracker, projectRegistry))
 await fastify.register(delegationPlugin(delegationTracker, sessionManager))
 await fastify.register(streamPlugin(sessionManager, config.dataDir))
+await fastify.register(metricsPlugin(metricsCollector))
 
 // Scan for orphaned worktrees before accepting connections
 await scanOrphans(snapshotService, sessionManager).catch((err) => {
