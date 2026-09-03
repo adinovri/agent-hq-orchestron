@@ -1,0 +1,119 @@
+import os from 'node:os'
+import path from 'node:path'
+import fs from 'node:fs'
+import { z } from 'zod'
+
+/**
+ * Runtime config for orchestron API server.
+ *
+ * Precedence (highest wins):
+ *   1. process.env (via env-var mapping)
+ *   2. ~/.orchestron/config.json
+ *   3. Built-in defaults
+ *
+ * Boot guard: bind non-loopback + no ORCHESTRON_REMOTE_TOKEN → refuse to start.
+ */
+
+export const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
+
+const DEFAULT_MAX_CONCURRENT_CAP = 20
+const RAM_PER_SUBPROCESS_MB = 800
+
+export const ConfigSchema = z.object({
+  bindHost: z.string().default('127.0.0.1'),
+  port: z.number().int().min(1).max(65535).default(8080),
+  dataDir: z.string(),
+  maxConcurrent: z.number().int().min(1).max(200),
+  remoteToken: z.string().optional(),
+  adapters: z
+    .object({
+      claude: z.boolean().default(true),
+      codex: z.boolean().default(false),
+      opencode: z.boolean().default(false),
+    })
+    .default({ claude: true, codex: false, opencode: false }),
+  logLevel: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
+})
+
+export type Config = z.infer<typeof ConfigSchema>
+
+export function isLoopback(host: string): boolean {
+  return LOOPBACK_HOSTS.has(host)
+}
+
+export function autoMaxConcurrent(): number {
+  const totalMemMb = os.totalmem() / (1024 * 1024)
+  const computed = Math.floor(totalMemMb / RAM_PER_SUBPROCESS_MB)
+  return Math.max(1, Math.min(DEFAULT_MAX_CONCURRENT_CAP, computed))
+}
+
+function defaultDataDir(): string {
+  return path.join(os.homedir(), '.orchestron')
+}
+
+function readConfigFile(configPath: string): unknown {
+  if (!fs.existsSync(configPath)) return {}
+  try {
+    return JSON.parse(fs.readFileSync(configPath, 'utf8'))
+  } catch (err) {
+    throw new Error(`invalid config file ${configPath}: ${(err as Error).message}`)
+  }
+}
+
+function envOverrides(env: NodeJS.ProcessEnv): Partial<Config> {
+  const out: Partial<Config> = {}
+  if (env.ORCHESTRON_BIND_HOST) out.bindHost = env.ORCHESTRON_BIND_HOST
+  if (env.ORCHESTRON_PORT) out.port = Number(env.ORCHESTRON_PORT)
+  if (env.ORCHESTRON_DATA_DIR) out.dataDir = env.ORCHESTRON_DATA_DIR
+  if (env.ORCHESTRON_MAX_CONCURRENT) out.maxConcurrent = Number(env.ORCHESTRON_MAX_CONCURRENT)
+  if (env.ORCHESTRON_REMOTE_TOKEN) out.remoteToken = env.ORCHESTRON_REMOTE_TOKEN
+  if (env.ORCHESTRON_LOG_LEVEL) {
+    out.logLevel = env.ORCHESTRON_LOG_LEVEL as Config['logLevel']
+  }
+
+  // Backward-compat with legacy AHQ_* env vars from initial scaffold
+  if (!out.port && env.AHQ_API_PORT) out.port = Number(env.AHQ_API_PORT)
+  if (!out.dataDir && env.AHQ_DATA_DIR) out.dataDir = env.AHQ_DATA_DIR
+
+  return out
+}
+
+export function loadConfig(opts: {
+  configPath?: string
+  env?: NodeJS.ProcessEnv
+} = {}): Config {
+  const env = opts.env ?? process.env
+  const configPath = opts.configPath ?? path.join(defaultDataDir(), 'config.json')
+
+  const fileRaw = readConfigFile(configPath) as Record<string, unknown>
+  const envRaw = envOverrides(env)
+
+  const merged: Record<string, unknown> = {
+    dataDir: defaultDataDir(),
+    maxConcurrent: autoMaxConcurrent(),
+    ...fileRaw,
+    ...envRaw,
+  }
+
+  return ConfigSchema.parse(merged)
+}
+
+/**
+ * Boot guard — throws if binding to a non-loopback address without a remote token.
+ * Call this synchronously before server.listen().
+ */
+export class BootGuardError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'BootGuardError'
+  }
+}
+
+export function assertSafeBind(cfg: Config): void {
+  if (!isLoopback(cfg.bindHost) && !cfg.remoteToken) {
+    throw new BootGuardError(
+      `refusing to bind to ${cfg.bindHost} without ORCHESTRON_REMOTE_TOKEN. ` +
+        `Either bind to 127.0.0.1 or set the env var. See docs/auth.md.`,
+    )
+  }
+}
