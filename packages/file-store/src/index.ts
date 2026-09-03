@@ -88,6 +88,16 @@ export async function readJsonlFrom(filePath: string, offset: number): Promise<{
   return { lines, newOffset: stats.size }
 }
 
+export async function listDir(dirPath: string): Promise<string[]> {
+  try {
+    const entries = await fsPromises.readdir(dirPath)
+    return entries.filter((name) => !name.startsWith('.') && !name.endsWith('.bak'))
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw err
+  }
+}
+
 export async function withLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
   const dir = path.dirname(filePath)
   await fsPromises.mkdir(dir, { recursive: true })
