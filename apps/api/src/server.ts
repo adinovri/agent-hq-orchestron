@@ -10,6 +10,15 @@ import {
   type Config,
 } from '@agent-hq-orchestron/shared'
 import authPlugin from './plugins/auth.js'
+import { SessionManager } from './domain/session-manager.js'
+import { ProjectRegistry } from './domain/project-registry.js'
+import { DelegationTracker } from './domain/delegation-tracker.js'
+import { HookRunner } from './domain/hook-runner.js'
+import { TemplateResolver } from './domain/template-resolver.js'
+import { ClaudeAdapter } from './adapters/claude.js'
+import { projectsPlugin } from './routes/projects.js'
+import { sessionsPlugin } from './routes/sessions.js'
+import { delegationPlugin } from './routes/delegation.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -25,6 +34,13 @@ try {
   }
   process.exit(1)
 }
+
+const adapter = new ClaudeAdapter()
+const sessionManager = new SessionManager({ dataDir: config.dataDir, maxConcurrent: config.maxConcurrent }, adapter)
+const projectRegistry = new ProjectRegistry(config.dataDir)
+const delegationTracker = new DelegationTracker(config.dataDir)
+const hookRunner = new HookRunner({ dataDir: config.dataDir })
+const templateResolver = new TemplateResolver(config.dataDir)
 
 const fastify = Fastify({
   logger: {
@@ -59,10 +75,9 @@ fastify.get('/api/health', async () => {
   }
 })
 
-// Stub routes — will be replaced by TASK-016..018
-fastify.get('/api/sessions', async () => ({ sessions: [] }))
-fastify.get('/api/projects', async () => ({ projects: [] }))
-fastify.get('/api/graph', async () => ({ nodes: [], edges: [] }))
+await fastify.register(projectsPlugin(projectRegistry))
+await fastify.register(sessionsPlugin(sessionManager, hookRunner, templateResolver, delegationTracker, projectRegistry))
+await fastify.register(delegationPlugin(delegationTracker, sessionManager))
 
 try {
   await fastify.listen({ port: config.port, host: config.bindHost })

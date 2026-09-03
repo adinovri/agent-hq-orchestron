@@ -19,7 +19,7 @@ export class InvalidTransitionError extends Error {
 
 // Legal transitions per the 7-state machine
 const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
-  spawning: ['waiting', 'failed'],
+  spawning: ['waiting', 'failed', 'killed'],
   waiting: ['running', 'killed'],
   running: ['running', 'completing', 'killed'],
   completing: ['completed', 'failed'],
