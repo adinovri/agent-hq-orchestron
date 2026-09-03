@@ -3,24 +3,42 @@ import cors from '@fastify/cors'
 import sensible from '@fastify/sensible'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import os from 'node:os'
-import path from 'node:path'
+import {
+  loadConfig,
+  assertSafeBind,
+  BootGuardError,
+  type Config,
+} from '@agent-hq-orchestron/shared'
+import authPlugin from './plugins/auth.js'
 
 const execFileAsync = promisify(execFile)
 
-const DATA_DIR = process.env.AHQ_DATA_DIR ?? path.join(os.homedir(), '.config', 'agent-hq-orchestron')
-const PORT = Number(process.env.AHQ_API_PORT ?? 8080)
+let config: Config
+try {
+  config = loadConfig()
+  assertSafeBind(config)
+} catch (err) {
+  if (err instanceof BootGuardError) {
+    console.error(`boot guard: ${err.message}`)
+  } else {
+    console.error('config load failed:', (err as Error).message)
+  }
+  process.exit(1)
+}
 
 const fastify = Fastify({
   logger: {
-    transport: process.env.NODE_ENV !== 'production'
-      ? { target: 'pino-pretty', options: { colorize: true } }
-      : undefined,
+    level: config.logLevel,
+    transport:
+      process.env.NODE_ENV !== 'production'
+        ? { target: 'pino-pretty', options: { colorize: true } }
+        : undefined,
   },
 })
 
 await fastify.register(cors, { origin: true })
 await fastify.register(sensible)
+await fastify.register(authPlugin, { config })
 
 fastify.get('/api/health', async () => {
   let tmuxVersion = 'unavailable'
@@ -34,19 +52,25 @@ fastify.get('/api/health', async () => {
   return {
     ok: true,
     tmux: tmuxVersion,
-    storage: DATA_DIR,
+    storage: config.dataDir,
+    bindHost: config.bindHost,
+    remoteAuth: config.remoteToken ? 'enabled' : 'disabled',
+    maxConcurrent: config.maxConcurrent,
   }
 })
 
-// Stub routes — Phase 1 will implement these
+// Stub routes — will be replaced by TASK-016..018
 fastify.get('/api/sessions', async () => ({ sessions: [] }))
 fastify.get('/api/projects', async () => ({ projects: [] }))
 fastify.get('/api/graph', async () => ({ nodes: [], edges: [] }))
 
 try {
-  await fastify.listen({ port: PORT, host: '0.0.0.0' })
-  fastify.log.info(`agent-hq-orchestron API running on port ${PORT}`)
-  fastify.log.info(`Data dir: ${DATA_DIR}`)
+  await fastify.listen({ port: config.port, host: config.bindHost })
+  fastify.log.info(
+    `agent-hq-orchestron API listening on ${config.bindHost}:${config.port}`,
+  )
+  fastify.log.info(`Data dir: ${config.dataDir}`)
+  fastify.log.info(`Remote auth: ${config.remoteToken ? 'enabled' : 'disabled'}`)
 } catch (err) {
   fastify.log.error(err)
   process.exit(1)
