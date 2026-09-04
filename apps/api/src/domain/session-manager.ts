@@ -1,7 +1,8 @@
 import crypto from 'node:crypto'
 import path from 'node:path'
 import { writeJson, readJson, listDir } from '@agent-hq-orchestron/file-store'
-import type { SessionMetadata, SessionStatus, AgentAdapter, SpawnConfig } from '@agent-hq-orchestron/shared'
+import type { SessionMetadata, SessionStatus, SpawnConfig } from '@agent-hq-orchestron/shared'
+import type { AdapterRegistry } from '../adapters/registry.js'
 
 export class PoolFullError extends Error {
   constructor(max: number) {
@@ -36,12 +37,12 @@ export interface SessionManagerConfig {
 export class SessionManager {
   private readonly sessionsDir: string
   private readonly maxConcurrent: number
-  private readonly adapter: AgentAdapter
+  private readonly registry: AdapterRegistry
 
-  constructor(config: SessionManagerConfig, adapter: AgentAdapter) {
+  constructor(config: SessionManagerConfig, registry: AdapterRegistry) {
     this.sessionsDir = path.join(config.dataDir, 'sessions')
     this.maxConcurrent = config.maxConcurrent
-    this.adapter = adapter
+    this.registry = registry
   }
 
   private sessionPath(uuid: string): string {
@@ -55,7 +56,8 @@ export class SessionManager {
     }
 
     const uuid = crypto.randomUUID()
-    const handle = await this.adapter.spawn(spawnConfig)
+    const adapter = this.registry.getOrThrow(spawnConfig.agentType)
+    const handle = await adapter.spawn(spawnConfig)
 
     const now = new Date().toISOString()
     const session: SessionMetadata = {
@@ -106,7 +108,8 @@ export class SessionManager {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
-    await this.adapter.resume(session.claudeSessionUuid, { workspace })
+    const adapter = this.registry.getOrThrow(session.agentType)
+    await adapter.resume(session.claudeSessionUuid, { workspace })
     return session
   }
 
@@ -114,7 +117,8 @@ export class SessionManager {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
-    await this.adapter.kill({
+    const adapter = this.registry.getOrThrow(session.agentType)
+    await adapter.kill({
       tmuxName: session.tmuxName,
       claudeUuid: session.claudeSessionUuid,
       jsonlPath: session.jsonlPath,
@@ -123,7 +127,7 @@ export class SessionManager {
     return this.transition(uuid, 'killed')
   }
 
-  async list(): Promise<SessionMetadata[]> {
+  async list(filter?: { status?: string; projectId?: string; from?: string; to?: string }): Promise<SessionMetadata[]> {
     const files = await listDir(this.sessionsDir)
     const sessions: SessionMetadata[] = []
 
@@ -137,7 +141,13 @@ export class SessionManager {
         }),
     )
 
-    return sessions
+    return sessions.filter(s => {
+      if (filter?.status && s.status !== filter.status) return false
+      if (filter?.projectId && s.projectId !== filter.projectId) return false
+      if (filter?.from && s.startedAt < filter.from) return false
+      if (filter?.to && s.startedAt > filter.to) return false
+      return true
+    })
   }
 
   private async countActiveSessions(): Promise<number> {

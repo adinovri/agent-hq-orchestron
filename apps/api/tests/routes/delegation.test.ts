@@ -6,6 +6,7 @@ import path from 'node:path'
 import { delegationPlugin } from '../../src/routes/delegation.js'
 import { DelegationTracker } from '../../src/domain/delegation-tracker.js'
 import { SessionManager } from '../../src/domain/session-manager.js'
+import { AdapterRegistry } from '../../src/adapters/registry.js'
 import type { AgentAdapter, TmuxHandle } from '@agent-hq-orchestron/shared'
 
 let tmpDir: string
@@ -32,7 +33,10 @@ function makeAdapter(): AgentAdapter {
 beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'routes-delegation-test-'))
   tracker = new DelegationTracker(tmpDir)
-  manager = new SessionManager({ dataDir: tmpDir, maxConcurrent: 10 }, makeAdapter())
+  const delegationAdapter = makeAdapter()
+  const delegationRegistry = new AdapterRegistry()
+  delegationRegistry.register('claude', delegationAdapter)
+  manager = new SessionManager({ dataDir: tmpDir, maxConcurrent: 10 }, delegationRegistry)
 
   app = Fastify({ logger: false })
   await app.register(delegationPlugin(tracker, manager))

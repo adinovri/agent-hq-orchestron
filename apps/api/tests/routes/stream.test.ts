@@ -6,6 +6,7 @@ import path from 'node:path'
 import { streamPlugin } from '../../src/routes/stream.js'
 import { sessionsPlugin } from '../../src/routes/sessions.js'
 import { SessionManager } from '../../src/domain/session-manager.js'
+import { AdapterRegistry } from '../../src/adapters/registry.js'
 import { ProjectRegistry } from '../../src/domain/project-registry.js'
 import { DelegationTracker } from '../../src/domain/delegation-tracker.js'
 import { HookRunner } from '../../src/domain/hook-runner.js'
@@ -35,7 +36,9 @@ function makeAdapter(): AgentAdapter {
 beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stream-test-'))
   const adapter = makeAdapter()
-  const manager = new SessionManager({ dataDir: tmpDir, maxConcurrent: 10 }, adapter)
+  const adapterRegistry = new AdapterRegistry()
+  adapterRegistry.register('claude', adapter)
+  const manager = new SessionManager({ dataDir: tmpDir, maxConcurrent: 10 }, adapterRegistry)
   const registry = new ProjectRegistry(tmpDir)
   const tracker = new DelegationTracker(tmpDir)
   const hookRunner = new HookRunner({ dataDir: tmpDir })

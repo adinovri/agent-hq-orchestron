@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { SessionManager, PoolFullError, InvalidTransitionError } from '../src/domain/session-manager.js'
+import { AdapterRegistry } from '../src/adapters/registry.js'
 import type { AgentAdapter, TmuxHandle } from '@agent-hq-orchestron/shared'
 
 let tmpDir: string
@@ -28,7 +29,10 @@ function makeAdapter(overrides?: Partial<AgentAdapter>): AgentAdapter {
 }
 
 function makeManager(adapter: AgentAdapter, maxConcurrent = 3) {
-  return new SessionManager({ dataDir: tmpDir, maxConcurrent }, adapter)
+  const registry = new AdapterRegistry()
+  registry.register('claude', adapter)
+  registry.register('mock', adapter)
+  return new SessionManager({ dataDir: tmpDir, maxConcurrent }, registry)
 }
 
 const baseSpawn = {
