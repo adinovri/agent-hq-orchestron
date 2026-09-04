@@ -4,6 +4,7 @@ export type SessionStatus =
   | 'spawning'
   | 'waiting'
   | 'running'
+  | 'awaiting_input'
   | 'completing'
   | 'completed'
   | 'failed'

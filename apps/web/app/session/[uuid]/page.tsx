@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { SessionHeader } from '@/components/SessionHeader'
 import { TranscriptPane } from '@/components/TranscriptPane'
+import { InputBox } from '@/components/InputBox'
 import { KillConfirmDialog } from '@/components/KillConfirmDialog'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
 import type { SessionMetadata, DelegationEdges } from '@agent-hq-orchestron/shared'
@@ -75,6 +76,8 @@ export default function SessionDetailPage({ params }: PageProps) {
       <div className="flex-1 overflow-hidden">
         <TranscriptPane uuid={uuid} />
       </div>
+
+      {!readOnly && <InputBox uuid={uuid} status={session.status} />}
 
       <KillConfirmDialog
         open={killOpen}

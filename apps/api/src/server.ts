@@ -158,6 +158,12 @@ await scanOrphans(snapshotService, sessionManager).catch((err) => {
   fastify.log.warn({ err }, 'orphan-scanner failed at startup')
 })
 
+// Resume turn-end watchers for sessions still in `running` state — otherwise
+// a restart leaves them unable to auto-transition to `awaiting_input`.
+await sessionManager.resumeWatchers().catch((err) => {
+  fastify.log.warn({ err }, 'resume-watchers failed at startup')
+})
+
 try {
   await fastify.listen({ port: config.port, host: config.bindHost })
   fastify.log.info(

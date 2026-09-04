@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import fp from 'fastify-plugin'
+import { z } from 'zod'
 import { SpawnSessionBodySchema } from '@agent-hq-orchestron/shared'
 import { SessionManager } from '../domain/session-manager.js'
 import { HookRunner } from '../domain/hook-runner.js'
@@ -116,6 +117,22 @@ export function sessionsPlugin(
       const session = sessions.find(s => s.id === uuid)
       if (!session) return reply.code(404).send({ error: `Session not found: ${uuid}` })
       return session
+    })
+
+    app.post('/api/sessions/:uuid/input', async (req, reply) => {
+      const { uuid } = req.params as { uuid: string }
+      const body = z.object({ prompt: z.string().min(1) }).safeParse(req.body)
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      try {
+        const session = await manager.sendInput(uuid, body.data.prompt)
+        return session
+      } catch (err: unknown) {
+        const msg = (err as Error).message ?? ''
+        if (msg.includes('not found')) return reply.code(404).send({ error: msg })
+        if (msg.includes('Cannot send input')) return reply.code(409).send({ error: msg })
+        throw err
+      }
     })
 
     app.delete('/api/sessions/:uuid', async (req, reply) => {

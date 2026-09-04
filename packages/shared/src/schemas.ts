@@ -14,6 +14,7 @@ export const SessionStatusSchema = z.enum([
   'spawning',
   'waiting',
   'running',
+  'awaiting_input',
   'completing',
   'completed',
   'failed',

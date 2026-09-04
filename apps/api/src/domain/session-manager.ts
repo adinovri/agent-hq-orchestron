@@ -1,8 +1,10 @@
 import crypto from 'node:crypto'
+import fs from 'node:fs'
 import path from 'node:path'
 import { writeJson, readJson, listDir } from '@agent-hq-orchestron/file-store'
 import type { SessionMetadata, SessionStatus, SpawnConfig } from '@agent-hq-orchestron/shared'
 import type { AdapterRegistry } from '../adapters/registry.js'
+import { TranscriptTailer } from '../streaming/transcript-tailer.js'
 
 export class PoolFullError extends Error {
   constructor(max: number) {
@@ -18,11 +20,12 @@ export class InvalidTransitionError extends Error {
   }
 }
 
-// Legal transitions per the 7-state machine
+// Legal transitions per the 8-state machine
 const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
   spawning: ['waiting', 'failed', 'killed'],
   waiting: ['running', 'killed'],
-  running: ['running', 'completing', 'killed'],
+  running: ['running', 'awaiting_input', 'completing', 'killed'],
+  awaiting_input: ['running', 'completing', 'killed'],
   completing: ['completed', 'failed'],
   completed: [],
   failed: [],
@@ -35,11 +38,16 @@ export interface SessionManagerConfig {
 }
 
 export class SessionManager {
+  private readonly dataDir: string
   private readonly sessionsDir: string
   private readonly maxConcurrent: number
   private readonly registry: AdapterRegistry
+  // Watchers that flip running → awaiting_input on the next turn_duration event.
+  // Keyed by session uuid; one active watcher per session at a time.
+  private readonly turnWatchers = new Map<string, TranscriptTailer>()
 
   constructor(config: SessionManagerConfig, registry: AdapterRegistry) {
+    this.dataDir = config.dataDir
     this.sessionsDir = path.join(config.dataDir, 'sessions')
     this.maxConcurrent = config.maxConcurrent
     this.registry = registry
@@ -116,6 +124,68 @@ export class SessionManager {
     // Paste initial prompt + Enter
     await adapter.sendPrompt(handle, prompt)
     await this.transition(uuid, 'running')
+    this.watchForTurnEnd(uuid, handle.jsonlPath)
+  }
+
+  async sendInput(uuid: string, prompt: string): Promise<SessionMetadata> {
+    const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!session) throw new Error(`Session not found: ${uuid}`)
+
+    if (session.status !== 'awaiting_input' && session.status !== 'waiting') {
+      throw new Error(`Cannot send input while session is ${session.status}`)
+    }
+
+    const adapter = this.registry.getOrThrow(session.agentType)
+    await adapter.sendPrompt(
+      { tmuxName: session.tmuxName, claudeUuid: session.claudeSessionUuid, jsonlPath: session.jsonlPath },
+      prompt,
+    )
+    const updated = await this.transition(uuid, 'running')
+    this.watchForTurnEnd(uuid, session.jsonlPath)
+    return updated
+  }
+
+  /**
+   * Tail the JSONL for one `system.turn_duration` event and auto-transition to
+   * `awaiting_input`. Fire-and-forget; watcher closes itself once triggered.
+   * Default starts at current file size (only new events). Pass fromStart=true
+   * to replay from the beginning — used on resume to catch an already-ended turn.
+   */
+  private watchForTurnEnd(uuid: string, jsonlPath: string, opts?: { fromStart?: boolean }): void {
+    // Close any prior watcher for this session first
+    const prior = this.turnWatchers.get(uuid)
+    if (prior) {
+      prior.close()
+      this.turnWatchers.delete(uuid)
+    }
+
+    let startOffset = 0
+    if (!opts?.fromStart) {
+      try {
+        startOffset = fs.statSync(jsonlPath).size
+      } catch { /* file may not exist yet */ }
+    }
+
+    const tailer = new TranscriptTailer(uuid, jsonlPath, this.dataDir, {
+      startOffset,
+      persistOffset: false,
+    })
+    this.turnWatchers.set(uuid, tailer)
+
+    tailer.on('event', async (ev: { event: unknown }) => {
+      const obj = ev.event as { type?: string; subtype?: string } | null
+      if (!obj || obj.type !== 'system' || obj.subtype !== 'turn_duration') return
+      const current = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+      if (current && current.status === 'running') {
+        await this.transition(uuid, 'awaiting_input').catch(() => {})
+      }
+      tailer.close()
+      this.turnWatchers.delete(uuid)
+    })
+
+    tailer.start().catch(() => {
+      this.turnWatchers.delete(uuid)
+    })
   }
 
   async transition(uuid: string, newStatus: SessionStatus): Promise<SessionMetadata> {
@@ -151,6 +221,12 @@ export class SessionManager {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
+    const watcher = this.turnWatchers.get(uuid)
+    if (watcher) {
+      watcher.close()
+      this.turnWatchers.delete(uuid)
+    }
+
     const adapter = this.registry.getOrThrow(session.agentType)
     await adapter.kill({
       tmuxName: session.tmuxName,
@@ -159,6 +235,21 @@ export class SessionManager {
     })
 
     return this.transition(uuid, 'killed')
+  }
+
+  /**
+   * On boot, resume turn-end watchers for any session still marked `running`.
+   * Watchers are in-memory only; without this, a server restart leaves
+   * previously-running sessions unable to auto-transition to `awaiting_input`.
+   * Uses startOffset=0 so a turn already ended in the JSONL still triggers.
+   */
+  async resumeWatchers(): Promise<void> {
+    const sessions = await this.list()
+    for (const s of sessions) {
+      if (s.status === 'running') {
+        this.watchForTurnEnd(s.id, s.jsonlPath, { fromStart: true })
+      }
+    }
   }
 
   async list(filter?: { status?: string; projectId?: string; from?: string; to?: string }): Promise<SessionMetadata[]> {

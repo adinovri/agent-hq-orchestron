@@ -8,6 +8,7 @@ const STATUS_STYLES: Record<string, string> = {
   spawning: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
   completing: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
   waiting: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+  awaiting_input: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
   completed: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
   failed: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
   killed: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
@@ -22,7 +23,7 @@ interface Props {
 }
 
 export function SessionHeader({ session, descendantCount, readOnly, onKill, killing }: Props) {
-  const isActive = ['spawning', 'waiting', 'running', 'completing'].includes(session.status)
+  const isActive = ['spawning', 'waiting', 'running', 'awaiting_input', 'completing'].includes(session.status)
   const badge = STATUS_STYLES[session.status] ?? 'bg-zinc-100 text-zinc-500'
 
   return (
