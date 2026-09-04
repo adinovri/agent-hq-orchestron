@@ -123,6 +123,10 @@ fastify.get('/api/reset', async (_req, reply) => {
 </html>`
 })
 
+// Stub: templates listing. Real template CRUD not yet implemented — return empty array
+// so dashboard React Query doesn't 404-throw.
+fastify.get('/api/templates', async () => ({ templates: [] }))
+
 fastify.get('/api/health', async () => {
   let tmuxVersion = 'unavailable'
   try {
