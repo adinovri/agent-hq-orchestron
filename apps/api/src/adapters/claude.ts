@@ -16,6 +16,9 @@ const TUI_READY_RE = /v[0-9]+\.[0-9]+\.[0-9]+ │|\?\s+for shortcuts/
 const TRUST_PROMPT_RE = /Is this a project you|Yes, I trust this folder/
 // Numbered menu interstitial (theme picker etc — Enter accepts default)
 const MENU_INTERSTITIAL_RE = /❯\s*[0-9]+\./
+// Dismissable interstitials (checkboxes, wizards, "Teach auto mode?" etc) —
+// Any pane that offers "Esc to cancel" is a modal we can Esc out of safely.
+const ESC_DISMISS_RE = /Esc to cancel|esc to (cancel|dismiss|close)/
 
 /**
  * Compute the actual JSONL transcript path Claude CLI writes to.
@@ -123,6 +126,7 @@ export class ClaudeAdapter implements AgentAdapter {
       // Status bar (TUI_READY_RE) can render while interstitial still overlays input.
       const hasTrust = TRUST_PROMPT_RE.test(pane)
       const hasMenu = MENU_INTERSTITIAL_RE.test(pane)
+      const hasEscDismissable = ESC_DISMISS_RE.test(pane)
       const canDismiss = Date.now() - lastDismissAt > 1500
 
       if (hasTrust && canDismiss) {
@@ -135,7 +139,11 @@ export class ClaudeAdapter implements AgentAdapter {
         // Numbered menu (theme picker, "Teach auto mode?" etc) — Enter accepts default
         await tmux.sendKeys(handle.tmuxName, 'Enter')
         lastDismissAt = Date.now()
-      } else if (TUI_READY_RE.test(pane) && !hasTrust && !hasMenu) {
+      } else if (hasEscDismissable && canDismiss) {
+        // Checkbox wizard / dismissable modal — Esc closes it
+        await tmux.sendKeys(handle.tmuxName, 'Escape')
+        lastDismissAt = Date.now()
+      } else if (TUI_READY_RE.test(pane) && !hasTrust && !hasMenu && !hasEscDismissable) {
         // Only mark ready if NO interstitial still present
         return
       }

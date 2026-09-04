@@ -2,17 +2,11 @@
 
 import { SessionMetadata } from '@agent-hq-orchestron/shared'
 import { Button } from '@/components/ui/button'
-
-const STATUS_STYLES: Record<string, string> = {
-  running: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-  spawning: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-  completing: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
-  waiting: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
-  awaiting_input: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
-  completed: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
-  failed: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
-  killed: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
-}
+import { StatusPill } from '@/components/StatusPill'
+import { isActive } from '@/lib/status'
+import { formatRelative, formatDuration } from '@/lib/time'
+import { X, GitBranch, ChevronDown, ChevronUp } from 'lucide-react'
+import { useState } from 'react'
 
 interface Props {
   session: SessionMetadata
@@ -23,47 +17,65 @@ interface Props {
 }
 
 export function SessionHeader({ session, descendantCount, readOnly, onKill, killing }: Props) {
-  const isActive = ['spawning', 'waiting', 'running', 'awaiting_input', 'completing'].includes(session.status)
-  const badge = STATUS_STYLES[session.status] ?? 'bg-zinc-100 text-zinc-500'
+  const active = isActive(session.status)
+  const [expanded, setExpanded] = useState(false)
 
   return (
-    <div className="bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800 px-4 py-4">
+    <div className="bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800">
       {readOnly && (
-        <div className="mb-3 px-3 py-2 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded text-sm text-amber-800 dark:text-amber-200">
+        <div className="mx-3 mt-3 px-3 py-2 bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded text-xs text-amber-800 dark:text-amber-200">
           Snapshot mode — transcript is read-only
         </div>
       )}
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${badge}`}>
-              {session.status}
-            </span>
-            <span className="font-mono text-sm text-zinc-500">{session.id}</span>
+      <div className="px-3 sm:px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <StatusPill status={session.status} />
+              {session.model && (
+                <span className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">{session.model}</span>
+              )}
+              {descendantCount != null && descendantCount > 0 && (
+                <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
+                  <GitBranch className="w-3 h-3" />
+                  {descendantCount}
+                </span>
+              )}
+            </div>
+            <p className="mt-2 text-sm text-zinc-800 dark:text-zinc-200 line-clamp-2 leading-snug">
+              {session.initialPrompt || <span className="italic text-zinc-400">no prompt</span>}
+            </p>
+            <button
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-1.5 inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
+            >
+              <span>{formatRelative(session.startedAt)} · {formatDuration(session.startedAt, session.endedAt)}</span>
+              {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+            {expanded && (
+              <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 space-y-0.5 font-mono">
+                <div>id: {session.id}</div>
+                <div>project: {session.projectId}</div>
+                <div>agent: {session.agentType}</div>
+                <div>started: {new Date(session.startedAt).toLocaleString()}</div>
+                {session.endedAt && <div>ended: {new Date(session.endedAt).toLocaleString()}</div>}
+                {session.costUsd != null && <div>cost: ${session.costUsd.toFixed(4)}</div>}
+              </div>
+            )}
           </div>
-          <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300 line-clamp-3">
-            {session.initialPrompt}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
-            <span>Project: <strong className="text-zinc-700 dark:text-zinc-300">{session.projectId}</strong></span>
-            {session.agentType && <span>Agent: <strong className="text-zinc-700 dark:text-zinc-300">{session.agentType}</strong></span>}
-            {session.model && <span>Model: <strong className="text-zinc-700 dark:text-zinc-300">{session.model}</strong></span>}
-            <span>Started: {new Date(session.startedAt).toLocaleString()}</span>
-            {session.endedAt && <span>Ended: {new Date(session.endedAt).toLocaleString()}</span>}
-            {session.costUsd != null && <span>Cost: ${session.costUsd.toFixed(4)}</span>}
-          </div>
+          {active && !readOnly && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="shrink-0 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950 h-8 w-8 p-0"
+              disabled={killing}
+              onClick={onKill}
+              title={`Kill session${descendantCount ? ` (${descendantCount} children)` : ''}`}
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          )}
         </div>
-        {isActive && !readOnly && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-red-600 border-red-200 hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950 shrink-0"
-            disabled={killing}
-            onClick={onKill}
-          >
-            {killing ? 'Killing…' : `Kill${descendantCount ? ` (${descendantCount} children)` : ''}`}
-          </Button>
-        )}
       </div>
     </div>
   )

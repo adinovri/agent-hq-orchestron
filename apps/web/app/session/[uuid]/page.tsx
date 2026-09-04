@@ -47,15 +47,23 @@ export default function SessionDetailPage({ params }: PageProps) {
   })
 
   if (isLoading) {
-    return <div className="flex items-center justify-center h-64 text-zinc-400">Loading…</div>
+    return (
+      <div className="max-w-3xl mx-auto px-3 sm:px-4 py-4 space-y-3">
+        <div className="animate-pulse space-y-2">
+          <div className="h-5 w-24 bg-zinc-200 dark:bg-zinc-800 rounded" />
+          <div className="h-4 w-2/3 bg-zinc-200 dark:bg-zinc-800 rounded" />
+          <div className="h-3 w-1/2 bg-zinc-200 dark:bg-zinc-800 rounded" />
+        </div>
+      </div>
+    )
   }
 
   if (!session) {
     return (
-      <div className="flex flex-col items-center justify-center h-64 gap-4 text-zinc-400">
-        <p>Session not found</p>
-        <button onClick={() => router.push('/dashboard')} className="text-sm underline">
-          Back to Dashboard
+      <div className="flex flex-col items-center justify-center h-64 gap-4 text-zinc-500">
+        <p className="text-sm">Session not found</p>
+        <button onClick={() => router.push('/dashboard')} className="text-sm text-blue-600 hover:underline">
+          ← Back to Dashboard
         </button>
       </div>
     )
@@ -74,7 +82,7 @@ export default function SessionDetailPage({ params }: PageProps) {
       />
 
       <div className="flex-1 overflow-hidden">
-        <TranscriptPane uuid={uuid} />
+        <TranscriptPane uuid={uuid} status={session.status} />
       </div>
 
       {!readOnly && <InputBox uuid={uuid} status={session.status} />}

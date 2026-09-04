@@ -6,8 +6,10 @@ import { Button } from '@/components/ui/button'
 import { FilterBar, FilterState } from '@/components/FilterBar'
 import { SessionList } from '@/components/SessionList'
 import { SpawnDialog } from '@/components/SpawnDialog'
+import { SessionListSkeleton } from '@/components/Skeleton'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
 import type { SessionMetadata, ProjectMetadata } from '@agent-hq-orchestron/shared'
+import { Plus, Rocket, Inbox } from 'lucide-react'
 
 function fuzzyMatch(haystack: string, needle: string): boolean {
   if (!needle) return true
@@ -94,18 +96,45 @@ export default function DashboardPage() {
   const activeSessions = sessions.filter((s) =>
     ['spawning', 'waiting', 'running', 'completing'].includes(s.status),
   ).length
+  const needsInputCount = sessions.filter((s) => s.status === 'awaiting_input').length
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
+    <div className="max-w-4xl mx-auto px-4 py-6 space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">Dashboard</h1>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
           <p className="text-sm text-zinc-500 mt-0.5">
-            {activeSessions} active · {sessions.length} total
+            {activeSessions} active
+            {needsInputCount > 0 && (
+              <> · <span className="text-amber-600 dark:text-amber-400 font-medium">{needsInputCount} need input</span></>
+            )}
+            {sessions.length > 0 && ` · ${sessions.length} total`}
           </p>
         </div>
-        <Button onClick={() => setSpawnOpen(true)}>+ Spawn</Button>
+        <Button onClick={() => setSpawnOpen(true)} className="shrink-0">
+          <Plus className="w-4 h-4 mr-1" /> Spawn
+        </Button>
+      </div>
+
+      {/* Stats row — includes awaiting_input to make attention state prominent */}
+      <div className="grid grid-cols-4 gap-2 sm:gap-3">
+        {(
+          [
+            { key: 'awaiting_input', label: 'Needs input', color: 'text-amber-600 dark:text-amber-400' },
+            { key: 'running', label: 'Running', color: 'text-emerald-600 dark:text-emerald-400' },
+            { key: 'completed', label: 'Completed', color: 'text-zinc-500' },
+            { key: 'failed', label: 'Failed', color: 'text-red-600 dark:text-red-400' },
+          ] as const
+        ).map(({ key, label, color }) => {
+          const count = sessions.filter((s) => s.status === key).length
+          return (
+            <div key={key} className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg p-2.5 sm:p-3 text-center">
+              <p className={`text-xl sm:text-2xl font-bold tabular-nums ${color}`}>{count}</p>
+              <p className="text-[10px] sm:text-xs text-zinc-500 mt-0.5">{label}</p>
+            </div>
+          )
+        })}
       </div>
 
       {/* Filters */}
@@ -116,22 +145,31 @@ export default function DashboardPage() {
         onChange={(patch) => setFilters((f) => ({ ...f, ...patch }))}
       />
 
-      {/* Stats row */}
-      <div className="grid grid-cols-3 gap-3 text-center">
-        {(['running', 'completed', 'failed'] as const).map((status) => {
-          const count = sessions.filter((s) => s.status === status).length
-          return (
-            <div key={status} className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg p-3">
-              <p className="text-2xl font-bold">{count}</p>
-              <p className="text-xs text-zinc-500 capitalize">{status}</p>
-            </div>
-          )
-        })}
-      </div>
-
       {/* List */}
       {sessionsLoading ? (
-        <div className="text-center py-12 text-zinc-400">Loading…</div>
+        <SessionListSkeleton count={4} />
+      ) : sessions.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 px-6 text-center bg-white dark:bg-zinc-900 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-lg">
+          <Rocket className="w-10 h-10 text-zinc-300 dark:text-zinc-600 mb-3" />
+          <h2 className="text-base font-medium mb-1">No sessions yet</h2>
+          <p className="text-sm text-zinc-500 max-w-xs mb-4">
+            Spawn a Claude agent on one of your projects to get started.
+          </p>
+          <Button onClick={() => setSpawnOpen(true)}>
+            <Plus className="w-4 h-4 mr-1" /> Spawn your first session
+          </Button>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-12 px-6 text-center text-zinc-500">
+          <Inbox className="w-8 h-8 text-zinc-300 dark:text-zinc-600 mb-2" />
+          <p className="text-sm">No sessions match your filters</p>
+          <button
+            onClick={() => setFilters(DEFAULT_FILTERS)}
+            className="mt-2 text-xs text-blue-600 hover:underline"
+          >
+            Clear filters
+          </button>
+        </div>
       ) : (
         <SessionList
           sessions={filtered}

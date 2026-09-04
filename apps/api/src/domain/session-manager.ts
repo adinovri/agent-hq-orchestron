@@ -136,10 +136,14 @@ export class SessionManager {
     }
 
     const adapter = this.registry.getOrThrow(session.agentType)
-    await adapter.sendPrompt(
-      { tmuxName: session.tmuxName, claudeUuid: session.claudeSessionUuid, jsonlPath: session.jsonlPath },
-      prompt,
-    )
+    const handle = { tmuxName: session.tmuxName, claudeUuid: session.claudeSessionUuid, jsonlPath: session.jsonlPath }
+
+    // Dismiss any stale interstitial (e.g. "Teach auto mode?" modal that Claude
+    // may pop up between turns) before pasting the prompt. Short timeout — if
+    // the TUI is already ready this returns immediately.
+    await adapter.waitTuiReady(handle, 10_000).catch(() => { /* proceed anyway */ })
+
+    await adapter.sendPrompt(handle, prompt)
     const updated = await this.transition(uuid, 'running')
     this.watchForTurnEnd(uuid, session.jsonlPath)
     return updated

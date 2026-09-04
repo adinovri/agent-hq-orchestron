@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, KeyboardEvent } from 'react'
+import { useState, KeyboardEvent, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/fetcher'
 import type { SessionStatus } from '@agent-hq-orchestron/shared'
@@ -14,8 +14,8 @@ const ENABLED: SessionStatus[] = ['awaiting_input', 'waiting']
 const HINT: Partial<Record<SessionStatus, string>> = {
   spawning: 'Session is spawning…',
   waiting: 'Session ready — type your first message',
-  running: 'Agent is working — wait for its response',
-  awaiting_input: 'Agent is waiting for you',
+  running: 'Claude is thinking…',
+  awaiting_input: 'Type your reply',
   completing: 'Session is completing…',
   completed: 'Session ended',
   failed: 'Session failed',
@@ -24,7 +24,15 @@ const HINT: Partial<Record<SessionStatus, string>> = {
 
 export function InputBox({ uuid, status }: Props) {
   const [text, setText] = useState('')
+  const [lastSent, setLastSent] = useState<string | null>(null)
   const qc = useQueryClient()
+
+  // Clear the "just sent" preview when Claude finishes responding
+  useEffect(() => {
+    if (status === 'awaiting_input' || status === 'completed' || status === 'failed' || status === 'killed') {
+      setLastSent(null)
+    }
+  }, [status])
 
   const sendMutation = useMutation({
     mutationFn: async (prompt: string) => {
@@ -36,7 +44,8 @@ export function InputBox({ uuid, status }: Props) {
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
       return res.json()
     },
-    onSuccess: () => {
+    onSuccess: (_data, prompt) => {
+      setLastSent(prompt)
       setText('')
       qc.invalidateQueries({ queryKey: ['session', uuid] })
     },
@@ -59,9 +68,22 @@ export function InputBox({ uuid, status }: Props) {
   }
 
   const isAwaiting = status === 'awaiting_input'
+  const isThinking = status === 'running' || status === 'spawning'
 
   return (
     <div className={`border-t px-3 py-2 ${isAwaiting ? 'border-amber-300 bg-amber-50 dark:bg-amber-950/20' : 'border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900'}`}>
+      {lastSent && (
+        <div className="flex items-start gap-1.5 mb-2 text-xs text-zinc-500 border-l-2 border-blue-400 pl-2 py-1 bg-blue-50 dark:bg-blue-950/20">
+          <span className="font-medium text-blue-600 dark:text-blue-400 shrink-0">Sent:</span>
+          <span className="break-words">{lastSent.length > 200 ? lastSent.slice(0, 200) + '…' : lastSent}</span>
+        </div>
+      )}
+      {isThinking && (
+        <div className="flex items-center gap-2 mb-2 text-xs text-zinc-500">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+          <span>{status === 'spawning' ? 'Starting Claude…' : 'Claude is thinking…'}</span>
+        </div>
+      )}
       {isAwaiting && (
         <div className="text-xs font-medium text-amber-700 dark:text-amber-400 mb-1">
           Needs your input
