@@ -52,6 +52,8 @@ export function sessionsPlugin(
 
       if (!initialPrompt) return reply.code(422).send({ error: 'prompt or template required' })
 
+      const configDir = project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
+
       const session = await manager.spawn({
         projectId,
         agentType: body.data.agentType ?? project.agentType,
@@ -59,6 +61,7 @@ export function sessionsPlugin(
         parentSessionId,
         workspace: project.path,
         detached,
+        configDir,
       })
 
       // Record delegation edge if parent session provided
@@ -76,9 +79,34 @@ export function sessionsPlugin(
       const query = req.query as Record<string, string>
       const statusFilter = query['status']
       const projectIdFilter = query['projectId']
-      let sessions = await manager.list()
-      if (statusFilter) sessions = sessions.filter(s => s.status === statusFilter)
-      if (projectIdFilter) sessions = sessions.filter(s => s.projectId === projectIdFilter)
+      const tagFilter = query['tag'] ? query['tag']!.split(',').filter(Boolean) : undefined
+      const fromFilter = query['from']
+      const toFilter = query['to']
+
+      let sessions = await manager.list({
+        status: statusFilter,
+        projectId: projectIdFilter,
+        from: fromFilter,
+        to: toFilter,
+      })
+
+      if (tagFilter && tagFilter.length > 0) {
+        const tagSet = new Set(tagFilter)
+        const projectCache = new Map<string, string[]>()
+        sessions = (await Promise.all(sessions.map(async s => {
+          if (!projectCache.has(s.projectId)) {
+            try {
+              const proj = await registry.get(s.projectId)
+              projectCache.set(s.projectId, proj.tags ?? [])
+            } catch {
+              projectCache.set(s.projectId, [])
+            }
+          }
+          const projTags = projectCache.get(s.projectId) ?? []
+          return projTags.some(t => tagSet.has(t)) ? s : null
+        }))).filter((s): s is NonNullable<typeof s> => s !== null)
+      }
+
       return { sessions }
     })
 
