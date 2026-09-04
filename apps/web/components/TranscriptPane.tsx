@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
-import type { SessionEvent } from '@agent-hq-orchestron/shared'
 
 const MAX_EVENTS = 500
 
@@ -19,43 +18,68 @@ interface TranscriptEntry {
   timestamp: string
 }
 
+// Claude JSONL event shape: {type, message: {role, content: [...]}, timestamp, ...}
+// where content is an array of blocks {type: 'text'|'tool_use'|'tool_result', text?, name?, input?, content?}
+interface ClaudeMessageBlock {
+  type: string
+  text?: string
+  name?: string
+  input?: unknown
+  content?: string | Array<{ text?: string }>
+}
+interface ClaudeEvent {
+  type: string
+  message?: { role?: string; content?: ClaudeMessageBlock[] | string }
+  timestamp?: string
+}
+
 function parseEvent(raw: string): TranscriptEntry | null {
   try {
-    const ev: SessionEvent = JSON.parse(raw)
-    let content = ''
-    let role: TranscriptEntry['role'] = 'system'
+    const ev: ClaudeEvent = JSON.parse(raw)
+    const parts: Array<{ role: TranscriptEntry['role']; content: string }> = []
 
-    if (ev.type === 'assistant') {
-      const data = ev.data as { content?: Array<{ type: string; text?: string }> }
-      const texts = (data?.content ?? [])
-        .filter((b) => b.type === 'text')
-        .map((b) => b.text ?? '')
-        .join('')
-      if (!texts) return null
-      content = texts
-      role = 'assistant'
-    } else if (ev.type === 'tool_use') {
-      const data = ev.data as { name?: string; input?: unknown }
-      content = `**Tool:** \`${data?.name}\`\n\`\`\`json\n${JSON.stringify(data?.input, null, 2)}\n\`\`\``
-      role = 'tool'
-    } else if (ev.type === 'tool_result') {
-      const data = ev.data as { content?: string | Array<{ text?: string }> }
-      const text = typeof data?.content === 'string'
-        ? data.content
-        : Array.isArray(data?.content)
-          ? data.content.map((c) => c.text ?? '').join('')
-          : ''
-      if (!text) return null
-      content = `**Tool result:**\n\`\`\`\n${text.slice(0, 2000)}${text.length > 2000 ? '\n…(truncated)' : ''}\n\`\`\``
-      role = 'tool'
-    } else if (ev.type === 'end_turn') {
-      content = '*Session ended*'
-      role = 'system'
-    } else {
-      return null
+    if (ev.type === 'assistant' && Array.isArray(ev.message?.content)) {
+      for (const b of ev.message!.content as ClaudeMessageBlock[]) {
+        if (b.type === 'text' && b.text) {
+          parts.push({ role: 'assistant', content: b.text })
+        } else if (b.type === 'tool_use') {
+          const inputStr = JSON.stringify(b.input ?? {}, null, 2)
+          parts.push({
+            role: 'tool',
+            content: `**Tool:** \`${b.name}\`\n\`\`\`json\n${inputStr.slice(0, 2000)}${inputStr.length > 2000 ? '\n…(truncated)' : ''}\n\`\`\``,
+          })
+        }
+      }
+    } else if (ev.type === 'user' && Array.isArray(ev.message?.content)) {
+      for (const b of ev.message!.content as ClaudeMessageBlock[]) {
+        if (b.type === 'tool_result') {
+          const text = typeof b.content === 'string'
+            ? b.content
+            : Array.isArray(b.content)
+              ? b.content.map((c) => c.text ?? '').join('')
+              : ''
+          if (text) {
+            parts.push({
+              role: 'tool',
+              content: `**Tool result:**\n\`\`\`\n${text.slice(0, 2000)}${text.length > 2000 ? '\n…(truncated)' : ''}\n\`\`\``,
+            })
+          }
+        }
+      }
+    } else if (ev.type === 'user' && typeof ev.message?.content === 'string') {
+      // User's typed prompt
+      parts.push({ role: 'system', content: `**User:** ${ev.message.content}` })
     }
 
-    return { id: Math.random(), role, content, timestamp: ev.timestamp }
+    if (parts.length === 0) return null
+
+    // Combine multiple parts into single entry (first wins for role display)
+    return {
+      id: Math.random(),
+      role: parts[0]!.role,
+      content: parts.map((p) => p.content).join('\n\n'),
+      timestamp: ev.timestamp ?? new Date().toISOString(),
+    }
   } catch {
     return null
   }
