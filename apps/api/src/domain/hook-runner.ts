@@ -94,8 +94,11 @@ export class HookRunner {
         })
       })
 
-      child.stdin?.write(JSON.stringify(payload))
-      child.stdin?.end()
+      child.stdin?.on('error', () => {})
+      if (child.stdin?.writable) {
+        child.stdin.write(JSON.stringify(payload))
+        child.stdin.end()
+      }
       // unref so the process group doesn't keep Node alive if we abandon it
       child.unref()
     })
