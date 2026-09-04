@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
+    "@types/ws": "^8.18.1",
     "pino-pretty": "^11.2.1",
     "tsx": "^4.16.2",
     "typescript": "^5.5.4",
