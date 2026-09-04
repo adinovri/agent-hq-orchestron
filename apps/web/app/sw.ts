@@ -22,7 +22,7 @@ const serwist = new Serwist({
     {
       matcher: ({ url }) =>
         url.pathname.startsWith('/api/') ||
-        url.pathname.startsWith('/api/stream'),
+        url.pathname.startsWith('/api/stream') || url.pathname.includes('/stream'),
       handler: new NetworkOnly(),
     },
     // App shell — network first, fall back to cache

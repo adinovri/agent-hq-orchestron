@@ -20,9 +20,14 @@ async function authPlugin(fastify: FastifyInstance, opts: { config: Config }): P
   const { remoteToken } = opts.config
   if (!remoteToken) return
 
-  // HTTP: global preHandler
+  // HTTP: global preHandler — skip for SSE/WS (handled by preValidation via ?token=)
   fastify.addHook('preHandler', async (request: FastifyRequest, reply: FastifyReply) => {
     if (AUTH_WHITELIST.has(request.url.split('?')[0])) return
+
+    // Skip if SSE/WS — preValidation already authenticated via query param
+    const upgrade = request.headers.upgrade?.toLowerCase()
+    const accept = request.headers.accept ?? ''
+    if (upgrade === 'websocket' || accept.includes('text/event-stream')) return
 
     const authHeader = request.headers.authorization ?? ''
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''

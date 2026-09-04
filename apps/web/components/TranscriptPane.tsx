@@ -75,7 +75,7 @@ export function TranscriptPane({ uuid }: Props) {
   useEffect(() => {
     let token: string | null = null
     try { token = sessionStorage.getItem('orchestron_token') } catch { /* ignore */ }
-    const url = `/api/stream/${uuid}${token ? `?token=${encodeURIComponent(token)}` : ''}`
+    const url = `/api/sessions/${uuid}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`
     const es = new EventSource(url)
 
     es.onopen = () => setConnected(true)
