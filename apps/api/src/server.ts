@@ -73,6 +73,56 @@ await fastify.register(cors, { origin: true })
 await fastify.register(sensible)
 await fastify.register(authPlugin, { config })
 
+// Reset endpoint: served by API (bypass Web service worker) — clears client-side state.
+// Also whitelisted from auth in plugins/auth.ts because Bearer token isn't required to nuke SW.
+fastify.get('/api/reset', async (_req, reply) => {
+  reply.type('text/html')
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orchestron Reset</title>
+<style>body{font-family:monospace;background:#000;color:#fff;padding:20px;white-space:pre-wrap;font-size:14px;line-height:1.5}h1{font-size:20px;margin-bottom:16px}</style>
+</head>
+<body>
+<h1>Orchestron Reset</h1>
+<div id="log">Resetting...</div>
+<script>
+(async () => {
+  const log = document.getElementById('log');
+  const steps = [];
+  const push = (s) => { steps.push(s); log.textContent = steps.join('\\n'); };
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const r of regs) { await r.unregister(); push('✓ Unregistered SW: ' + r.scope); }
+      if (!regs.length) push('- No SW registered');
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      for (const k of keys) { await caches.delete(k); push('✓ Deleted cache: ' + k); }
+      if (!keys.length) push('- No caches');
+    }
+    try { sessionStorage.clear(); localStorage.clear(); push('✓ Cleared storage'); } catch(e) { push('⚠ storage: ' + e.message); }
+    if ('indexedDB' in window && indexedDB.databases) {
+      try {
+        const dbs = await indexedDB.databases();
+        for (const db of dbs) { if (db.name) { indexedDB.deleteDatabase(db.name); push('✓ Deleted IDB: ' + db.name); } }
+      } catch(e) { /* ignore */ }
+    }
+    push('');
+    push('Done. Redirecting to /pair in 3s...');
+    setTimeout(() => { window.location.href = '/pair'; }, 3000);
+  } catch (err) {
+    push('ERROR: ' + err.message);
+  }
+})();
+</script>
+</body>
+</html>`
+})
+
 fastify.get('/api/health', async () => {
   let tmuxVersion = 'unavailable'
   try {
