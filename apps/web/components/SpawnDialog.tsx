@@ -46,7 +46,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectId,
-          initialPrompt: prompt,
+          prompt: prompt || undefined,
           template: template || undefined,
           vars: Object.keys(vars).length > 0 ? vars : undefined,
         }),
