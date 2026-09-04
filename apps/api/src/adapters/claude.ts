@@ -81,8 +81,9 @@ export class ClaudeAdapter implements AgentAdapter {
       sessionMode: { type: 'new', uuid: claudeUuid },
     })
 
-    const env = config.configDir
-      ? { ...process.env, CLAUDE_CONFIG_DIR: expandHome(config.configDir) }
+    // Only pass override vars, not full process.env — tmux -e sets these
+    const env: NodeJS.ProcessEnv | undefined = config.configDir
+      ? { CLAUDE_CONFIG_DIR: expandHome(config.configDir) }
       : undefined
 
     const [cmd, ...args] = argv
@@ -101,8 +102,9 @@ export class ClaudeAdapter implements AgentAdapter {
       sessionMode: { type: 'resume', uuid: sessionUuid },
     })
 
-    const env = config.configDir
-      ? { ...process.env, CLAUDE_CONFIG_DIR: expandHome(config.configDir) }
+    // Only pass override vars, not full process.env — tmux -e sets these
+    const env: NodeJS.ProcessEnv | undefined = config.configDir
+      ? { CLAUDE_CONFIG_DIR: expandHome(config.configDir) }
       : undefined
 
     const [cmd, ...args] = argv

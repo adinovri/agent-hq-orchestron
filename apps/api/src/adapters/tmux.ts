@@ -4,8 +4,17 @@ import { promisify } from 'node:util'
 const execFile = promisify(execFileCb)
 
 export async function newSession(name: string, argv: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<void> {
-  const opts = env ? { env: { ...process.env, ...env } } : {}
-  await execFile('tmux', ['new-session', '-d', '-s', name, '-c', cwd, ...argv], opts)
+  // tmux server env is inherited by new panes — use -e KEY=VAL to override per-session.
+  // Client's process env doesn't propagate to attached server's pane processes.
+  const envFlags: string[] = []
+  if (env) {
+    for (const [key, val] of Object.entries(env)) {
+      if (val !== undefined && key !== 'PATH' && !key.startsWith('_')) {
+        envFlags.push('-e', `${key}=${val}`)
+      }
+    }
+  }
+  await execFile('tmux', ['new-session', '-d', '-s', name, ...envFlags, '-c', cwd, ...argv])
 }
 
 export async function sendKeys(sessionName: string, keys: string): Promise<void> {
