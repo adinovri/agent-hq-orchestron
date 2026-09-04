@@ -72,7 +72,7 @@ export function streamPlugin(manager: SessionManager, dataDir: string) {
         }
       })
 
-      socket.on('message', (raw) => {
+      socket.on('message', (raw: Buffer | string) => {
         try {
           const msg = JSON.parse(raw.toString()) as { type?: string; prompt?: string }
           if (msg.type === 'prompt' && msg.prompt) {
