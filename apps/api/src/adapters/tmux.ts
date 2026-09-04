@@ -4,8 +4,6 @@ import { promisify } from 'node:util'
 const execFile = promisify(execFileCb)
 
 export async function newSession(name: string, argv: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<void> {
-  // tmux server env is inherited by new panes — use -e KEY=VAL to override per-session.
-  // Client's process env doesn't propagate to attached server's pane processes.
   const envFlags: string[] = []
   if (env) {
     for (const [key, val] of Object.entries(env)) {
@@ -14,7 +12,25 @@ export async function newSession(name: string, argv: string[], cwd: string, env?
       }
     }
   }
-  await execFile('tmux', ['new-session', '-d', '-s', name, ...envFlags, '-c', cwd, ...argv])
+
+  const tmuxArgs = ['new-session', '-d', '-s', name, ...envFlags, '-c', cwd, ...argv]
+
+  // When invoked from inside a systemd service scope, tmux's transient-scope creation
+  // for pane cgroups is denied and the session dies within seconds. Wrap with
+  // `systemd-run --user --scope` so tmux client runs in a fresh scope and its
+  // spawned pane can create its own scope successfully.
+  //
+  // If systemd-run isn't available, fall back to plain tmux.
+  try {
+    await execFile('systemd-run', ['--user', '--scope', '--collect', 'tmux', ...tmuxArgs])
+  } catch (err) {
+    const msg = (err as Error).message ?? ''
+    if (msg.includes('ENOENT') || msg.includes('command not found')) {
+      await execFile('tmux', tmuxArgs)
+    } else {
+      throw err
+    }
+  }
 }
 
 export async function sendKeys(sessionName: string, keys: string): Promise<void> {
