@@ -127,17 +127,55 @@ Precedence: env > config file > built-in defaults.
 
 ## 5. Deploy — Scenario A: Laptop Personal
 
-Simplest — localhost only, no auth.
+Simplest — localhost only, no auth. Ada dua run mode.
+
+### 5a. Dev mode (development, hot-reload)
 
 ```bash
-# Run dev servers foreground (Ctrl+C to stop)
 npm run dev
-
-# Or production build
-npm run build && npm run start
 ```
 
-Open http://localhost:3000 di browser.
+Yang jalan:
+- **API** (`apps/api`): `tsx watch src/server.ts` — TypeScript langsung tanpa compile, hot-reload saat edit
+- **Web** (`apps/web`): `next dev` — HMR, source maps, unminified bundles
+- Startup ~2-3s, restart otomatis saat file berubah
+
+Kapan pakai: development, ngoprek code, debugging feature.
+
+### 5b. Production build (stable, faster)
+
+```bash
+# Step 1 — compile semua workspace ke dist/
+npm run build --workspaces --if-present
+
+# Step 2 — run compiled artifacts
+npm run start
+```
+
+Yang terjadi saat `npm run build`:
+- `packages/shared`, `packages/file-store` → `tsup` bundle ke `dist/index.js` + type declarations
+- `apps/api` → `tsc` compile ke `apps/api/dist/*.js` (plain runnable Node)
+- `apps/web` → `next build` produce optimized bundle (SSR pre-compiled, client minified, static assets fingerprinted)
+
+Yang terjadi saat `npm run start`:
+- `node apps/api/dist/server.js` — fast startup ~100ms
+- `next start -p 3000` — serves pre-built bundles
+
+Characteristics: fast startup, small bundle, JSON logs (no pretty-print), no file watcher, lower baseline CPU/RAM.
+
+Kapan pakai: **daily driver**, stable use, systemd service target.
+
+**Update cycle** (kalau code berubah — git pull, dst):
+```bash
+git pull origin main
+npm install
+npm run build --workspaces --if-present
+# Restart process (kalau via systemd: systemctl --user restart orchestron)
+```
+
+### Open UI
+
+Kedua mode buka http://localhost:3000 di browser laptop.
 
 **Constraint:**
 
@@ -252,6 +290,66 @@ Kalau laptop **tidak** perlu jalanin orchestron sendiri — akses semua via brow
 - Laptop-side: **tidak install apa-apa**. Buka https://100.71.6.23:8080/pair?token=<hex> di browser once → PWA installable → shortcut jadi native app di dock.
 
 Trade-off: server / Tailscale down = complete outage. Airplane mode = tidak bisa work.
+
+---
+
+## 7b. Deploy — Dual-Instance (Laptop + Server, keduanya jalan)
+
+Kalau lu butuh **akses orchestron di laptop DAN di server** — pakai kedua-duanya independent. Setup: dua instance orchestron running paralel, state terpisah.
+
+### Kenapa Dual (bukan Scenario B server-only atau A laptop-only)?
+
+Use case: lu kerja di kafe → laptop only (server unreachable). Balik ke rumah → server (untuk supervisi long-running session dari HP). Kadang lu di depan laptop tapi mau spawn session yang ke-track di server (biar bisa lu monitor dari HP nanti).
+
+### Konsekuensi penting
+
+- **State terpisah total.** Sessions yang spawn di laptop **tidak muncul** di server UI, dan sebaliknya. Setiap instance punya `~/.config/agent-hq-orchestron/` sendiri di host masing-masing.
+- **Tidak ada auto-sync.** Kalau lu spawn session A di laptop, session A cuma ada di laptop. Server tidak tahu.
+- **No cross-host resume.** Session yang started di laptop tidak bisa di-resume dari server (transcript file di `~/.claude/projects/` juga host-specific).
+- **Federation view = pending feature.** HLD Multi-Instance Topology Option 2 (peer registry + read-only cross-instance view) belum di-implement — laptop UI hanya show local sessions, tidak show server sessions.
+
+### Setup
+
+**Server** (setup pertama):
+- Follow Scenario B (Section 6) sepenuhnya
+- Bind ke Tailscale IP + Bearer token + systemd service
+- Contoh URL: `https://100.71.6.23:8080`
+
+**Laptop** (setup kedua):
+- Follow Scenario A (Section 5, prefer 5b production build untuk stability)
+- Bind ke `127.0.0.1` (localhost), **no token** — laptop lu trusted zone
+- Port beda dari server tidak masalah (localhost:8080 di laptop tidak clash dgn server-tailscale-ip:8080 di server)
+- Optional: install systemd user service di laptop juga supaya auto-start on boot
+
+### Cara akses
+
+- **Sessions di laptop**: buka `http://localhost:3000` di browser laptop
+- **Sessions di server**: buka `https://100.71.6.23:8080` (Tailscale HTTPS) di browser mana aja — laptop, HP via PWA, tablet
+- **Pilih mana yang jalankan session**: sadar sebelum spawn. Rule of thumb:
+  - **Short interactive session** yang lu supervise langsung → laptop
+  - **Long-running session** yang mau lu tinggal + monitor via HP → server
+  - **Sensitive session** yang butuh workspace file lokal laptop → laptop
+  - **Batch/scheduled runs** (via `orchestron schedule daemon`) → server (biar bisa jalan 24/7)
+
+### Mitigasi state split
+
+Karena state terpisah, backup + occasional consolidate:
+
+**Rsync nightly server → laptop archive** (kalau lu mau one-way backup):
+```bash
+# Di laptop crontab:
+0 2 * * * rsync -a --exclude='*.tmp' \
+  <server-ip>:~/.config/agent-hq-orchestron/ \
+  ~/orchestron-server-archive/
+```
+
+Ini bukan sync — cuma backup buat lu bisa browse server session dari laptop offline (via CLI `orchestron project list --data-dir ~/orchestron-server-archive`).
+
+**Federation view (v2, belum ada)**: kalau nanti Option 2 di HLD Multi-Instance Topology di-implement, laptop UI bisa render peer server sessions read-only via `peers.json` config. Untuk sekarang, manual switch browser tab.
+
+### Anti-pattern: Two-way sync
+
+**JANGAN** sync `~/.config/agent-hq-orchestron/` bidirectional (Syncthing/rsync dua arah) — HLD Multi-Instance Topology explicit mark ini sebagai anti-pattern. Race condition kedua sisi nulis `sessions/*.json` bersamaan = corrupt data. Pakai federation view kalau butuh cross-visibility, atau accept state split.
 
 ---
 
