@@ -25,7 +25,7 @@ export function registerQr(program: Command): void {
   program
     .command('qr')
     .description('Show QR code for pairing a remote device')
-    .option('-p, --port <port>', 'API port', '8080')
+    .option('-p, --port <port>', 'Web UI port (Next.js /pair route)', '3010')
     .option('--token <token>', 'Auth token (overrides env/config)')
     .action(async (opts: { port: string; token?: string }) => {
       const token = opts.token ?? loadToken()

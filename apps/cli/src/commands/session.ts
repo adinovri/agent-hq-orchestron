@@ -107,7 +107,7 @@ export function registerSession(program: Command): void {
     .option('--url <url>', 'API URL', 'http://localhost:8080')
     .option('--token <token>', 'Auth token')
     .action(async (id: string, opts: { url: string; token?: string }) => {
-      const { default: EventSource } = await import('eventsource')
+      const { EventSource } = await import('eventsource')
       const url = `${opts.url}/api/sessions/${id}/transcript`
       const headers: Record<string, string> = {}
       if (opts.token) headers['Authorization'] = `Bearer ${opts.token}`
