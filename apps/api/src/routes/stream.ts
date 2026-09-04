@@ -33,7 +33,13 @@ export function streamPlugin(manager: SessionManager, dataDir: string) {
         reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
       }
 
-      const tailer = new TranscriptTailer(uuid, session.jsonlPath, dataDir)
+      // Replay full transcript from beginning on each new SSE connection.
+      // The persisted offset mechanism is for tailer restart resilience,
+      // not for consumer view — UI first-load needs the whole history.
+      const tailer = new TranscriptTailer(uuid, session.jsonlPath, dataDir, {
+        startOffset: 0,
+        persistOffset: false,
+      })
       tailer.on('event', (ev: { type: string; event: unknown }) => send(ev.type, ev.event))
 
       const pingTimer = setInterval(() => {

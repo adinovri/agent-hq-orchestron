@@ -12,27 +12,40 @@ export interface TailerEvent {
 
 const OFFSET_DEBOUNCE_MS = 50
 
+export interface TranscriptTailerOptions {
+  /** Force starting offset (default: 0). */
+  startOffset?: number
+  /** Whether to persist offset to disk for restart resilience (default: true). */
+  persistOffset?: boolean
+}
+
 export class TranscriptTailer extends EventEmitter {
   private readonly offsetPath: string
   private offset = 0
   private watcher: fs.FSWatcher | null = null
   private debounceTimer: ReturnType<typeof setTimeout> | null = null
   private closed = false
+  private readonly persistOffsetEnabled: boolean
 
   constructor(
     private readonly sessionUuid: string,
     private readonly jsonlPath: string,
     private readonly dataDir: string,
-    startOffset = 0,
+    optionsOrStartOffset: TranscriptTailerOptions | number = {},
   ) {
     super()
-    this.offset = startOffset
+    const opts: TranscriptTailerOptions =
+      typeof optionsOrStartOffset === 'number'
+        ? { startOffset: optionsOrStartOffset }
+        : optionsOrStartOffset
+    this.offset = opts.startOffset ?? 0
+    this.persistOffsetEnabled = opts.persistOffset ?? true
     this.offsetPath = path.join(dataDir, 'sessions', `${sessionUuid}.offset`)
   }
 
   async start(): Promise<void> {
-    // Restore persisted offset if available and no explicit start given
-    if (this.offset === 0) {
+    // Restore persisted offset only if enabled AND caller did not pin startOffset explicitly
+    if (this.persistOffsetEnabled && this.offset === 0) {
       try {
         const raw = await fsPromises.readFile(this.offsetPath, 'utf8')
         this.offset = parseInt(raw.trim(), 10) || 0
@@ -69,7 +82,9 @@ export class TranscriptTailer extends EventEmitter {
 
     if (newOffset !== this.offset) {
       this.offset = newOffset
-      await this.persistOffset()
+      if (this.persistOffsetEnabled) {
+        await this.persistOffset()
+      }
     }
   }
 
