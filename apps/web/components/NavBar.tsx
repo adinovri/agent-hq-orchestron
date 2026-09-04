@@ -6,9 +6,10 @@ import { useEffect, useState } from 'react'
 
 const NAV_LINKS = [
   { href: '/dashboard', label: 'Dashboard' },
+  { href: '/projects', label: 'Projects' },
   { href: '/metrics', label: 'Metrics' },
   { href: '/graph', label: 'Graph' },
-  { href: '/pair', label: 'Settings' },
+  { href: '/settings', label: 'Settings' },
 ]
 
 export function NavBar() {
