@@ -115,20 +115,29 @@ export class ClaudeAdapter implements AgentAdapter {
 
   async waitTuiReady(handle: TmuxHandle, timeoutMs: number): Promise<void> {
     const deadline = Date.now() + timeoutMs
-    let trustDismissedAt = 0
+    let lastDismissAt = 0
     while (Date.now() < deadline) {
       const pane = await tmux.capturePane(handle.tmuxName)
-      if (TUI_READY_RE.test(pane)) return
 
-      // Trust folder prompt — default cursor on "No, exit", need Down then Enter
-      if (TRUST_PROMPT_RE.test(pane) && Date.now() - trustDismissedAt > 2000) {
+      // Order matters: dismiss interstitials FIRST, then check ready.
+      // Status bar (TUI_READY_RE) can render while interstitial still overlays input.
+      const hasTrust = TRUST_PROMPT_RE.test(pane)
+      const hasMenu = MENU_INTERSTITIAL_RE.test(pane)
+      const canDismiss = Date.now() - lastDismissAt > 1500
+
+      if (hasTrust && canDismiss) {
+        // Default cursor on "No, exit" — Down to "Yes, I trust", then Enter
         await tmux.sendKeys(handle.tmuxName, 'Down')
         await new Promise<void>((resolve) => setTimeout(resolve, 300))
         await tmux.sendKeys(handle.tmuxName, 'Enter')
-        trustDismissedAt = Date.now()
-      } else if (MENU_INTERSTITIAL_RE.test(pane)) {
-        // Numbered menu (theme picker etc) — Enter accepts default
+        lastDismissAt = Date.now()
+      } else if (hasMenu && canDismiss) {
+        // Numbered menu (theme picker, "Teach auto mode?" etc) — Enter accepts default
         await tmux.sendKeys(handle.tmuxName, 'Enter')
+        lastDismissAt = Date.now()
+      } else if (TUI_READY_RE.test(pane) && !hasTrust && !hasMenu) {
+        // Only mark ready if NO interstitial still present
+        return
       }
       await new Promise<void>((resolve) => setTimeout(resolve, 400))
     }
