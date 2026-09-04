@@ -11,7 +11,9 @@ vi.mock('../src/adapters/tmux.js', () => ({
 }))
 
 import * as tmuxMock from '../src/adapters/tmux.js'
-import { claudeAdapter } from '../src/adapters/claude.js'
+import { ClaudeAdapter } from '../src/adapters/claude.js'
+
+const claudeAdapter = new ClaudeAdapter()
 
 const baseSpawnConfig = {
   projectId: 'proj-1',

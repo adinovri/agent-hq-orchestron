@@ -3,8 +3,9 @@ import { promisify } from 'node:util'
 
 const execFile = promisify(execFileCb)
 
-export async function newSession(name: string, argv: string[], cwd: string): Promise<void> {
-  await execFile('tmux', ['new-session', '-d', '-s', name, '-c', cwd, ...argv])
+export async function newSession(name: string, argv: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<void> {
+  const opts = env ? { env: { ...process.env, ...env } } : {}
+  await execFile('tmux', ['new-session', '-d', '-s', name, '-c', cwd, ...argv], opts)
 }
 
 export async function sendKeys(sessionName: string, keys: string): Promise<void> {

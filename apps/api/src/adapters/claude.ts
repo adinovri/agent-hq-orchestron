@@ -39,8 +39,8 @@ function buildArgv(opts: {
   return argv
 }
 
-export const claudeAdapter: AgentAdapter = {
-  name: 'claude',
+export class ClaudeAdapter implements AgentAdapter {
+  readonly name = 'claude'
 
   async spawn(config: SpawnConfig): Promise<TmuxHandle> {
     const claudeUuid = crypto.randomUUID()
@@ -55,14 +55,13 @@ export const claudeAdapter: AgentAdapter = {
 
     const env = config.configDir
       ? { ...process.env, CLAUDE_CONFIG_DIR: config.configDir }
-      : process.env
+      : undefined
 
-    // Spawn without shell — execFile receives argv array directly
     const [cmd, ...args] = argv
-    await tmux.newSession(tmuxName, [cmd!, ...args], config.workspace)
+    await tmux.newSession(tmuxName, [cmd!, ...args], config.workspace, env)
 
     return { tmuxName, claudeUuid, jsonlPath }
-  },
+  }
 
   async resume(sessionUuid: string, config: ResumeConfig): Promise<TmuxHandle> {
     const tmuxName = `orchestron-${sessionUuid.slice(0, 8)}-resume`
@@ -74,11 +73,15 @@ export const claudeAdapter: AgentAdapter = {
       sessionMode: { type: 'resume', uuid: sessionUuid },
     })
 
+    const env = config.configDir
+      ? { ...process.env, CLAUDE_CONFIG_DIR: config.configDir }
+      : undefined
+
     const [cmd, ...args] = argv
-    await tmux.newSession(tmuxName, [cmd!, ...args], config.workspace)
+    await tmux.newSession(tmuxName, [cmd!, ...args], config.workspace, env)
 
     return { tmuxName, claudeUuid: sessionUuid, jsonlPath }
-  },
+  }
 
   async waitTuiReady(handle: TmuxHandle, timeoutMs: number): Promise<void> {
     const deadline = Date.now() + timeoutMs
@@ -88,15 +91,15 @@ export const claudeAdapter: AgentAdapter = {
       await new Promise<void>((resolve) => setTimeout(resolve, 200))
     }
     throw new Error(`waitTuiReady timeout after ${timeoutMs}ms for session ${handle.tmuxName}`)
-  },
+  }
 
   async sendPrompt(handle: TmuxHandle, prompt: string): Promise<void> {
     await tmux.setBuffer(handle.tmuxName, prompt)
     await tmux.pasteBuffer(handle.tmuxName)
     await tmux.sendKeys(handle.tmuxName, 'Enter')
-  },
+  }
 
   async kill(handle: TmuxHandle): Promise<void> {
     await tmux.killSession(handle.tmuxName)
-  },
+  }
 }
