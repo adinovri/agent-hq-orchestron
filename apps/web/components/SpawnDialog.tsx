@@ -71,16 +71,25 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
           {/* Project */}
           <div>
             <label className="text-sm font-medium block mb-1">Project</label>
-            <select
-              value={projectId}
-              onChange={(e) => setProjectId(e.target.value)}
-              className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm"
-            >
-              <option value="">Select project…</option>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
+            {projects.length === 0 ? (
+              <p className="text-sm text-zinc-500">
+                No projects registered.{' '}
+                <a href="/projects" className="underline text-zinc-700 dark:text-zinc-300 hover:text-zinc-900">
+                  Register a project first →
+                </a>
+              </p>
+            ) : (
+              <select
+                value={projectId}
+                onChange={(e) => setProjectId(e.target.value)}
+                className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm"
+              >
+                <option value="">Select project…</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* Template */}
