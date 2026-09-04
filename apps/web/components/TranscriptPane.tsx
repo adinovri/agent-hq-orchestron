@@ -80,7 +80,7 @@ export function TranscriptPane({ uuid }: Props) {
 
     es.onopen = () => setConnected(true)
 
-    es.onmessage = (e) => {
+    const handleTranscript = (e: MessageEvent) => {
       const entry = parseEvent(e.data)
       if (!entry) return
       setEntries((prev) => {
@@ -88,6 +88,11 @@ export function TranscriptPane({ uuid }: Props) {
         return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next
       })
     }
+    // Server sends named events `event: transcript` — need addEventListener, onmessage
+    // only fires for unnamed default events.
+    es.addEventListener('transcript', handleTranscript)
+    // Fallback for unnamed events (defensive):
+    es.onmessage = handleTranscript
 
     es.onerror = () => {
       setConnected(false)
