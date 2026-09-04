@@ -18,7 +18,7 @@ async function fsyncDir(dirPath: string): Promise<void> {
 
 export async function writeJson<T>(filePath: string, value: T): Promise<void> {
   const dir = path.dirname(filePath)
-  await fsPromises.mkdir(dir, { recursive: true })
+  await fsPromises.mkdir(dir, { recursive: true, mode: 0o700 })
 
   const bakPath = `${filePath}.bak`
   const json = JSON.stringify(value, null, 2)
@@ -50,7 +50,7 @@ export async function readJson<T>(filePath: string, fallback: T): Promise<T> {
 
 export async function appendJsonl(filePath: string, event: unknown): Promise<void> {
   const dir = path.dirname(filePath)
-  await fsPromises.mkdir(dir, { recursive: true })
+  await fsPromises.mkdir(dir, { recursive: true, mode: 0o700 })
 
   const line = JSON.stringify(event) + '\n'
   await fsPromises.appendFile(filePath, line, { mode: FILE_MODE })
@@ -100,7 +100,7 @@ export async function listDir(dirPath: string): Promise<string[]> {
 
 export async function withLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
   const dir = path.dirname(filePath)
-  await fsPromises.mkdir(dir, { recursive: true })
+  await fsPromises.mkdir(dir, { recursive: true, mode: 0o700 })
 
   // proper-lockfile requires the file to exist
   if (!fs.existsSync(filePath)) {
