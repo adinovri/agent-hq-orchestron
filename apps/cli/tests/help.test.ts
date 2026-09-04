@@ -52,9 +52,12 @@ describe('CLI --help', () => {
     expect(code !== 0 || stderr.length > 0 || true).toBe(true)
   })
 
-  it('schedule list shows stub message', async () => {
-    const { stdout } = await runCli('schedule', 'list')
-    expect(stdout).toContain('not yet implemented')
+  it('schedule list command is registered and reachable', async () => {
+    // schedule list now calls the real API; when API is down it exits non-zero with an error on stderr
+    const result = await runCli('schedule', 'list')
+    // Either it connected (code 0, shows schedules) or it failed to connect (code non-zero, shows error)
+    // Either way the command is registered and ran — confirm no "unknown command" message
+    expect(result.stdout + result.stderr).not.toContain('unknown command')
   })
 
   it('token generate --json token is hex string', async () => {
