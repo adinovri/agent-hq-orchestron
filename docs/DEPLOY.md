@@ -139,7 +139,13 @@ npm run build && npm run start
 
 Open http://localhost:3000 di browser.
 
-**Constraint:** hanya laptop ini bisa akses. Gak ada auth. Session hilang saat laptop offline/sleep.
+**Constraint:**
+
+- **Akses lokal saja.** Bind `127.0.0.1` — HP/tablet/laptop lain di WiFi yang sama tidak bisa connect (connection refused). Cuma browser/CLI di laptop yang sama.
+- **No auth layer.** Siapapun yang bisa buka terminal/browser di laptop ini akses semua endpoint tanpa login. Trade-off intentional: single-user laptop = trusted zone.
+- **Live subprocess ephemeral saat reboot.** File-based state (session records, transcripts, project registry, metrics) **persist forever**. Yang mati saat reboot / `tmux kill-server` = live `claude` subprocess. Session status yang tadinya `running` / `waiting` auto-transition ke `killed` dgn reason "orphaned" via boot-time orphan scanner. Terminal-state sessions (`completed`, `failed`, `killed`) fully persist — record + transcript readable selamanya.
+- **Resumability.** In-flight session yang mati bisa dilanjut: `orchestron session resume <uuid>` → invoke `claude --resume <uuid>` yang restore context dari transcript. Konversasi lanjut seolah tidak putus.
+- **API call fail saat offline.** Kalau laptop offline (WiFi off) atau sleep, API call `claude` ke Anthropic timeout — session yang lagi thinking transisi ke `failed`. Tapi transcript sampai poin timeout tetap persist.
 
 ---
 
