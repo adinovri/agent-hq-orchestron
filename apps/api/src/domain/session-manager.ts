@@ -81,7 +81,41 @@ export class SessionManager {
     }
 
     await writeJson(this.sessionPath(uuid), session)
+
+    // Fire-and-forget: complete the spawn lifecycle async so the HTTP response is fast.
+    // Dismisses trust folder / theme picker, waits for TUI ready, pastes prompt, then transitions.
+    this.completeSpawn(uuid, adapter, handle, spawnConfig.initialPrompt).catch(async (err: unknown) => {
+      const msg = (err as Error).message ?? String(err)
+      console.error(`[session-manager] completeSpawn failed for ${uuid}: ${msg}`)
+      try {
+        const rec = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+        if (rec && rec.status === 'spawning') {
+          await this.transition(uuid, 'failed').catch(() => {})
+          const failed = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+          if (failed) {
+            failed.failureReason = msg
+            await writeJson(this.sessionPath(uuid), failed)
+          }
+        }
+      } catch { /* ignore */ }
+    })
+
     return session
+  }
+
+  private async completeSpawn(
+    uuid: string,
+    adapter: import('@agent-hq-orchestron/shared').AgentAdapter,
+    handle: import('@agent-hq-orchestron/shared').TmuxHandle,
+    prompt: string,
+  ): Promise<void> {
+    // TUI ready (auto-dismisses trust/menu interstitials) — 30s timeout for cold start
+    await adapter.waitTuiReady(handle, 30_000)
+    await this.transition(uuid, 'waiting')
+
+    // Paste initial prompt + Enter
+    await adapter.sendPrompt(handle, prompt)
+    await this.transition(uuid, 'running')
   }
 
   async transition(uuid: string, newStatus: SessionStatus): Promise<SessionMetadata> {
