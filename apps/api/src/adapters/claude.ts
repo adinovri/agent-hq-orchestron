@@ -26,9 +26,15 @@ const MENU_INTERSTITIAL_RE = /❯\s*[0-9]+\./
  * Example: cwd=/home/scriberion, configDir=/home/scriberion/ClaudeConfigs/adi.novriansyah
  * → /home/scriberion/ClaudeConfigs/adi.novriansyah/projects/-home-scriberion/<uuid>.jsonl
  */
+function expandHome(p: string): string {
+  if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2))
+  if (p === '~') return os.homedir()
+  return p
+}
+
 function claudeTranscriptPath(workspace: string, configDir: string | undefined, uuid: string): string {
-  const baseDir = configDir ?? path.join(os.homedir(), '.claude')
-  const mangled = workspace.replace(/\//g, '-')
+  const baseDir = expandHome(configDir ?? path.join(os.homedir(), '.claude'))
+  const mangled = expandHome(workspace).replace(/\//g, '-')
   return path.join(baseDir, 'projects', mangled, `${uuid}.jsonl`)
 }
 
@@ -76,7 +82,7 @@ export class ClaudeAdapter implements AgentAdapter {
     })
 
     const env = config.configDir
-      ? { ...process.env, CLAUDE_CONFIG_DIR: config.configDir }
+      ? { ...process.env, CLAUDE_CONFIG_DIR: expandHome(config.configDir) }
       : undefined
 
     const [cmd, ...args] = argv
@@ -96,7 +102,7 @@ export class ClaudeAdapter implements AgentAdapter {
     })
 
     const env = config.configDir
-      ? { ...process.env, CLAUDE_CONFIG_DIR: config.configDir }
+      ? { ...process.env, CLAUDE_CONFIG_DIR: expandHome(config.configDir) }
       : undefined
 
     const [cmd, ...args] = argv
