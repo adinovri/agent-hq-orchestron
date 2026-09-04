@@ -34,18 +34,29 @@ export default function DashboardPage() {
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<SessionMetadata[]>({
     queryKey: ['sessions'],
-    queryFn: () => fetchJson('/api/sessions'),
+    queryFn: async () => {
+      const r = await fetchJson<{ sessions: SessionMetadata[] }>('/api/sessions')
+      return r.sessions
+    },
     refetchInterval: 5_000,
   })
 
   const { data: projects = [] } = useQuery<ProjectMetadata[]>({
     queryKey: ['projects'],
-    queryFn: () => fetchJson('/api/projects'),
+    queryFn: async () => {
+      const r = await fetchJson<{ projects: ProjectMetadata[] }>('/api/projects')
+      return r.projects
+    },
   })
 
   const { data: templates = [] } = useQuery<Array<{ name: string; description?: string }>>({
     queryKey: ['templates'],
-    queryFn: () => fetchJson('/api/templates'),
+    queryFn: async () => {
+      const r = await fetchJson<{ templates: Array<{ name: string; description?: string }> }>(
+        '/api/templates',
+      )
+      return r.templates
+    },
   })
 
   const killMutation = useMutation({

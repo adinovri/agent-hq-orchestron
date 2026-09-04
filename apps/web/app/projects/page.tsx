@@ -27,7 +27,10 @@ export default function ProjectsPage() {
 
   const { data: projects = [], isLoading } = useQuery<ProjectMetadata[]>({
     queryKey: ['projects'],
-    queryFn: () => fetchJson('/api/projects'),
+    queryFn: async () => {
+      const r = await fetchJson<{ projects: ProjectMetadata[] }>('/api/projects')
+      return r.projects
+    },
     refetchInterval: 10_000,
   })
 

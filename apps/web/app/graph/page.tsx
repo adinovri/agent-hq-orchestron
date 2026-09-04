@@ -24,7 +24,10 @@ export default function GraphPage({
 
   const { data: sessions = [] } = useQuery<SessionMetadata[]>({
     queryKey: ['sessions'],
-    queryFn: () => fetchJson('/api/sessions'),
+    queryFn: async () => {
+      const r = await fetchJson<{ sessions: SessionMetadata[] }>('/api/sessions')
+      return r.sessions
+    },
     refetchInterval: 5_000,
   })
 
