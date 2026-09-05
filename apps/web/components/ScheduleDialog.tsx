@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import cronstrue from 'cronstrue'
 import { Button } from '@/components/ui/button'
 import { apiFetch } from '@/lib/fetcher'
-import { X } from 'lucide-react'
+import { X, CalendarClock, AlertCircle } from 'lucide-react'
 
 interface Props {
   open: boolean
@@ -17,6 +18,68 @@ interface Props {
     prompt?: string
     template?: string
   }
+}
+
+/**
+ * Cheap client-side next-fire simulator for a 5-field cron expression.
+ * Not a full cron engine — walks minute-by-minute up to 60 days ahead.
+ * Handles: `*`, integers, comma lists `1,15,30`, ranges `1-5`, and
+ * step syntax `* /5` `10-30/2`. Field order: min hour dom month dow (0-6, 0=Sun).
+ */
+function simulateNextFires(expr: string, count: number): Date[] {
+  const parts = expr.trim().split(/\s+/)
+  if (parts.length !== 5) return []
+  const [min, hour, dom, mon, dow] = parts
+
+  const inField = (val: number, field: string, min: number, max: number): boolean => {
+    for (const chunk of field.split(',')) {
+      const [range, stepStr] = chunk.split('/')
+      const step = stepStr ? parseInt(stepStr, 10) : 1
+      if (isNaN(step) || step <= 0) return false
+
+      let lo = min
+      let hi = max
+      if (range && range !== '*') {
+        if (range.includes('-')) {
+          const [loStr, hiStr] = range.split('-')
+          lo = parseInt(loStr!, 10)
+          hi = parseInt(hiStr!, 10)
+        } else {
+          lo = hi = parseInt(range, 10)
+        }
+        if (isNaN(lo) || isNaN(hi)) return false
+      }
+      for (let v = lo; v <= hi; v += step) {
+        if (v === val) return true
+      }
+    }
+    return false
+  }
+
+  const out: Date[] = []
+  const start = new Date(Date.now() + 60_000)
+  start.setSeconds(0, 0)
+  const end = start.getTime() + 60 * 24 * 60 * 60 * 1000
+  const cur = new Date(start)
+
+  while (cur.getTime() < end && out.length < count) {
+    const minute = cur.getMinutes()
+    const hour24 = cur.getHours()
+    const day = cur.getDate()
+    const month = cur.getMonth() + 1
+    const weekday = cur.getDay()
+    if (
+      inField(minute, min!, 0, 59) &&
+      inField(hour24, hour!, 0, 23) &&
+      inField(day, dom!, 1, 31) &&
+      inField(month, mon!, 1, 12) &&
+      inField(weekday, dow!, 0, 6)
+    ) {
+      out.push(new Date(cur))
+    }
+    cur.setMinutes(cur.getMinutes() + 1)
+  }
+  return out
 }
 
 const CRON_PRESETS: Array<{ label: string; cron: string }> = [
@@ -37,6 +100,24 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
   const [error, setError] = useState<string | null>(null)
 
   const isEdit = !!initial?.id
+
+  // Human-readable cron description + next-3-fire preview.
+  const cronPreview = useMemo(() => {
+    const trimmed = cron.trim()
+    if (!trimmed) return { human: '', nextRuns: [] as Date[], error: null as string | null }
+    let human = ''
+    try {
+      human = cronstrue.toString(trimmed, { verbose: false, throwExceptionOnParseError: true })
+    } catch (err) {
+      return { human: '', nextRuns: [], error: (err as Error).message }
+    }
+    // Compute next 3 runs client-side using minimal cron next-fire logic.
+    // We call cronstrue for humanization + a light forward-walk simulator
+    // that steps minute-by-minute up to 60d ahead — good enough for common
+    // patterns; UI-only preview so accuracy isn't critical.
+    const nextRuns = simulateNextFires(trimmed, 3)
+    return { human, nextRuns, error: null }
+  }, [cron])
 
   useEffect(() => {
     if (open && !projectId && projects.length === 1) setProjectId(projects[0]!.id)
@@ -150,6 +231,35 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
             <p className="text-[10px] text-zinc-400 mt-1">
               Format: <code>minute hour day-of-month month day-of-week</code>
             </p>
+
+            {/* Cron preview */}
+            {cronPreview.error ? (
+              <div className="mt-2 flex items-start gap-1.5 rounded-md border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 p-2 text-xs text-red-700 dark:text-red-300">
+                <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-medium">Invalid cron expression</div>
+                  <div className="text-[11px] opacity-80">{cronPreview.error}</div>
+                </div>
+              </div>
+            ) : cronPreview.human ? (
+              <div className="mt-2 rounded-md border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/30 p-2 text-xs">
+                <div className="flex items-start gap-1.5 text-emerald-800 dark:text-emerald-300">
+                  <CalendarClock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium">{cronPreview.human}</div>
+                    {cronPreview.nextRuns.length > 0 && (
+                      <div className="mt-1 text-emerald-700 dark:text-emerald-400 text-[11px] space-y-0.5">
+                        {cronPreview.nextRuns.map((d, i) => (
+                          <div key={i} className="font-mono">
+                            {i === 0 ? 'Next: ' : '     · '}{d.toLocaleString()}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div>
