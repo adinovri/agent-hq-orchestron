@@ -255,19 +255,28 @@ export class SessionManager {
       throw new Error(`Cannot interrupt session in ${session.status} state`)
     }
 
-    const adapter = this.registry.getOrThrow(session.agentType)
     const handle = { tmuxName: session.tmuxName, claudeUuid: session.claudeSessionUuid, jsonlPath: session.jsonlPath }
 
-    // Send Escape via adapter — Claude TUI interprets as interrupt-turn.
-    // Uses low-level tmux binding since adapter interface doesn't expose
-    // arbitrary keys. Fallback silently if tmux is dead.
+    // Send Escape via tmux — Claude TUI interprets as interrupt-turn.
+    // Fallback silently if tmux is dead.
     try {
       const tmux = await import('../adapters/tmux.js')
       await tmux.sendKeys(handle.tmuxName, 'Escape')
     } catch { /* ignore */ }
 
-    // Don't transition state — let the watcher pick up `turn_duration`
-    // naturally as Claude wraps up the aborted turn.
+    // Interrupted turns write '[Request interrupted by user]' but NO
+    // `turn_duration` event, so the tailer/safety-net won't auto-transition.
+    // Proactively flip running → idle here since we know the user chose to
+    // stop. Close any active watcher for cleanliness.
+    if (session.status === 'running') {
+      const w = this.turnWatchers.get(uuid)
+      if (w) {
+        w.close()
+        this.turnWatchers.delete(uuid)
+      }
+      const updated = await this.transition(uuid, 'idle').catch(() => session)
+      return updated
+    }
     return session
   }
 
