@@ -15,9 +15,20 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
 - **Multi-project + multi-harness** — one dashboard, sessions scoped per
   project, mix Claude / Codex / OpenCode harnesses (whichever adapters
   are installed).
-- **Full session lifecycle** — reopen a completed session, clone/fork one
-  to explore a divergent path, interrupt a running turn, queue prompts
-  while the model is thinking.
+- **Full session lifecycle** — reopen a completed session (resume same
+  Claude conversation), fork one to explore a divergent path, respawn
+  from the same prompt with a fresh conversation, interrupt a running
+  turn, queue prompts while the model is thinking. Each of those three
+  actions opens a dialog with per-call model + effort override.
+- **Sleep on idle** — sessions unused for 15 min go to `sleeping`
+  (tmux released, no resources held). Sending input auto-wakes them
+  via `claude --resume` in ~3 s.
+- **Shared memory pool** — every claude session across every workspace
+  automatically points at `~/.claude/shared-memory`, so MEMORY.md and
+  entries are visible fleet-wide.
+- **Context indicator** — the transcript header shows live
+  `ctx N / 200K [bar] ⤴compactions` so you know how heavy a Claude
+  session is running.
 - **Cron-scheduled spawns** — YAML-importable schedules with live-preview
   of the next fires.
 - **Agent-to-agent coordination** — auto-injected MCP server so a running

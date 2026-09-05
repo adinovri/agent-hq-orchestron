@@ -57,7 +57,7 @@ Dashboard → **Projects** page → **Register** button.
 | **Group** | Optional tag for filtering (e.g. `personal`, `work`) |
 | **Tags** | Free-form multi-select |
 | **Default agent** | Which harness spawns use by default |
-| **Default model** | e.g. `claude-sonnet-5`, `claude-opus-5`, `claude-haiku-4-5-20251001` |
+| **Default model** | e.g. `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5-1`, `claude-fable-5`, `claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5` |
 | **Default effort** | `low` / `medium` / `high` / `xhigh` / `max` |
 
 ### Edit / delete
@@ -178,18 +178,59 @@ Env override: `ORCHESTRON_IDLE_TIMEOUT_MS=<ms>`.
 A safety-net sweep every 10 min catches orphans whose primary timer
 was somehow lost.
 
-### Reopen vs Clone
+### Reopen vs Fork vs Respawn
 
-| | Reopen | Clone |
-|---|---|---|
-| **Purpose** | Continue a completed conversation | Fork a divergent path |
-| **claude-session-uuid** | Same as original | Same as original (shared context) |
-| **Session id** | Same | Fresh uuid, `parentSessionId` = original id |
-| **UI record** | Overwrites (tmuxName + jsonlPath change) | New card on dashboard |
-| **When to use** | "Just re-open where we left off" | "Explore an alternative from here" |
+Three ways to bring a terminal session back to life:
 
-Both auto-backfill `model`/`effort` from project defaults if the
-original record lacks them (pre-2026-09-04 sessions).
+| | Reopen | Fork | Respawn |
+|---|---|---|---|
+| **Session id** | Same | New | Same |
+| **claude-session-uuid** | Same | Same (shared context) | **Fresh** |
+| **JSONL** | Same (resume) | Same (resume) | **New** (start over) |
+| **Purpose** | Continue same conversation | Explore alternative branch | Restart from prompt |
+| **When to use** | "Resume where I left off" | "Try a different direction from here" | "Same prompt, clean slate" |
+| **Requires transcript?** | Yes (JSONL must exist) | Yes | No |
+
+Buttons are only visible for terminal states (`succeeded`, `killed`,
+`failed`, `completed`). Reopen and Fork are additionally hidden when
+`hasTranscript === false` (session died before writing any JSONL) —
+Respawn stays visible as the only recovery for that case.
+
+**Model + effort override.** Clicking any of the three opens a dialog
+with model + effort pickers (harness-aware — Claude gets the curated
+list, Codex/OpenCode a free-text input). Fork also gets an optional
+new-prompt textarea. Leaving the pickers on "— Default / keep"
+preserves the session's own model/effort (precedence: override > session's
+own > project default).
+
+Both Reopen and Fork auto-backfill `model`/`effort` from project defaults
+if the original record lacks them (pre-2026-09-04 sessions).
+
+### Context usage indicator
+
+In the session detail transcript header, next to the polling status,
+Claude sessions show `ctx  38K / 200K [bar] ⤴N` — the last turn's
+effective context (input + cache_read + cache_creation) against the
+200K native ceiling. Bar color grades emerald → amber → red as you
+approach the limit. The `⤴N` chip appears once Claude has auto-compacted
+at least once; tooltip has the full breakdown + timestamp of last
+compaction. Not shown for non-Claude harnesses (different transcript
+shape).
+
+### Shared memory pool (Claude only)
+
+Every claude spawn/reopen/fork/respawn/wake-up ensures the per-workspace
+memory directory
+(`<CLAUDE_CONFIG_DIR>/projects/<mangled-cwd>/memory/`) is a symlink to
+a shared pool — default `~/.claude/shared-memory`, override with the
+env `ORCHESTRON_SHARED_MEMORY_DIR`. Effect: MEMORY.md and every entry
+under it is visible to every Claude session across every workspace and
+every harness invocation (orchestron + CLI + other bridges).
+
+If orchestron finds a real memory directory already at the expected
+path, it renames it to `memory.bak-<timestamp>` before creating the
+symlink — nothing is deleted, so you can merge manually if needed. Set
+the env var to `""` to disable the auto-symlink.
 
 ---
 

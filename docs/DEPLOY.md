@@ -100,6 +100,13 @@ export ORCHESTRON_BIND_HOST=127.0.0.1
 export ORCHESTRON_PORT=8080
 export ORCHESTRON_MAX_CONCURRENT=8
 export ORCHESTRON_LOG_LEVEL=info
+# Idle sweeper — sessions in idle/needs_input for longer than this are
+# warm-shut-down (tmux released, status → 'sleeping'). 0 disables.
+export ORCHESTRON_IDLE_TIMEOUT_MS=900000     # 15 min
+# Shared Claude memory pool — every spawn/reopen/clone/respawn ensures
+# <configDir>/projects/<mangled-cwd>/memory/ is a symlink here.
+# Set to "" to disable the auto-symlink.
+export ORCHESTRON_SHARED_MEMORY_DIR=~/.claude/shared-memory
 ```
 
 ### Option B: Config file
@@ -111,6 +118,7 @@ export ORCHESTRON_LOG_LEVEL=info
   "port": 8080,
   "maxConcurrent": 8,
   "logLevel": "info",
+  "idleTimeoutMs": 900000,
   "adapters": {
     "claude": true,
     "codex": false,
@@ -122,6 +130,16 @@ export ORCHESTRON_LOG_LEVEL=info
 Precedence: env > config file > built-in defaults.
 
 **Auto-detected default `maxConcurrent`**: `floor(totalmem_MB / 800)`, capped at 20. Overrideable.
+
+**Idle sweeper (`idleTimeoutMs`)**: default 900000 (15 min). Sessions in
+`idle` or `needs_input` beyond this go to `sleeping` (tmux killed,
+JSONL preserved). Wake up by sending input — cold-start `claude --resume`
+takes ~3-5 s. Set 0 to disable. See [USAGE.md §3](USAGE.md) for details.
+
+**Shared memory (`ORCHESTRON_SHARED_MEMORY_DIR`)**: default
+`~/.claude/shared-memory`. Env-only for now (not in config.json). Every
+Claude spawn/reopen/fork/respawn/wake-up symlinks the per-workspace
+memory dir into this pool so all sessions share one memory pool.
 
 ---
 
