@@ -29,6 +29,8 @@ import { MetricsCollector } from './domain/metrics-collector.js'
 import { metricsPlugin } from './routes/metrics.js'
 import { Scheduler } from './domain/scheduler.js'
 import { schedulesPlugin } from './routes/schedules.js'
+import { NotesStore } from './domain/notes-store.js'
+import { notesPlugin } from './routes/notes.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -177,6 +179,8 @@ await fastify.register(delegationPlugin(delegationTracker, sessionManager))
 await fastify.register(streamPlugin(sessionManager, config.dataDir))
 await fastify.register(metricsPlugin(metricsCollector))
 await fastify.register(schedulesPlugin(scheduler))
+const notesStore = new NotesStore(config.dataDir)
+await fastify.register(notesPlugin(notesStore))
 
 // Scan for orphaned worktrees before accepting connections
 await scanOrphans(snapshotService, sessionManager).catch((err) => {

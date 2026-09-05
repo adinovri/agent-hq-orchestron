@@ -86,6 +86,42 @@ export class SessionManager {
       throw new PoolFullError(this.maxConcurrent)
     }
 
+    // Delegation guardrails: prevent infinite child-of-child spawning and
+    // per-parent spam.
+    if (spawnConfig.parentSessionId) {
+      const MAX_DEPTH = 5           // grandparent → parent → ... → self, max chain
+      const MAX_CHILDREN = 10        // per parent
+      const RATE_LIMIT_WINDOW_MS = 60_000
+      const RATE_LIMIT_MAX = 5       // spawns/minute per parent
+
+      // Walk parent chain to compute depth
+      let depth = 1
+      let cur = spawnConfig.parentSessionId
+      while (cur && depth < MAX_DEPTH + 1) {
+        const rec = await readJson<SessionMetadata | null>(this.sessionPath(cur), null)
+        if (!rec || !rec.parentSessionId) break
+        cur = rec.parentSessionId
+        depth += 1
+      }
+      if (depth > MAX_DEPTH) {
+        throw new Error(`Delegation depth limit reached (${MAX_DEPTH}). Parent chain too long.`)
+      }
+
+      // Count existing children of this parent
+      const all = await this.list()
+      const children = all.filter((s) => s.parentSessionId === spawnConfig.parentSessionId)
+      if (children.length >= MAX_CHILDREN) {
+        throw new Error(`Parent ${spawnConfig.parentSessionId.slice(0, 8)} already has ${children.length} children (max ${MAX_CHILDREN})`)
+      }
+
+      // Rate limit: how many children spawned in the last window
+      const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS
+      const recent = children.filter((s) => new Date(s.startedAt).getTime() > cutoff)
+      if (recent.length >= RATE_LIMIT_MAX) {
+        throw new Error(`Parent ${spawnConfig.parentSessionId.slice(0, 8)} spawn rate limit: ${RATE_LIMIT_MAX} per minute`)
+      }
+    }
+
     const uuid = crypto.randomUUID()
     const adapter = this.registry.getOrThrow(spawnConfig.agentType)
     const handle = await adapter.spawn(spawnConfig)
@@ -376,7 +412,61 @@ export class SessionManager {
 
     // Direct transition via `completing` → `succeeded`
     await this.transition(uuid, 'completing').catch(() => {})
-    return this.transition(uuid, 'succeeded')
+    const succeeded = await this.transition(uuid, 'succeeded')
+
+    // Terminal-report callback: if this session had a parent, deliver a
+    // sanitized summary to the parent's input (tycho-style). Fire-and-forget.
+    if (session.parentSessionId) {
+      this.deliverTerminalReport(session.parentSessionId, session).catch((err) =>
+        console.warn(`[session-manager] terminal-report to parent failed: ${(err as Error).message}`),
+      )
+    }
+    return succeeded
+  }
+
+  /** Read last assistant text from a session's JSONL (best-effort summary). */
+  private async readLastAssistantText(jsonlPath: string): Promise<string> {
+    try {
+      const { readFile } = await import('node:fs/promises')
+      const raw = await readFile(jsonlPath, 'utf8')
+      let last = ''
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue
+        try {
+          const o = JSON.parse(line) as {
+            type?: string
+            message?: { content?: Array<{ type?: string; text?: string }> }
+          }
+          if (o.type === 'assistant' && Array.isArray(o.message?.content)) {
+            for (const b of o.message!.content!) {
+              if (b.type === 'text' && b.text) last = b.text
+            }
+          }
+        } catch { /* skip */ }
+      }
+      return last
+    } catch { return '' }
+  }
+
+  /**
+   * Deliver a terminal report to the parent session — sanitized summary
+   * queued as a user turn. Uses sendInput which handles all statuses.
+   */
+  private async deliverTerminalReport(parentId: string, child: SessionMetadata): Promise<void> {
+    const parent = await readJson<SessionMetadata | null>(this.sessionPath(parentId), null)
+    if (!parent) return
+    // Only deliver if parent is alive (not terminal).
+    const TERMINAL: SessionStatus[] = ['completed', 'succeeded', 'failed', 'killed']
+    if (TERMINAL.includes(parent.status)) return
+
+    const summary = (await this.readLastAssistantText(child.jsonlPath)).slice(0, 800)
+    const report = [
+      `[Child session ${child.id.slice(0, 8)} archived — status: ${child.status}]`,
+      child.initialPrompt ? `Original prompt: ${child.initialPrompt.slice(0, 200)}` : '',
+      summary ? `Final response: ${summary}` : '(no assistant output)',
+    ].filter(Boolean).join('\n')
+
+    await this.sendInput(parentId, report).catch(() => { /* parent might be busy */ })
   }
 
   async transition(uuid: string, newStatus: SessionStatus): Promise<SessionMetadata> {
