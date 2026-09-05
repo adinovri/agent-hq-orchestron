@@ -12,8 +12,19 @@ declare const self: ServiceWorkerGlobalScope & typeof globalThis & {
   __SW_MANIFEST: (PrecacheEntry | string)[] | undefined
 }
 
+// Precache disabled: with Next.js rolling builds, old hashed chunks are
+// purged from the server on the next deploy → old SW's precache manifest
+// 404s → `bad-precaching-response` throws → SW enters broken state and
+// serves stale responses for everything. Runtime-only caching is safer:
+// we always try the network first, cache what succeeds, serve cache as
+// fallback. Cost: no offline install, but Adi's on Tailscale (always online).
+// Note: Serwist requires the literal `self.__SW_MANIFEST` reference in
+// source for its build-time substitution, so we consume the value but
+// discard it. Passing [] to precacheEntries opts out of precache install.
+const _manifest = self.__SW_MANIFEST
+void _manifest
 const serwist = new Serwist({
-  precacheEntries: self.__SW_MANIFEST,
+  precacheEntries: [],
   skipWaiting: true,
   clientsClaim: true,
   navigationPreload: true,
