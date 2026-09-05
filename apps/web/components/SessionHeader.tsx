@@ -32,12 +32,15 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
   const effortFromProject = !session.effort && !!projectDefaultEffort
   const active = isActive(session.status)
   const canArchive = ['needs_input', 'idle', 'waiting', 'running', 'sleeping'].includes(session.status)
-  // Reopen + Clone/Fork both spawn a fresh tmux against the same
-  // claudeSessionUuid → same JSONL. Only safe when the ORIGINAL tmux is
-  // guaranteed dead: terminal states or 'sleeping' (which has no tmux held).
-  const RESUMABLE = ['succeeded', 'killed', 'failed', 'completed', 'sleeping'] as const
-  const canReopen = RESUMABLE.includes(session.status as (typeof RESUMABLE)[number])
-  const canClone = RESUMABLE.includes(session.status as (typeof RESUMABLE)[number])
+  // Reopen + Fork are for truly-done sessions only.
+  // - Sleeping is excluded from Reopen because the wake-on-input flow
+  //   already spawns a fresh tmux transparently; Reopen would be redundant.
+  // - Sleeping is excluded from Fork because a later wake of the parent
+  //   would spawn a second tmux writing to the same JSONL as the fork
+  //   (both share claudeSessionUuid). Terminal-only is the safe rule.
+  const TERMINAL = ['succeeded', 'killed', 'failed', 'completed'] as const
+  const canReopen = TERMINAL.includes(session.status as (typeof TERMINAL)[number])
+  const canClone = TERMINAL.includes(session.status as (typeof TERMINAL)[number])
   const [expanded, setExpanded] = useState(false)
 
   return (
