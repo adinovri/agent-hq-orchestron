@@ -18,9 +18,26 @@ interface Entry {
   content: string
 }
 
+interface ContextStats {
+  lastInputTokens: number
+  lastCacheReadTokens: number
+  lastCacheCreationTokens: number
+  lastOutputTokens: number
+  lastEffectiveContext: number
+  assistantTurns: number
+  compactionCount: number
+  lastCompactedAt?: string
+}
+
 interface TranscriptResponse {
   entries: Entry[]
   size: number
+  contextStats: ContextStats | null
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K`
+  return String(n)
 }
 
 interface Props {
@@ -130,6 +147,54 @@ function EntryView({ entry }: { entry: Entry }) {
   )
 }
 
+/**
+ * Compact context-usage badge. Claude native context is 200K, but sessions
+ * on the 1M-tier can exceed that between compactions — so we show absolute
+ * tokens against 200K (native ceiling) and color the bar by how close we
+ * are to the next likely auto-compact.
+ */
+function ContextIndicator({ stats }: { stats: ContextStats }) {
+  const NATIVE_LIMIT = 200_000
+  const ctx = stats.lastEffectiveContext
+  const pct = Math.min(999, Math.round((ctx / NATIVE_LIMIT) * 100))
+  const barColor =
+    pct < 60 ? 'bg-emerald-500' :
+    pct < 85 ? 'bg-amber-500' :
+    'bg-red-500'
+
+  const tip = [
+    `Last turn effective context: ${ctx.toLocaleString()} tokens`,
+    `  input: ${stats.lastInputTokens}`,
+    `  cache read: ${stats.lastCacheReadTokens}`,
+    `  cache creation: ${stats.lastCacheCreationTokens}`,
+    `Turns: ${stats.assistantTurns}`,
+    `Compactions: ${stats.compactionCount}${stats.lastCompactedAt ? ` (last ${new Date(stats.lastCompactedAt).toLocaleString()})` : ''}`,
+    `Native ceiling shown: ${NATIVE_LIMIT.toLocaleString()} — session may run on 1M tier`,
+  ].join('\n')
+
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 pl-2 pr-1.5 py-0.5 rounded border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 tabular-nums font-mono"
+      title={tip}
+    >
+      <span className="text-[10px] uppercase tracking-wide text-zinc-400">ctx</span>
+      <span className="text-zinc-700 dark:text-zinc-300">{formatTokens(ctx)}</span>
+      <span className="text-zinc-400 dark:text-zinc-600">/{formatTokens(NATIVE_LIMIT)}</span>
+      <span className={`inline-block h-1.5 w-8 rounded-full overflow-hidden bg-zinc-200 dark:bg-zinc-800`}>
+        <span className={`block h-full ${barColor}`} style={{ width: `${Math.min(100, pct)}%` }} />
+      </span>
+      {stats.compactionCount > 0 && (
+        <span
+          className="text-[10px] px-1 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-500"
+          title={`Compacted ${stats.compactionCount}× so far`}
+        >
+          ⤴{stats.compactionCount}
+        </span>
+      )}
+    </span>
+  )
+}
+
 export function TranscriptPanePoll({ uuid, status }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const prevCountRef = useRef(0)
@@ -161,13 +226,16 @@ export function TranscriptPanePoll({ uuid, status }: Props) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 px-3 sm:px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-400">
+      <div className="flex items-center gap-2 px-3 sm:px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-400 flex-wrap">
         <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
         <span>Polling · {entries.length} entries</span>
         {dataUpdatedAt && (
-          <span className="text-zinc-400 dark:text-zinc-600">
+          <span className="text-zinc-400 dark:text-zinc-600 hidden sm:inline">
             · updated {new Date(dataUpdatedAt).toLocaleTimeString()}
           </span>
+        )}
+        {data?.contextStats && (
+          <ContextIndicator stats={data.contextStats} />
         )}
         <button
           onClick={() => refetch()}

@@ -233,6 +233,17 @@ export function sessionsPlugin(
       let lastTurnEndTs = ''
       let lastUserTs = ''
       let lastAssistantText = ''
+      // Context-usage tracking (Claude only — usage fields are Claude-specific
+      // shape). Codex/OpenCode adapters will get their own parsers later.
+      let assistantTurns = 0
+      let compactionCount = 0
+      let lastCompactedAt: string | undefined
+      let lastUsage: {
+        input_tokens?: number
+        output_tokens?: number
+        cache_read_input_tokens?: number
+        cache_creation_input_tokens?: number
+      } | undefined
       let seq = 0
       for (const line of raw.split('\n')) {
         if (!line.trim()) continue
@@ -240,14 +251,30 @@ export function sessionsPlugin(
           type?: string
           subtype?: string
           timestamp?: string
-          message?: { content?: string | Array<{ type?: string; text?: string; name?: string; input?: unknown; content?: string | Array<{ text?: string }> }> }
+          message?: {
+            content?: string | Array<{ type?: string; text?: string; name?: string; input?: unknown; content?: string | Array<{ text?: string }> }>
+            usage?: {
+              input_tokens?: number
+              output_tokens?: number
+              cache_read_input_tokens?: number
+              cache_creation_input_tokens?: number
+            }
+          }
         }
         try { ev = JSON.parse(line) } catch { continue }
         if (ev.type === 'system' && ev.subtype === 'turn_duration' && ev.timestamp) {
           lastTurnEndTs = ev.timestamp
         }
+        if (ev.type === 'system' && ev.subtype === 'compact_boundary') {
+          compactionCount += 1
+          if (ev.timestamp) lastCompactedAt = ev.timestamp
+        }
         if (ev.type === 'user' && typeof ev.message?.content === 'string' && ev.timestamp) {
           lastUserTs = ev.timestamp
+        }
+        if (ev.type === 'assistant' && ev.message?.usage) {
+          assistantTurns += 1
+          lastUsage = ev.message.usage
         }
         const ts = ev.timestamp ?? ''
         const t = ev.type
@@ -283,7 +310,27 @@ export function sessionsPlugin(
         manager.reconcileTurnEnd(session.id, lastAssistantText).catch(() => {})
       }
 
-      return { entries, size: raw.length }
+      // Context stats — Claude-only. The formula
+      //   input + cache_creation + cache_read
+      // captures what the last turn actually sent to the model, which is the
+      // best proxy for "current context weight" between compactions.
+      const contextStats = session.agentType === 'claude' && lastUsage
+        ? {
+            lastInputTokens: lastUsage.input_tokens ?? 0,
+            lastCacheReadTokens: lastUsage.cache_read_input_tokens ?? 0,
+            lastCacheCreationTokens: lastUsage.cache_creation_input_tokens ?? 0,
+            lastOutputTokens: lastUsage.output_tokens ?? 0,
+            lastEffectiveContext:
+              (lastUsage.input_tokens ?? 0) +
+              (lastUsage.cache_read_input_tokens ?? 0) +
+              (lastUsage.cache_creation_input_tokens ?? 0),
+            assistantTurns,
+            compactionCount,
+            lastCompactedAt,
+          }
+        : null
+
+      return { entries, size: raw.length, contextStats }
     })
 
     app.post('/api/sessions/:uuid/input', async (req, reply) => {
