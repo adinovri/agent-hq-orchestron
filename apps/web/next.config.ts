@@ -12,7 +12,34 @@ const withSerwist = withSerwistInit({
   ],
 })
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8090'
+// Resolve the API base URL for server-side rewrites. Precedence:
+//   1. NEXT_PUBLIC_API_URL from env (systemd unit or manual override)
+//   2. ~/.orchestron/config.json { bindHost, port } — the same file the API
+//      server itself uses, so a bare `npm run build` still gets the right
+//      target when the API is bound to a non-loopback interface (e.g. tailscale).
+//   3. Loopback fallback (only correct when API also binds to 127.0.0.1).
+function resolveApiUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL
+  try {
+    // Lazy require so this stays edge-safe when NEXT_PUBLIC_API_URL is set.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require('node:fs') as typeof import('node:fs')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require('node:path') as typeof import('node:path')
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const os = require('node:os') as typeof import('node:os')
+    const cfgPath = path.join(os.homedir(), '.orchestron', 'config.json')
+    const raw = fs.readFileSync(cfgPath, 'utf8')
+    const cfg = JSON.parse(raw) as { bindHost?: string; port?: number }
+    const host = cfg.bindHost === '0.0.0.0' ? '127.0.0.1' : (cfg.bindHost ?? '127.0.0.1')
+    const port = cfg.port ?? 8090
+    return `http://${host}:${port}`
+  } catch { /* fall through */ }
+  return 'http://127.0.0.1:8090'
+}
+
+const API_URL = resolveApiUrl()
+console.log(`[next.config] Rewriting /api/* → ${API_URL}`)
 
 // Expose build timestamp so client can display which bundle it's running.
 // Rebuild every time invalidates cache implicitly and gives us a debug tag.
