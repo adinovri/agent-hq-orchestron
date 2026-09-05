@@ -209,7 +209,7 @@ export default function ProjectsPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
                       <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">{project.name}</h3>
-                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                      <div className="flex gap-1 shrink-0 sm:opacity-0 sm:group-hover:opacity-100 sm:transition-opacity">
                         <button
                           onClick={() => setEditProject(project)}
                           className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
@@ -301,6 +301,7 @@ export default function ProjectsPage() {
 
       <DeleteProjectDialog
         project={deleteProject}
+        sessionCount={deleteProject ? sessionCountByProject.get(deleteProject.id) : undefined}
         onClose={() => setDeleteProject(null)}
         onDeleted={invalidate}
       />
