@@ -8,3 +8,14 @@ dist/
 .DS_Store
 coverage/
 .cache/
+
+# Serwist service-worker build artifact — regenerated on every web build,
+# would create noisy diffs.
+apps/web/public/sw.js
+apps/web/public/sw.js.map
+apps/web/public/swe-worker-*.js
+
+# Session-scoped working notes + sub-agent task prompts (audit reports,
+# handoff summaries, batch implementation scripts). Not production docs.
+scratchpad/
+scripts/*.md

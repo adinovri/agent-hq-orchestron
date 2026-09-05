@@ -146,7 +146,13 @@ Kapan pakai: development, ngoprek code, debugging feature.
 
 ```bash
 # Step 1 — compile semua workspace ke dist/
-npm run build --workspaces --if-present
+# NEXT_PUBLIC_API_URL only needed when API is bound to a non-loopback
+# interface (e.g. tailscale IP). Since 33a8830, next.config.ts auto-reads
+# from ~/.orchestron/config.json when the env var is unset, so a bare
+# `npm run build` also picks the right target. Setting it explicitly is
+# still fine and takes precedence.
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8090 \
+  npm run build --workspaces --if-present
 
 # Step 2 — run compiled artifacts
 npm run start
@@ -508,6 +514,59 @@ Logs:
 tail -f ~/.config/agent-hq-orchestron/logs/api-$(date +%F).log
 journalctl --user -u orchestron.service -f
 ```
+
+---
+
+## 12b. Troubleshooting quick-hits
+
+### Settings page shows "HTTP 500: Internal Server Error"
+
+Web app's `/api/*` rewrite is targeting a host that isn't listening.
+Common cause: rebuilt `apps/web` without `NEXT_PUBLIC_API_URL` while the
+API bound to a non-loopback interface (e.g. tailscale IP).
+
+- Since commit `33a8830`, `next.config.ts` falls back to reading
+  `bindHost`+`port` from `~/.orchestron/config.json` so a bare
+  `npm run build` also picks the right target.
+- Verify baked URL: `grep -o '127.0.0.1:8090\|<your-ip>:8090' apps/web/.next/routes-manifest.json | sort | uniq -c`
+- Rebuild with explicit env if needed:
+  `NEXT_PUBLIC_API_URL=http://<api-host>:8090 npm run build --workspace @agent-hq-orchestron/web`
+
+Watch the web journal on start:
+```
+journalctl --user -u orchestron-web.service | grep 'next.config'
+# → [next.config] Rewriting /api/* → http://100.82.168.18:8090
+```
+
+### PWA / Service Worker stuck on old bundle
+
+Visit `/api/reset` — the endpoint is served by the API (bypasses SW) and
+runs a small page that:
+
+1. Unregisters every service worker.
+2. Deletes every `caches.open()` cache.
+3. Clears `localStorage`, `sessionStorage`, and `indexedDB.databases()`.
+4. Redirects to `/pair` after 3 s.
+
+Alternatively: Chrome DevTools → Application → Clear site data.
+
+### Session stuck on `running` status
+
+The transcript polling endpoint has a safety-net that reconciles this
+automatically — but only when the latest `turn_duration` event was
+written AFTER the latest user prompt. If Claude interrupt writes
+`[Request interrupted by user]` with no `turn_duration`, the
+`/interrupt` endpoint proactively transitions to `idle`. If it still
+looks stuck, kill from the dashboard.
+
+### "Cannot find pane" on spawn
+
+Transient Claude auth/quota failure at tmux boot. `completeSpawn` auto-
+retries once with a fresh Claude session UUID; if it fails again, check:
+
+- `claude` CLI can start interactively (`claude` in a plain terminal)
+- Claude subscription is not exhausted
+- tmux version (`tmux -V` must be ≥ 3.2)
 
 ---
 
