@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/StatusPill'
 import { isActive } from '@/lib/status'
 import { formatRelative, formatDuration } from '@/lib/time'
-import { X, Check, GitBranch, ChevronDown, ChevronUp } from 'lucide-react'
+import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork } from 'lucide-react'
 import { useState } from 'react'
 
 interface Props {
@@ -14,13 +14,18 @@ interface Props {
   readOnly?: boolean
   onKill: () => void
   onArchive?: () => void
+  onReopen?: () => void
+  onClone?: () => void
   killing: boolean
   archiving?: boolean
+  reopening?: boolean
+  cloning?: boolean
 }
 
-export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, killing, archiving }: Props) {
+export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, killing, archiving, reopening, cloning }: Props) {
   const active = isActive(session.status)
   const canArchive = ['needs_input', 'idle', 'waiting', 'running'].includes(session.status)
+  const canReopen = ['succeeded', 'killed', 'failed', 'completed'].includes(session.status)
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -68,6 +73,30 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
           </div>
           {!readOnly && (
             <div className="flex items-center gap-1 shrink-0">
+              {canReopen && onReopen && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950 h-8 w-8 p-0"
+                  disabled={reopening}
+                  onClick={onReopen}
+                  title="Reopen session — resume with same context"
+                >
+                  <Play className="w-4 h-4" />
+                </Button>
+              )}
+              {onClone && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950 h-8 w-8 p-0"
+                  disabled={cloning}
+                  onClick={onClone}
+                  title="Clone/fork — new session inheriting this conversation"
+                >
+                  <GitFork className="w-4 h-4" />
+                </Button>
+              )}
               {canArchive && onArchive && (
                 <Button
                   variant="ghost"

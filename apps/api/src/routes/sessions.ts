@@ -319,6 +319,58 @@ export function sessionsPlugin(
       return { files: saved }
     })
 
+    // Reopen a terminal session — same UUID + same Claude session, fresh tmux.
+    // Session comes back to `idle` after Claude TUI boots with --resume.
+    app.post('/api/sessions/:uuid/reopen', async (req, reply) => {
+      const { uuid } = req.params as { uuid: string }
+      const sessions = await manager.list()
+      const existing = sessions.find(s => s.id === uuid)
+      if (!existing) return reply.code(404).send({ error: `Session not found: ${uuid}` })
+      let project
+      try { project = await registry.get(existing.projectId) } catch {
+        return reply.code(404).send({ error: `Project not found: ${existing.projectId}` })
+      }
+      const configDir = project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
+      try {
+        const updated = await manager.reopen(uuid, project.path, configDir)
+        return updated
+      } catch (err: unknown) {
+        const msg = (err as Error).message ?? ''
+        if (msg.includes('Cannot reopen')) return reply.code(409).send({ error: msg })
+        throw err
+      }
+    })
+
+    // Clone/fork — new orchestron session, inherits the source's Claude
+    // conversation via --resume. Optional { prompt } to seed the fork with
+    // a new user turn (else just re-enters the shared context idle).
+    app.post('/api/sessions/:uuid/clone', async (req, reply) => {
+      const { uuid } = req.params as { uuid: string }
+      const body = z.object({ prompt: z.string().optional() }).safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      const sessions = await manager.list()
+      const existing = sessions.find(s => s.id === uuid)
+      if (!existing) return reply.code(404).send({ error: `Session not found: ${uuid}` })
+      let project
+      try { project = await registry.get(existing.projectId) } catch {
+        return reply.code(404).send({ error: `Project not found: ${existing.projectId}` })
+      }
+      const configDir = project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
+
+      try {
+        const cloned = await manager.clone(uuid, {
+          workspace: project.path,
+          configDir,
+        }, body.data.prompt)
+        return reply.code(201).send(cloned)
+      } catch (err: unknown) {
+        const msg = (err as Error).message ?? ''
+        if (msg.includes('Session pool is full')) return reply.code(429).send({ error: msg })
+        throw err
+      }
+    })
+
     // Mark session as done (tycho-style archive). Kills tmux + transitions
     // through completing → succeeded. Idempotent per allowed-state guard.
     app.post('/api/sessions/:uuid/archive', async (req, reply) => {

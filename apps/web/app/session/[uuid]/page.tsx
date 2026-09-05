@@ -21,6 +21,8 @@ export default function SessionDetailPage({ params }: PageProps) {
   const [killOpen, setKillOpen] = useState(false)
   const [killing, setKilling] = useState(false)
   const [archiving, setArchiving] = useState(false)
+  const [reopening, setReopening] = useState(false)
+  const [cloning, setCloning] = useState(false)
 
   const { data: session, isLoading } = useQuery<SessionMetadata>({
     queryKey: ['session', uuid],
@@ -55,6 +57,35 @@ export default function SessionDetailPage({ params }: PageProps) {
       qc.invalidateQueries({ queryKey: ['session', uuid] })
       qc.invalidateQueries({ queryKey: ['sessions'] })
     },
+  })
+
+  const reopenMutation = useMutation({
+    mutationFn: () => apiFetch(`/api/sessions/${uuid}/reopen`, { method: 'POST' }),
+    onMutate: () => setReopening(true),
+    onSettled: () => {
+      setReopening(false)
+      qc.invalidateQueries({ queryKey: ['session', uuid] })
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+    },
+  })
+
+  const cloneMutation = useMutation({
+    mutationFn: async (extraPrompt?: string) => {
+      const res = await apiFetch(`/api/sessions/${uuid}/clone`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: extraPrompt }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      return res.json() as Promise<SessionMetadata>
+    },
+    onMutate: () => setCloning(true),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      // Navigate to the new session
+      router.push(`/session/${data.id}`)
+    },
+    onSettled: () => setCloning(false),
   })
 
   if (isLoading) {
@@ -94,8 +125,20 @@ export default function SessionDetailPage({ params }: PageProps) {
             archiveMutation.mutate()
           }
         }}
+        onReopen={() => {
+          if (confirm('Reopen this session? A fresh tmux + Claude will start with the same conversation loaded via --resume.')) {
+            reopenMutation.mutate()
+          }
+        }}
+        onClone={() => {
+          const extra = prompt('Optional prompt for the cloned session (leave empty to just re-enter the shared context):', '')
+          if (extra === null) return   // user cancelled
+          cloneMutation.mutate(extra || undefined)
+        }}
         killing={killing}
         archiving={archiving}
+        reopening={reopening}
+        cloning={cloning}
       />
 
       <div className="flex-1 overflow-hidden">

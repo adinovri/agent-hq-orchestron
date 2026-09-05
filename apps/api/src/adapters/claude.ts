@@ -96,8 +96,14 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   async resume(sessionUuid: string, config: ResumeConfig): Promise<TmuxHandle> {
-    const tmuxName = `orchestron-${sessionUuid.slice(0, 8)}-resume`
-    const jsonlPath = `${config.workspace}/.orchestron/sessions/${sessionUuid}.jsonl`
+    // Use a fresh random suffix so re-opening the same session multiple times
+    // doesn't collide on the tmux name (previous impl appended '-resume' which
+    // wasn't unique across reopens).
+    const tmuxName = `orchestron-${sessionUuid.slice(0, 8)}-${crypto.randomBytes(3).toString('hex')}`
+    // Claude writes the resumed transcript back to its ORIGINAL JSONL path
+    // (same UUID, same mangled cwd) — reuse claudeTranscriptPath so the
+    // orchestron tailer + metrics find the same file.
+    const jsonlPath = claudeTranscriptPath(config.workspace, config.configDir, sessionUuid)
 
     const argv = buildArgv({
       model: config.model,

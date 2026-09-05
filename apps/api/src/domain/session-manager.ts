@@ -337,6 +337,147 @@ export class SessionManager {
     return session
   }
 
+  /**
+   * Reopen a terminal (succeeded/killed/failed) session — bring it back to
+   * `idle` state by spawning a fresh tmux + claude with --resume so the same
+   * Claude session continues. Same orchestron UUID, same claudeSessionUuid,
+   * new tmux name.
+   */
+  async reopen(uuid: string, workspace: string, configDir?: string): Promise<SessionMetadata> {
+    const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!session) throw new Error(`Session not found: ${uuid}`)
+
+    const REOPENABLE: SessionStatus[] = ['succeeded', 'killed', 'failed', 'completed']
+    if (!REOPENABLE.includes(session.status)) {
+      throw new Error(`Cannot reopen session in ${session.status} state`)
+    }
+
+    const adapter = this.registry.getOrThrow(session.agentType)
+    const handle = await adapter.resume(session.claudeSessionUuid, {
+      workspace,
+      configDir,
+      model: session.model,
+    })
+
+    // Manually rewrite session record — reopen changes tmuxName + jsonlPath
+    // + endedAt (cleared) but keeps id, claudeSessionUuid, initialPrompt, etc.
+    const updated: SessionMetadata = {
+      ...session,
+      status: 'spawning',
+      tmuxName: handle.tmuxName,
+      jsonlPath: handle.jsonlPath,
+      endedAt: null,
+    }
+    await writeJson(this.sessionPath(uuid), updated)
+
+    // Complete the spawn lifecycle (wait TUI ready → transition to idle/waiting).
+    // We DON'T re-send the initial prompt on reopen — the resumed session
+    // already has all history; user drives via /input for new turns.
+    this.completeReopen(uuid, adapter, handle).catch(async (err: unknown) => {
+      const msg = (err as Error).message ?? String(err)
+      console.error(`[session-manager] completeReopen failed for ${uuid}: ${msg}`)
+      try {
+        await this.transition(uuid, 'failed').catch(() => {})
+        const failed = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+        if (failed) {
+          failed.failureReason = msg
+          await writeJson(this.sessionPath(uuid), failed)
+        }
+      } catch { /* ignore */ }
+    })
+
+    return updated
+  }
+
+  private async completeReopen(
+    uuid: string,
+    adapter: import('@agent-hq-orchestron/shared').AgentAdapter,
+    handle: import('@agent-hq-orchestron/shared').TmuxHandle,
+  ): Promise<void> {
+    await adapter.waitTuiReady(handle, 30_000)
+    // Reopen goes STRAIGHT to idle — no fresh prompt to send.
+    await this.transition(uuid, 'waiting')
+    await this.transition(uuid, 'running')
+    await this.transition(uuid, 'idle')
+  }
+
+  /**
+   * Clone/fork a session — spawn a NEW orchestron session that inherits the
+   * original's Claude conversation (via --resume). Creates a new orchestron
+   * UUID + new tmux; original session record is untouched.
+   */
+  async clone(uuid: string, spawnConfig: Pick<SpawnConfig, 'workspace' | 'configDir'>, extraPrompt?: string): Promise<SessionMetadata> {
+    const active = await this.countActiveSessions()
+    if (active >= this.maxConcurrent) {
+      throw new PoolFullError(this.maxConcurrent)
+    }
+
+    const original = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!original) throw new Error(`Session not found: ${uuid}`)
+
+    const newUuid = crypto.randomUUID()
+    const adapter = this.registry.getOrThrow(original.agentType)
+    // Spawn via adapter.resume — reuses the ORIGINAL claudeSessionUuid so
+    // Claude loads that context. Fresh tmux name.
+    const handle = await adapter.resume(original.claudeSessionUuid, {
+      workspace: spawnConfig.workspace,
+      configDir: spawnConfig.configDir,
+      model: original.model,
+    })
+
+    const now = new Date().toISOString()
+    const session: SessionMetadata = {
+      id: newUuid,
+      projectId: original.projectId,
+      agentType: original.agentType,
+      model: original.model,
+      status: 'spawning',
+      parentSessionId: original.id,   // record fork lineage
+      detached: original.detached,
+      claudeSessionUuid: original.claudeSessionUuid,   // share Claude session
+      tmuxName: handle.tmuxName,
+      jsonlPath: handle.jsonlPath,
+      initialPrompt: extraPrompt ? extraPrompt : `(fork of ${original.id.slice(0, 8)})`,
+      finalResponse: null,
+      tokenUsage: null,
+      costUsd: null,
+      startedAt: now,
+      endedAt: null,
+      metadata: { forkedFrom: original.id },
+    }
+
+    await writeJson(this.sessionPath(newUuid), session)
+
+    // Complete lifecycle: wait TUI ready, optionally send extraPrompt, transition
+    this.completeReopen(newUuid, adapter, handle)
+      .then(async () => {
+        if (extraPrompt) {
+          // Send the fork's optional new prompt after resume settles
+          const inputAllowed: SessionStatus[] = ['idle', 'needs_input', 'waiting']
+          const cur = await readJson<SessionMetadata | null>(this.sessionPath(newUuid), null)
+          if (cur && inputAllowed.includes(cur.status)) {
+            await adapter.sendPrompt(handle, extraPrompt)
+            await this.transition(newUuid, 'running').catch(() => {})
+            this.watchForTurnEnd(newUuid, handle.jsonlPath)
+          }
+        }
+      })
+      .catch(async (err: unknown) => {
+        const msg = (err as Error).message ?? String(err)
+        console.error(`[session-manager] clone completion failed for ${newUuid}: ${msg}`)
+        try {
+          await this.transition(newUuid, 'failed').catch(() => {})
+          const failed = await readJson<SessionMetadata | null>(this.sessionPath(newUuid), null)
+          if (failed) {
+            failed.failureReason = msg
+            await writeJson(this.sessionPath(newUuid), failed)
+          }
+        } catch { /* ignore */ }
+      })
+
+    return session
+  }
+
   async kill(uuid: string): Promise<SessionMetadata> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
