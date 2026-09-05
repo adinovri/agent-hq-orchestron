@@ -58,41 +58,70 @@ function EntryView({ entry }: { entry: Entry }) {
     )
   }
   if (entry.kind === 'tool_use') {
+    // Parse the JSON input and extract the most useful field for display
+    let summary: string | null = null
+    let details: string | null = null
+    try {
+      const input = JSON.parse(entry.content) as Record<string, unknown>
+      const tool = entry.toolName ?? ''
+      if (tool === 'Bash' && typeof input.command === 'string') {
+        summary = input.command
+      } else if ((tool === 'Read' || tool === 'Write' || tool === 'Edit' || tool === 'NotebookEdit') && typeof input.file_path === 'string') {
+        summary = input.file_path
+      } else if (tool === 'Grep' && typeof input.pattern === 'string') {
+        summary = input.pattern + (input.path ? `  (in ${input.path})` : '')
+      } else if (tool === 'Glob' && typeof input.pattern === 'string') {
+        summary = input.pattern
+      } else if (tool === 'WebFetch' && typeof input.url === 'string') {
+        summary = input.url
+      } else if (tool === 'TodoWrite' || tool === 'TaskCreate' || tool === 'TaskUpdate') {
+        summary = typeof input.subject === 'string' ? input.subject : JSON.stringify(input).slice(0, 100)
+      } else {
+        summary = JSON.stringify(input).slice(0, 120)
+      }
+      details = entry.content
+    } catch {
+      summary = entry.content.slice(0, 120)
+    }
+
     return (
       <div className="flex items-start gap-2.5">
         <div className="shrink-0 w-7 h-7 rounded-full bg-amber-100 dark:bg-amber-950 flex items-center justify-center text-amber-700 dark:text-amber-300">
           <Wrench className="w-3.5 h-3.5" />
         </div>
         <div className="flex-1 min-w-0">
-          <button onClick={() => setExpanded(v => !v)} className="w-full text-left flex items-center gap-1.5 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:text-zinc-800">
-            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-            <span>Tool</span>
-            <code className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-mono text-[11px]">
+          <button onClick={() => setExpanded(v => !v)} className="w-full text-left flex items-start gap-1.5 group">
+            <span className="shrink-0 mt-0.5">
+              {expanded ? <ChevronDown className="w-3 h-3 text-zinc-500" /> : <ChevronRight className="w-3 h-3 text-zinc-500" />}
+            </span>
+            <code className="shrink-0 px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-mono text-[11px]">
               {entry.toolName ?? '?'}
             </code>
+            <code className="min-w-0 font-mono text-xs text-zinc-700 dark:text-zinc-300 group-hover:text-zinc-900 dark:group-hover:text-zinc-100 truncate">
+              {summary}
+            </code>
           </button>
-          {expanded && (
-            <pre className="mt-1.5 text-xs bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all font-mono text-zinc-700 dark:text-zinc-300">
-              {entry.content}
+          {expanded && details && (
+            <pre className="mt-1.5 text-[11px] bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all font-mono text-zinc-600 dark:text-zinc-400">
+              {details}
             </pre>
           )}
         </div>
       </div>
     )
   }
+  // tool_result — indent visually to show it belongs to the preceding tool_use
   return (
-    <div className="flex items-start gap-2.5">
-      <div className="shrink-0 w-7 h-7 rounded-full bg-emerald-50 dark:bg-emerald-950/60 flex items-center justify-center text-emerald-700 dark:text-emerald-300">
-        <Wrench className="w-3.5 h-3.5" />
-      </div>
+    <div className="flex items-start gap-2.5 pl-8">
+      <div className="shrink-0 w-1 self-stretch bg-emerald-200 dark:bg-emerald-900 rounded" />
       <div className="flex-1 min-w-0">
-        <button onClick={() => setExpanded(v => !v)} className="w-full text-left flex items-center gap-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400 hover:text-zinc-700">
+        <button onClick={() => setExpanded(v => !v)} className="w-full text-left flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-zinc-700">
           {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-          <span>Result</span>
+          <span className="text-emerald-700 dark:text-emerald-400">↳ result</span>
           <span className="text-zinc-400">({entry.content.length.toLocaleString()} chars)</span>
         </button>
         {expanded && (
-          <pre className="mt-1.5 text-xs bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded p-2 overflow-x-auto whitespace-pre-wrap break-all font-mono text-zinc-700 dark:text-zinc-300 max-h-64 overflow-y-auto">
+          <pre className="mt-1 text-[11px] bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono text-zinc-700 dark:text-zinc-300 max-h-64 overflow-y-auto">
             {entry.content}
           </pre>
         )}
