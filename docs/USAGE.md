@@ -26,9 +26,10 @@ finished [DEPLOY.md](DEPLOY.md) and can reach the dashboard.
 - **Project** — a filesystem workspace (a git checkout, typically) that
   agents run against. Registered once, reused for every session.
   Optional defaults: model, effort, agent harness.
-- **Session** — one interactive Claude/Codex/OpenCode conversation
-  inside a `tmux` window. Has a status (spawning → running → needs_input
-  / idle → succeeded / killed).
+- **Session** — one Claude/Codex/OpenCode conversation. Runs in a
+  `tmux` window when active; after `idleTimeoutMs` (default 15 min) of
+  inactivity the tmux is released and the session becomes `sleeping` —
+  it wakes up on the next `sendInput` via `claude --resume`.
 - **Harness** — which agent CLI drives the session (`claude`, `codex`,
   `opencode`). Selected per-session, defaults per-project.
 - **Schedule** — cron expression that spawns a session on a fixed
