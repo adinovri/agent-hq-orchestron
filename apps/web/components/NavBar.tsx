@@ -55,9 +55,9 @@ export function NavBar() {
 
       <span
         title={`Build ${process.env.NEXT_PUBLIC_BUILD_STAMP ?? 'unknown'}`}
-        className="hidden sm:inline text-[10px] font-mono text-zinc-400 dark:text-zinc-500 shrink-0"
+        className="text-xs font-mono px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 shrink-0"
       >
-        {process.env.NEXT_PUBLIC_BUILD_STAMP?.slice(-8) ?? '?'}
+        v {process.env.NEXT_PUBLIC_BUILD_STAMP?.slice(-8) ?? '?'}
       </span>
 
       {pwaInstalled && (
