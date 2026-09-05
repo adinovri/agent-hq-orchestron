@@ -1,7 +1,13 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 import { fetchJson } from '@/lib/fetcher'
+import { Skeleton } from '@/components/Skeleton'
+import {
+  Server, Key, FileCog, AlertCircle, CheckCircle2, Copy, Check,
+  ShieldCheck, ShieldOff,
+} from 'lucide-react'
 
 interface HealthResponse {
   ok: boolean
@@ -15,19 +21,45 @@ interface HealthResponse {
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 py-2.5 border-b border-zinc-100 dark:border-zinc-800 last:border-0">
-      <span className="text-sm text-zinc-500 dark:text-zinc-400 sm:w-48 shrink-0">{label}</span>
-      <span className="text-sm font-mono text-zinc-900 dark:text-zinc-100">{value}</span>
+      <span className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400 sm:w-44 shrink-0">{label}</span>
+      <span className="text-sm font-mono text-zinc-900 dark:text-zinc-100 break-all">{value}</span>
     </div>
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg overflow-hidden">
-      <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
+        <span className="text-zinc-400">{icon}</span>
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{title}</h2>
       </div>
       <div className="px-4">{children}</div>
+    </div>
+  )
+}
+
+function CopyableCommand({ command }: { command: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(command)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch { /* ignore */ }
+  }
+  return (
+    <div className="relative group">
+      <pre className="text-xs font-mono bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 px-3 py-2 pr-9 rounded overflow-x-auto whitespace-pre">
+        {command}
+      </pre>
+      <button
+        onClick={copy}
+        className="absolute top-1.5 right-1.5 p-1 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors"
+        title={copied ? 'Copied' : 'Copy'}
+      >
+        {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+      </button>
     </div>
   )
 }
@@ -40,69 +72,84 @@ export default function SettingsPage() {
   })
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8 space-y-6">
+    <div className="max-w-2xl mx-auto px-4 py-6 space-y-5">
       <div>
-        <h1 className="text-xl font-semibold">Settings</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
         <p className="text-sm text-zinc-500 mt-0.5">Server configuration — read-only view</p>
       </div>
 
-      {isLoading && (
-        <div className="text-center py-12 text-zinc-400">Loading…</div>
-      )}
-
       {error && (
-        <div className="rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/20 p-4 text-sm text-red-600 dark:text-red-400">
-          Failed to load server info: {(error as Error).message}
+        <div className="flex items-start gap-2 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/40 p-3 text-sm text-red-700 dark:text-red-300">
+          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+          <div className="min-w-0">
+            <p className="font-medium">Failed to load server info</p>
+            <p className="text-xs mt-0.5 opacity-80 break-all">{(error as Error).message}</p>
+          </div>
         </div>
       )}
 
-      {health && (
-        <Section title="Server Info">
-          <InfoRow label="Status" value={
-            <span className="text-green-600 dark:text-green-400">● online</span>
-          } />
-          <InfoRow label="Bind host" value={health.bindHost} />
-          <InfoRow label="Remote auth" value={
-            <span className={health.remoteAuth === 'enabled'
-              ? 'text-green-600 dark:text-green-400'
-              : 'text-zinc-500'}>
-              {health.remoteAuth}
-            </span>
-          } />
-          <InfoRow label="Max concurrent" value={String(health.maxConcurrent)} />
-          <InfoRow label="tmux" value={health.tmux} />
-          <InfoRow label="Storage dir" value={health.storage} />
-        </Section>
-      )}
+      <Section title="Server Info" icon={<Server className="w-4 h-4" />}>
+        {isLoading ? (
+          <div className="py-3 space-y-2">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="flex gap-4 py-1.5">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-4 flex-1" />
+              </div>
+            ))}
+          </div>
+        ) : health ? (
+          <>
+            <InfoRow label="Status" value={
+              <span className="inline-flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="w-3.5 h-3.5" /> online
+              </span>
+            } />
+            <InfoRow label="Bind host" value={health.bindHost} />
+            <InfoRow label="Remote auth" value={
+              <span className={`inline-flex items-center gap-1.5 ${
+                health.remoteAuth === 'enabled'
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-zinc-500'
+              }`}>
+                {health.remoteAuth === 'enabled'
+                  ? <ShieldCheck className="w-3.5 h-3.5" />
+                  : <ShieldOff className="w-3.5 h-3.5" />}
+                {health.remoteAuth}
+              </span>
+            } />
+            <InfoRow label="Max concurrent" value={String(health.maxConcurrent)} />
+            <InfoRow label="tmux" value={health.tmux} />
+            <InfoRow label="Storage dir" value={health.storage} />
+          </>
+        ) : null}
+      </Section>
 
-      <Section title="Configuration">
-        <div className="py-3 space-y-2">
+      <Section title="Configuration" icon={<FileCog className="w-4 h-4" />}>
+        <div className="py-3 space-y-3">
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
             Config file:{' '}
             <code className="text-xs font-mono bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded">
               ~/.orchestron/config.json
             </code>
           </p>
-          <p className="text-sm text-zinc-500">
-            Edit manually then restart the service to apply changes.
-          </p>
-          <code className="block text-xs font-mono bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded mt-1">
-            systemctl --user restart orchestron-web.service
-          </code>
+          <div>
+            <p className="text-xs text-zinc-500 mb-1">Restart after editing:</p>
+            <CopyableCommand command="systemctl --user restart orchestron-api.service orchestron-web.service" />
+          </div>
         </div>
       </Section>
 
-      <Section title="Bearer Token">
-        <div className="py-3 space-y-2">
+      <Section title="Bearer Token" icon={<Key className="w-4 h-4" />}>
+        <div className="py-3 space-y-3">
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            To generate a new bearer token, run the CLI command below. This will invalidate all existing PWA sessions.
+            Rotate the token to invalidate all existing PWA sessions.
           </p>
-          <code className="block text-xs font-mono bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded">
-            orchestron token rotate
-          </code>
-          <p className="text-xs text-amber-600 dark:text-amber-400">
-            ⚠ After rotating, re-scan the QR code on all devices at /pair.
-          </p>
+          <CopyableCommand command="orchestron token rotate" />
+          <div className="flex items-start gap-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded px-2 py-1.5">
+            <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>After rotating, re-scan the QR code on all devices at <code className="font-mono">/pair</code>.</span>
+          </div>
         </div>
       </Section>
     </div>
