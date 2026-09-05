@@ -98,6 +98,21 @@ export default function SessionDetailPage({ params }: PageProps) {
     onSettled: () => setCloning(false),
   })
 
+  const [respawning, setRespawning] = useState(false)
+  const respawnMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiFetch(`/api/sessions/${uuid}/respawn`, { method: 'POST' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      return res.json() as Promise<SessionMetadata>
+    },
+    onMutate: () => setRespawning(true),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      router.push(`/session/${data.id}`)
+    },
+    onSettled: () => setRespawning(false),
+  })
+
   if (isLoading) {
     return (
       <div className="max-w-3xl mx-auto px-3 sm:px-4 py-4 space-y-3">
@@ -145,10 +160,16 @@ export default function SessionDetailPage({ params }: PageProps) {
           if (extra === null) return   // user cancelled
           cloneMutation.mutate(extra || undefined)
         }}
+        onRespawn={() => {
+          if (confirm('Start a FRESH session with the same prompt? A new Claude conversation will be created — this does NOT continue the previous conversation.')) {
+            respawnMutation.mutate()
+          }
+        }}
         killing={killing}
         archiving={archiving}
         reopening={reopening}
         cloning={cloning}
+        respawning={respawning}
         projectName={projectName}
         projectDefaultModel={currentProject?.defaultModel}
         projectDefaultEffort={currentProject?.defaultEffort}

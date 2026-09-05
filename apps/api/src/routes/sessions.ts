@@ -431,6 +431,31 @@ export function sessionsPlugin(
       }
     })
 
+    // Respawn — fresh orchestron session inheriting the original's project +
+    // initialPrompt + model + effort. Fresh Claude conversation UUID.
+    // Use for terminal sessions whose Claude conversation is missing on disk
+    // or when you just want to start over from the same prompt.
+    app.post('/api/sessions/:uuid/respawn', async (req, reply) => {
+      const { uuid } = req.params as { uuid: string }
+      const sessions = await manager.list()
+      const existing = sessions.find(s => s.id === uuid)
+      if (!existing) return reply.code(404).send({ error: `Session not found: ${uuid}` })
+      let project
+      try { project = await registry.get(existing.projectId) } catch {
+        return reply.code(404).send({ error: `Project not found: ${existing.projectId}` })
+      }
+      const configDir = project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
+      try {
+        const fresh = await manager.respawn(uuid, project.path, configDir, project.defaultModel, project.defaultEffort)
+        return reply.code(201).send(fresh)
+      } catch (err: unknown) {
+        const msg = (err as Error).message ?? ''
+        if (msg.includes('Cannot respawn')) return reply.code(409).send({ error: msg })
+        if (msg.includes('Session pool is full')) return reply.code(429).send({ error: msg })
+        throw err
+      }
+    })
+
     // Clone/fork — new orchestron session, inherits the source's Claude
     // conversation via --resume. Optional { prompt } to seed the fork with
     // a new user turn (else just re-enters the shared context idle).

@@ -753,6 +753,40 @@ export class SessionManager {
    * Claude session continues. Same orchestron UUID, same claudeSessionUuid,
    * new tmux name.
    */
+  /**
+   * Respawn a terminal session as a FRESH orchestron session — inherits the
+   * original's project, initialPrompt, model, effort, and parentSessionId
+   * lineage, but gets a brand-new Claude session UUID. Use this when the
+   * original's Claude conversation is unrecoverable (no JSONL on disk) or
+   * when the user just wants to "start over" from the same prompt without
+   * carrying forward the failed run's context.
+   */
+  async respawn(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel): Promise<SessionMetadata> {
+    const original = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!original) throw new Error(`Session not found: ${uuid}`)
+
+    const TERMINAL: SessionStatus[] = ['succeeded', 'killed', 'failed', 'completed']
+    if (!TERMINAL.includes(original.status)) {
+      throw new Error(`Cannot respawn session in ${original.status} state — only terminal states are supported`)
+    }
+
+    // Delegate to spawn() — pass parentSessionId so the new session shows
+    // its lineage to the original (for terminal-report + audit trail).
+    // spawn()'s own guardrails still apply (depth, per-parent children,
+    // rate limit) because parentSessionId is set.
+    return this.spawn({
+      projectId: original.projectId,
+      agentType: original.agentType,
+      initialPrompt: original.initialPrompt,
+      parentSessionId: original.id,
+      workspace,
+      configDir,
+      model: original.model ?? fallbackModel,
+      effort: original.effort ?? fallbackEffort,
+      detached: original.detached,
+    })
+  }
+
   async reopen(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel): Promise<SessionMetadata> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)

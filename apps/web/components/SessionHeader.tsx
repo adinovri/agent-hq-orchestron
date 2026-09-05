@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/StatusPill'
 import { isActive } from '@/lib/status'
 import { formatRelative, formatDuration } from '@/lib/time'
-import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork } from 'lucide-react'
+import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
 
 interface Props {
@@ -16,16 +16,18 @@ interface Props {
   onArchive?: () => void
   onReopen?: () => void
   onClone?: () => void
+  onRespawn?: () => void
   killing: boolean
   archiving?: boolean
   reopening?: boolean
   cloning?: boolean
+  respawning?: boolean
   projectName?: string
   projectDefaultModel?: string
   projectDefaultEffort?: string
 }
 
-export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, killing, archiving, reopening, cloning, projectName, projectDefaultModel, projectDefaultEffort }: Props) {
+export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, onRespawn, killing, archiving, reopening, cloning, respawning, projectName, projectDefaultModel, projectDefaultEffort }: Props) {
   const effectiveModel = session.model ?? projectDefaultModel
   const effectiveEffort = session.effort ?? projectDefaultEffort
   const modelFromProject = !session.model && !!projectDefaultModel
@@ -41,6 +43,7 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
   const TERMINAL = ['succeeded', 'killed', 'failed', 'completed'] as const
   const canReopen = TERMINAL.includes(session.status as (typeof TERMINAL)[number])
   const canClone = TERMINAL.includes(session.status as (typeof TERMINAL)[number])
+  const canRespawn = TERMINAL.includes(session.status as (typeof TERMINAL)[number])
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -138,6 +141,18 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
                   title="Clone/fork — new session inheriting this conversation"
                 >
                   <GitFork className="w-4 h-4" />
+                </Button>
+              )}
+              {canRespawn && onRespawn && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950 h-8 w-8 p-0"
+                  disabled={respawning}
+                  onClick={onRespawn}
+                  title="Respawn — fresh Claude session with the same prompt (does NOT continue the previous conversation)"
+                >
+                  <RotateCcw className="w-4 h-4" />
                 </Button>
               )}
               {canArchive && onArchive && (
