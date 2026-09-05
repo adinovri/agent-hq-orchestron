@@ -17,9 +17,8 @@ const PRICING: Record<string, ModelPricing> = {
   // Claude 5 family
   'claude-opus-5':    OPUS_TIER,
   'claude-sonnet-5':  SONNET_TIER,
-  'claude-fable-5-2': HAIKU_TIER,    // Fable = fast-tier (best guess until confirmed)
+  'claude-fable-5-1': HAIKU_TIER,    // Fable = fast-tier (best guess until confirmed)
   'claude-fable-5':   HAIKU_TIER,
-  'claude-fable-5-1': HAIKU_TIER,
   // Prior generation
   'claude-opus-4-8':  OPUS_TIER,
   'claude-sonnet-4-6': SONNET_TIER,

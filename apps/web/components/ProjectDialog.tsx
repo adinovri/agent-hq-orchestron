@@ -215,7 +215,7 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
                 <option value="">— Claude default</option>
                 <option value="claude-opus-5">Opus 5</option>
                 <option value="claude-sonnet-5">Sonnet 5</option>
-                <option value="claude-fable-5-2">Fable 5.2</option>
+                <option value="claude-fable-5-1">Fable 5.1</option>
                 <option value="claude-fable-5">Fable 5</option>
                 <option value="claude-opus-4-8">Opus 4.8</option>
                 <option value="claude-sonnet-4-6">Sonnet 4.6</option>

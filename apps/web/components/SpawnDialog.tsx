@@ -45,7 +45,7 @@ const MODEL_OPTIONS = [
   // Latest tier — Claude 5 family
   { value: 'claude-opus-5', label: 'Opus 5 (most capable)' },
   { value: 'claude-sonnet-5', label: 'Sonnet 5' },
-  { value: 'claude-fable-5-2', label: 'Fable 5.2 (fast experimental)' },
+  { value: 'claude-fable-5-1', label: 'Fable 5.1 (fast experimental)' },
   { value: 'claude-fable-5', label: 'Fable 5' },
   // Prior generation
   { value: 'claude-opus-4-8', label: 'Opus 4.8' },
