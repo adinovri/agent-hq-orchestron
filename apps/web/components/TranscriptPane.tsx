@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import type { SessionStatus } from '@agent-hq-orchestron/shared'
-import { Wrench, User, MessageSquare, ChevronDown, ChevronRight, Wifi, WifiOff } from 'lucide-react'
+import { Wrench, User, MessageSquare, ChevronDown, ChevronRight, Wifi, WifiOff, RefreshCw } from 'lucide-react'
 
 const MAX_EVENTS = 500
 
@@ -176,17 +176,23 @@ function TranscriptEntryView({ entry }: { entry: TranscriptEntry }) {
 export function TranscriptPane({ uuid, status }: Props) {
   const [entries, setEntries] = useState<TranscriptEntry[]>([])
   const [connected, setConnected] = useState(false)
+  const [nonce, setNonce] = useState(0)
   const bottomRef = useRef<HTMLDivElement>(null)
   const esRef = useRef<EventSource | null>(null)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const attemptRef = useRef(0)
   const connectedRef = useRef(false)
-  // Track seen entries by fingerprint to dedupe across reconnects (SSE always
-  // replays from offset 0, so a reconnect would double up entries without this).
+  const lastEventAtRef = useRef<number>(Date.now())
   const seenRef = useRef<Set<string>>(new Set())
 
   const isThinking = status === 'running' || status === 'spawning'
   const isEmpty = entries.length === 0
+
+  const forceRefresh = () => {
+    seenRef.current.clear()
+    setEntries([])
+    setNonce((n) => n + 1)
+  }
 
   useEffect(() => {
     let closed = false
@@ -194,7 +200,6 @@ export function TranscriptPane({ uuid, status }: Props) {
     const connect = () => {
       if (closed) return
 
-      // Close prior connection before opening a new one
       if (esRef.current) {
         esRef.current.close()
         esRef.current = null
@@ -205,14 +210,17 @@ export function TranscriptPane({ uuid, status }: Props) {
       const url = `/api/sessions/${uuid}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`
       const es = new EventSource(url)
       esRef.current = es
+      lastEventAtRef.current = Date.now()
 
       es.onopen = () => {
         setConnected(true)
         connectedRef.current = true
         attemptRef.current = 0
+        lastEventAtRef.current = Date.now()
       }
 
       const handleTranscript = (e: MessageEvent) => {
+        lastEventAtRef.current = Date.now()
         const newEntries = parseEvent(e.data)
         if (newEntries.length === 0) return
         const fresh: TranscriptEntry[] = []
@@ -234,11 +242,9 @@ export function TranscriptPane({ uuid, status }: Props) {
       es.onerror = () => {
         setConnected(false)
         connectedRef.current = false
-        // Only force reconnect if the EventSource is definitively closed.
-        // If readyState is CONNECTING (1) the browser is retrying on its own —
-        // don't fight it.
         if (closed) return
-        if (es.readyState !== EventSource.CLOSED) return
+        // Aggressive reconnect regardless of readyState — mobile browsers
+        // frequently claim CONNECTING but never actually reconnect.
         if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
         const delay = Math.min(2000 * Math.pow(2, attemptRef.current), 30_000)
         attemptRef.current += 1
@@ -246,23 +252,39 @@ export function TranscriptPane({ uuid, status }: Props) {
       }
     }
 
-    // Reconnect when tab becomes visible again — mobile browsers often kill
-    // EventSource silently on background/sleep. Read connected state via ref
-    // so the check is not stale.
     const onVisibility = () => {
-      if (document.visibilityState === 'visible' && !connectedRef.current) {
-        attemptRef.current = 0
-        if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
-        connect()
+      if (document.visibilityState === 'visible') {
+        // Any wake-up = probe the connection health. If we haven't seen an
+        // event in 45s AND stream should be active, force reconnect.
+        const stale = Date.now() - lastEventAtRef.current > 45_000
+        if (!connectedRef.current || stale) {
+          attemptRef.current = 0
+          if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+          connect()
+        }
       }
     }
     document.addEventListener('visibilitychange', onVisibility)
+
+    // Health-check every 30s: if nothing has streamed AND status suggests
+    // activity, force reconnect. Silent SSE failures otherwise leave the UI
+    // stale indefinitely.
+    const healthTimer = setInterval(() => {
+      if (closed) return
+      const idle = Date.now() - lastEventAtRef.current
+      if (idle > 45_000) {
+        // Server sends `: ping\n\n` every 30s, so >45s idle = probably dead.
+        attemptRef.current = 0
+        connect()
+      }
+    }, 30_000)
 
     connect()
 
     return () => {
       closed = true
       document.removeEventListener('visibilitychange', onVisibility)
+      clearInterval(healthTimer)
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
       if (esRef.current) {
         esRef.current.close()
@@ -271,7 +293,7 @@ export function TranscriptPane({ uuid, status }: Props) {
       seenRef.current.clear()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uuid])
+  }, [uuid, nonce])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -294,6 +316,13 @@ export function TranscriptPane({ uuid, status }: Props) {
         {entries.length > 0 && (
           <span className="text-zinc-400 dark:text-zinc-500">· {entries.length} events</span>
         )}
+        <button
+          onClick={forceRefresh}
+          className="ml-auto p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition"
+          title="Force reload transcript"
+        >
+          <RefreshCw className="w-3 h-3" />
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-3">
