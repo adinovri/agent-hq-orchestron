@@ -12,6 +12,7 @@ interface Props {
   session: SessionMetadata
   onKill: (id: string) => void
   killing: boolean
+  projectName?: string
 }
 
 const AGENT_ICON: Record<string, React.ReactNode> = {
@@ -20,7 +21,7 @@ const AGENT_ICON: Record<string, React.ReactNode> = {
   opencode: <Terminal className="w-4 h-4" />,
 }
 
-export function SessionCard({ session, onKill, killing }: Props) {
+export function SessionCard({ session, onKill, killing, projectName }: Props) {
   const active = isActive(session.status)
   const needsInput = session.status === 'needs_input'
   const icon = AGENT_ICON[session.agentType] ?? <Bot className="w-4 h-4" />
@@ -46,6 +47,11 @@ export function SessionCard({ session, onKill, killing }: Props) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <StatusPill status={session.status} />
+            {projectName && (
+              <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300">
+                {projectName}
+              </span>
+            )}
             {session.model && (
               <span className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">{session.model}</span>
             )}

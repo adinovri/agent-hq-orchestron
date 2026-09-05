@@ -72,6 +72,7 @@ export default function DashboardPage() {
   })
 
   const projectNames = useMemo(() => projects.map((p) => p.id), [projects])
+  const projectNameMap = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects])
   const allTags = useMemo(() => {
     const tags = new Set<string>()
     projects.forEach((p) => p.tags?.forEach((t) => tags.add(t)))
@@ -175,6 +176,7 @@ export default function DashboardPage() {
           sessions={filtered}
           killingIds={killingIds}
           onKill={(id) => killMutation.mutate(id)}
+          projectNames={projectNameMap}
         />
       )}
 

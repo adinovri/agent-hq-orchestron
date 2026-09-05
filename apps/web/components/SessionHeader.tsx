@@ -20,9 +20,10 @@ interface Props {
   archiving?: boolean
   reopening?: boolean
   cloning?: boolean
+  projectName?: string
 }
 
-export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, killing, archiving, reopening, cloning }: Props) {
+export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, killing, archiving, reopening, cloning, projectName }: Props) {
   const active = isActive(session.status)
   const canArchive = ['needs_input', 'idle', 'waiting', 'running'].includes(session.status)
   const canReopen = ['succeeded', 'killed', 'failed', 'completed'].includes(session.status)
@@ -40,6 +41,11 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <StatusPill status={session.status} />
+              {projectName && (
+                <span className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300">
+                  {projectName}
+                </span>
+              )}
               {session.model && (
                 <span className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">{session.model}</span>
               )}

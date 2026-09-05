@@ -7,9 +7,10 @@ interface Props {
   sessions: SessionMetadata[]
   killingIds: Set<string>
   onKill: (id: string) => void
+  projectNames?: Map<string, string>
 }
 
-export function SessionList({ sessions, killingIds, onKill }: Props) {
+export function SessionList({ sessions, killingIds, onKill, projectNames }: Props) {
   if (sessions.length === 0) {
     return (
       <div className="text-center py-16 text-zinc-400 text-sm">
@@ -26,6 +27,7 @@ export function SessionList({ sessions, killingIds, onKill }: Props) {
           session={s}
           onKill={onKill}
           killing={killingIds.has(s.id)}
+          projectName={projectNames?.get(s.projectId)}
         />
       ))}
     </div>

@@ -8,7 +8,7 @@ import { TranscriptPanePoll } from '@/components/TranscriptPanePoll'
 import { InputBox } from '@/components/InputBox'
 import { KillConfirmDialog } from '@/components/KillConfirmDialog'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
-import type { SessionMetadata, DelegationEdges } from '@agent-hq-orchestron/shared'
+import type { SessionMetadata, DelegationEdges, ProjectMetadata } from '@agent-hq-orchestron/shared'
 
 interface PageProps {
   params: Promise<{ uuid: string }>
@@ -36,7 +36,16 @@ export default function SessionDetailPage({ params }: PageProps) {
     enabled: !!uuid,
   })
 
+  const { data: projects = [] } = useQuery<ProjectMetadata[]>({
+    queryKey: ['projects'],
+    queryFn: async () => {
+      const r = await fetchJson<{ projects: ProjectMetadata[] }>('/api/projects')
+      return r.projects
+    },
+  })
+
   const descendantCount = delegation?.edges?.length ?? 0
+  const projectName = projects.find((p) => p.id === session?.projectId)?.name
 
   const killMutation = useMutation({
     mutationFn: () => apiFetch(`/api/sessions/${uuid}`, { method: 'DELETE' }),
@@ -139,6 +148,7 @@ export default function SessionDetailPage({ params }: PageProps) {
         archiving={archiving}
         reopening={reopening}
         cloning={cloning}
+        projectName={projectName}
       />
 
       <div className="flex-1 overflow-hidden">
