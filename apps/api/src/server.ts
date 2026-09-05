@@ -52,7 +52,7 @@ if (config.adapters.opencode) registry.register('opencode', new OpenCodeAdapter(
 
 const sessionManager = new SessionManager({ dataDir: config.dataDir, maxConcurrent: config.maxConcurrent }, registry)
 const snapshotService = new SnapshotService(config.dataDir)
-const metricsCollector = new MetricsCollector(config.dataDir)
+const metricsCollector = new MetricsCollector(config.dataDir, sessionManager)
 const projectRegistry = new ProjectRegistry(config.dataDir)
 const delegationTracker = new DelegationTracker(config.dataDir)
 const hookRunner = new HookRunner({ dataDir: config.dataDir })
