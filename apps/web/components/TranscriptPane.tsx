@@ -310,7 +310,21 @@ export function TranscriptPane({ uuid, status }: Props) {
   }, [uuid, nonce])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    // Two-phase scroll: immediate jump + smooth follow-up to overcome late
+    // layout shifts (images/markdown rendering after entries state settles).
+    // Also poke the ancestor scroll container directly in case scrollIntoView
+    // finds the wrong scroll ancestor.
+    const el = bottomRef.current
+    if (!el) return
+    const scroller = el.closest<HTMLElement>('[data-transcript-scroll]')
+    const jump = () => {
+      if (scroller) scroller.scrollTop = scroller.scrollHeight
+      el.scrollIntoView({ behavior: 'auto', block: 'end' })
+    }
+    requestAnimationFrame(jump)
+    // second pass after layout has settled (markdown/highlight, images)
+    const t = setTimeout(jump, 150)
+    return () => clearTimeout(t)
   }, [entries])
 
   return (
@@ -345,7 +359,7 @@ export function TranscriptPane({ uuid, status }: Props) {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-3">
+      <div data-transcript-scroll className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 space-y-3">
         {isEmpty && (
           <div className="text-center py-12">
             {connected ? (
