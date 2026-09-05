@@ -293,14 +293,45 @@ export class SessionManager {
       }
       const proj = await this.projectResolver(session.projectId)
       const adapter = this.registry.getOrThrow(session.agentType)
-      const mcpConfigPath = await this.ensureSessionMcpConfig(uuid)
-      const handle = await adapter.resume(session.claudeSessionUuid, {
-        workspace: proj.path,
-        model: session.model ?? proj.defaultModel,
-        effort: session.effort ?? proj.defaultEffort,
-        mcpConfigPath,
-      })
-      // Persist new tmux + jsonl path first, then transition state.
+
+      // Claude subprocess sometimes dies within a few seconds of boot
+      // (transient auth / quota / MCP-connect flakiness). Same retry pattern
+      // as completeSpawn — attempt twice with a fresh mcp config each time,
+      // then surface a clean error so the client can retry.
+      let handle: import('@agent-hq-orchestron/shared').TmuxHandle | null = null
+      let lastErr: Error | null = null
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const mcpConfigPath = await this.ensureSessionMcpConfig(uuid)
+          handle = await adapter.resume(session.claudeSessionUuid, {
+            workspace: proj.path,
+            model: session.model ?? proj.defaultModel,
+            effort: session.effort ?? proj.defaultEffort,
+            mcpConfigPath,
+          })
+          await adapter.waitTuiReady(handle, 15_000)
+          break
+        } catch (err) {
+          lastErr = err as Error
+          // Tear down the failed tmux if it exists, then retry once.
+          if (handle) {
+            await adapter.kill(handle).catch(() => {})
+            handle = null
+          }
+          if (attempt === 2) break
+          await new Promise((r) => setTimeout(r, 500))
+        }
+      }
+
+      if (!handle) {
+        // Leave the session in 'sleeping' so a subsequent send can retry.
+        // Don't drag it into 'failed' — that'd hide the resumable state.
+        throw new Error(
+          `Wake-up failed after 2 attempts: ${lastErr?.message ?? 'unknown'}. Session stays sleeping — try sending again.`,
+        )
+      }
+
+      // Persist new tmux + jsonl path only after TUI is confirmed ready.
       await writeJson(this.sessionPath(uuid), {
         ...session,
         tmuxName: handle.tmuxName,
@@ -309,8 +340,7 @@ export class SessionManager {
         endedAt: null,
         idleSince: null,
       })
-      await adapter.waitTuiReady(handle, 15_000).catch(() => { /* proceed */ })
-      await this.transition(uuid, 'waiting').catch(() => {})
+      await this.transition(uuid, 'waiting')
       // Re-read after wake-up so downstream sees fresh tmux name.
       session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
       if (!session) throw new Error(`Session vanished during wake-up: ${uuid}`)
