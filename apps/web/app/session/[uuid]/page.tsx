@@ -45,7 +45,8 @@ export default function SessionDetailPage({ params }: PageProps) {
   })
 
   const descendantCount = delegation?.edges?.length ?? 0
-  const projectName = projects.find((p) => p.id === session?.projectId)?.name
+  const currentProject = projects.find((p) => p.id === session?.projectId)
+  const projectName = currentProject?.name
 
   const killMutation = useMutation({
     mutationFn: () => apiFetch(`/api/sessions/${uuid}`, { method: 'DELETE' }),
@@ -149,6 +150,8 @@ export default function SessionDetailPage({ params }: PageProps) {
         reopening={reopening}
         cloning={cloning}
         projectName={projectName}
+        projectDefaultModel={currentProject?.defaultModel}
+        projectDefaultEffort={currentProject?.defaultEffort}
       />
 
       <div className="flex-1 overflow-hidden">

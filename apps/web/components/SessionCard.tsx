@@ -13,6 +13,8 @@ interface Props {
   onKill: (id: string) => void
   killing: boolean
   projectName?: string
+  projectDefaultModel?: string
+  projectDefaultEffort?: string
 }
 
 const AGENT_ICON: Record<string, React.ReactNode> = {
@@ -21,7 +23,11 @@ const AGENT_ICON: Record<string, React.ReactNode> = {
   opencode: <Terminal className="w-4 h-4" />,
 }
 
-export function SessionCard({ session, onKill, killing, projectName }: Props) {
+export function SessionCard({ session, onKill, killing, projectName, projectDefaultModel, projectDefaultEffort }: Props) {
+  const model = session.model ?? projectDefaultModel
+  const effort = session.effort ?? projectDefaultEffort
+  const modelFromProject = !session.model && !!projectDefaultModel
+  const effortFromProject = !session.effort && !!projectDefaultEffort
   const active = isActive(session.status)
   const needsInput = session.status === 'needs_input'
   const icon = AGENT_ICON[session.agentType] ?? <Bot className="w-4 h-4" />
@@ -52,12 +58,24 @@ export function SessionCard({ session, onKill, killing, projectName }: Props) {
                 {projectName}
               </span>
             )}
-            {session.model && (
-              <span className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">{session.model}</span>
+            {model && (
+              <span
+                className={`text-xs font-mono ${modelFromProject ? 'text-zinc-400 dark:text-zinc-500 italic' : 'text-zinc-500 dark:text-zinc-400'}`}
+                title={modelFromProject ? 'inherited from project default' : undefined}
+              >
+                {model}
+              </span>
             )}
-            {session.effort && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-mono uppercase">
-                effort:{session.effort}
+            {effort && (
+              <span
+                className={`text-[10px] px-1.5 py-0.5 rounded font-mono uppercase ${
+                  effortFromProject
+                    ? 'bg-zinc-50 dark:bg-zinc-900 text-zinc-400 dark:text-zinc-500 italic'
+                    : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
+                }`}
+                title={effortFromProject ? 'inherited from project default' : undefined}
+              >
+                effort:{effort}
               </span>
             )}
             <span className="text-xs text-zinc-400 dark:text-zinc-500 font-mono">{session.id.slice(0, 8)}</span>

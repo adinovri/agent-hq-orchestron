@@ -21,9 +21,15 @@ interface Props {
   reopening?: boolean
   cloning?: boolean
   projectName?: string
+  projectDefaultModel?: string
+  projectDefaultEffort?: string
 }
 
-export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, killing, archiving, reopening, cloning, projectName }: Props) {
+export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, killing, archiving, reopening, cloning, projectName, projectDefaultModel, projectDefaultEffort }: Props) {
+  const effectiveModel = session.model ?? projectDefaultModel
+  const effectiveEffort = session.effort ?? projectDefaultEffort
+  const modelFromProject = !session.model && !!projectDefaultModel
+  const effortFromProject = !session.effort && !!projectDefaultEffort
   const active = isActive(session.status)
   const canArchive = ['needs_input', 'idle', 'waiting', 'running'].includes(session.status)
   const canReopen = ['succeeded', 'killed', 'failed', 'completed'].includes(session.status)
@@ -46,12 +52,24 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
                   {projectName}
                 </span>
               )}
-              {session.model && (
-                <span className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">{session.model}</span>
+              {effectiveModel && (
+                <span
+                  className={`text-xs font-mono ${modelFromProject ? 'text-zinc-400 dark:text-zinc-500 italic' : 'text-zinc-500 dark:text-zinc-400'}`}
+                  title={modelFromProject ? 'inherited from project default' : undefined}
+                >
+                  {effectiveModel}
+                </span>
               )}
-              {session.effort && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-mono uppercase">
-                  effort:{session.effort}
+              {effectiveEffort && (
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded font-mono uppercase ${
+                    effortFromProject
+                      ? 'bg-zinc-50 dark:bg-zinc-900 text-zinc-400 dark:text-zinc-500 italic'
+                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
+                  }`}
+                  title={effortFromProject ? 'inherited from project default' : undefined}
+                >
+                  effort:{effectiveEffort}
                 </span>
               )}
               {descendantCount != null && descendantCount > 0 && (

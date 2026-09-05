@@ -8,9 +8,10 @@ interface Props {
   killingIds: Set<string>
   onKill: (id: string) => void
   projectNames?: Map<string, string>
+  projectDefaults?: Map<string, { model?: string; effort?: string }>
 }
 
-export function SessionList({ sessions, killingIds, onKill, projectNames }: Props) {
+export function SessionList({ sessions, killingIds, onKill, projectNames, projectDefaults }: Props) {
   if (sessions.length === 0) {
     return (
       <div className="text-center py-16 text-zinc-400 text-sm">
@@ -21,15 +22,20 @@ export function SessionList({ sessions, killingIds, onKill, projectNames }: Prop
 
   return (
     <div className="flex flex-col gap-3">
-      {sessions.map((s) => (
-        <SessionCard
-          key={s.id}
-          session={s}
-          onKill={onKill}
-          killing={killingIds.has(s.id)}
-          projectName={projectNames?.get(s.projectId)}
-        />
-      ))}
+      {sessions.map((s) => {
+        const defs = projectDefaults?.get(s.projectId)
+        return (
+          <SessionCard
+            key={s.id}
+            session={s}
+            onKill={onKill}
+            killing={killingIds.has(s.id)}
+            projectName={projectNames?.get(s.projectId)}
+            projectDefaultModel={defs?.model}
+            projectDefaultEffort={defs?.effort}
+          />
+        )
+      })}
     </div>
   )
 }
