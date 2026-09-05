@@ -1068,6 +1068,7 @@ export class SessionManager {
   async list(filter?: { status?: string; projectId?: string; from?: string; to?: string }): Promise<SessionMetadata[]> {
     const files = await listDir(this.sessionsDir)
     const sessions: SessionMetadata[] = []
+    const { existsSync } = await import('node:fs')
 
     await Promise.all(
       files
@@ -1075,7 +1076,13 @@ export class SessionManager {
         .map(async (f) => {
           const uuid = f.replace(/\.json$/, '')
           const record = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
-          if (record) sessions.push(record)
+          if (!record) return
+          // Runtime hint: does the Claude JSONL still exist on disk? Consumed
+          // by the UI to decide if Reopen/Fork are viable (they need the
+          // conversation to resume from). Cheap stat, batched here so callers
+          // don't have to check per-session.
+          record.hasTranscript = existsSync(record.jsonlPath)
+          sessions.push(record)
         }),
     )
 

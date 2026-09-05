@@ -41,9 +41,16 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
   //   would spawn a second tmux writing to the same JSONL as the fork
   //   (both share claudeSessionUuid). Terminal-only is the safe rule.
   const TERMINAL = ['succeeded', 'killed', 'failed', 'completed'] as const
-  const canReopen = TERMINAL.includes(session.status as (typeof TERMINAL)[number])
-  const canClone = TERMINAL.includes(session.status as (typeof TERMINAL)[number])
-  const canRespawn = TERMINAL.includes(session.status as (typeof TERMINAL)[number])
+  const isTerminal = TERMINAL.includes(session.status as (typeof TERMINAL)[number])
+  // Reopen + Fork both need the Claude JSONL to exist so `claude --resume`
+  // has something to load. hasTranscript is populated by the API; undefined
+  // means the check wasn't done (older list responses) — default to true so
+  // the buttons don't disappear silently for older API versions.
+  const hasTranscript = session.hasTranscript !== false
+  const canReopen = isTerminal && hasTranscript
+  const canClone = isTerminal && hasTranscript
+  // Respawn always available on terminal — doesn't need the old JSONL.
+  const canRespawn = isTerminal
   const [expanded, setExpanded] = useState(false)
 
   return (

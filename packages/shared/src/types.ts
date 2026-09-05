@@ -49,6 +49,11 @@ export interface SessionMetadata {
   configDir?: string
   failureReason?: string
   metadata: Record<string, unknown>
+  /** Runtime hint (not persisted): does the underlying Claude JSONL exist
+   *  on disk? Populated by the API layer during list/get. Consumers use this
+   *  to decide whether reopen/fork will succeed — false means resume will
+   *  fail and the only recovery is respawn. */
+  hasTranscript?: boolean
 }
 
 export interface AgentConfig {
