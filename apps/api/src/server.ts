@@ -52,7 +52,25 @@ if (config.adapters.claude) registry.register('claude', new ClaudeAdapter())
 if (config.adapters.codex) registry.register('codex', new CodexAdapter())
 if (config.adapters.opencode) registry.register('opencode', new OpenCodeAdapter())
 
-const sessionManager = new SessionManager({ dataDir: config.dataDir, maxConcurrent: config.maxConcurrent }, registry)
+// Resolve MCP server path once at boot. dist/mcp-server.js sits next to
+// dist/server.js when built; dev (tsx) reads src/mcp-server.ts — either way
+// import.meta.url points into the running module tree.
+const { fileURLToPath } = await import('node:url')
+const { dirname, resolve } = await import('node:path')
+const __serverDir = dirname(fileURLToPath(import.meta.url))
+const mcpServerPath = resolve(__serverDir, 'mcp-server.js')
+
+const sessionManager = new SessionManager({
+  dataDir: config.dataDir,
+  maxConcurrent: config.maxConcurrent,
+  mcpAutoInject: config.remoteToken
+    ? {
+        apiUrl: `http://${config.bindHost === '0.0.0.0' ? '127.0.0.1' : config.bindHost}:${config.port}`,
+        token: config.remoteToken,
+        mcpServerPath,
+      }
+    : undefined,
+}, registry)
 const snapshotService = new SnapshotService(config.dataDir)
 const metricsCollector = new MetricsCollector(config.dataDir, sessionManager)
 const projectRegistry = new ProjectRegistry(config.dataDir)

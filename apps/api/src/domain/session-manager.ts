@@ -58,6 +58,14 @@ function textAsksQuestion(text: string): boolean {
 export interface SessionManagerConfig {
   dataDir: string
   maxConcurrent: number
+  /** When set, session-manager auto-writes a per-session MCP config that
+   *  registers the orchestron MCP server and injects it into every spawn
+   *  and reopen via `--mcp-config`. */
+  mcpAutoInject?: {
+    apiUrl: string
+    token: string
+    mcpServerPath: string   // absolute path to dist/mcp-server.js
+  }
 }
 
 export class SessionManager {
@@ -65,6 +73,7 @@ export class SessionManager {
   private readonly sessionsDir: string
   private readonly maxConcurrent: number
   private readonly registry: AdapterRegistry
+  private readonly mcpAutoInject: SessionManagerConfig['mcpAutoInject']
   // Watchers that flip running → awaiting_input on the next turn_duration event.
   // Keyed by session uuid; one active watcher per session at a time.
   private readonly turnWatchers = new Map<string, TranscriptTailer>()
@@ -74,6 +83,34 @@ export class SessionManager {
     this.sessionsDir = path.join(config.dataDir, 'sessions')
     this.maxConcurrent = config.maxConcurrent
     this.registry = registry
+    this.mcpAutoInject = config.mcpAutoInject
+  }
+
+  private mcpConfigPath(sessionId: string): string {
+    return path.join(this.dataDir, 'mcp-configs', `${sessionId}.json`)
+  }
+
+  /** Write a per-session MCP config that exposes the orchestron server to
+   *  the child agent. Returns the file path, or undefined if auto-inject
+   *  is not configured. */
+  private async ensureSessionMcpConfig(sessionId: string): Promise<string | undefined> {
+    if (!this.mcpAutoInject) return undefined
+    const cfg = {
+      mcpServers: {
+        orchestron: {
+          command: 'node',
+          args: [this.mcpAutoInject.mcpServerPath],
+          env: {
+            ORCHESTRON_API_URL: this.mcpAutoInject.apiUrl,
+            ORCHESTRON_TOKEN: this.mcpAutoInject.token,
+            ORCHESTRON_SESSION_ID: sessionId,
+          },
+        },
+      },
+    }
+    const p = this.mcpConfigPath(sessionId)
+    await writeJson(p, cfg)
+    return p
   }
 
   private sessionPath(uuid: string): string {
@@ -124,7 +161,8 @@ export class SessionManager {
 
     const uuid = crypto.randomUUID()
     const adapter = this.registry.getOrThrow(spawnConfig.agentType)
-    const handle = await adapter.spawn(spawnConfig)
+    const mcpConfigPath = await this.ensureSessionMcpConfig(uuid)
+    const handle = await adapter.spawn({ ...spawnConfig, mcpConfigPath })
 
     const now = new Date().toISOString()
     const session: SessionMetadata = {
@@ -519,11 +557,14 @@ export class SessionManager {
     const effectiveEffort = session.effort ?? fallbackEffort
 
     const adapter = this.registry.getOrThrow(session.agentType)
+    // Regenerate MCP config on every reopen so token/URL updates take effect.
+    const mcpConfigPath = await this.ensureSessionMcpConfig(uuid)
     const handle = await adapter.resume(session.claudeSessionUuid, {
       workspace,
       configDir,
       model: effectiveModel,
       effort: effectiveEffort,
+      mcpConfigPath,
     })
 
     // Manually rewrite session record — reopen changes tmuxName + jsonlPath
@@ -592,6 +633,9 @@ export class SessionManager {
 
     const newUuid = crypto.randomUUID()
     const adapter = this.registry.getOrThrow(original.agentType)
+    // Fresh MCP config keyed to the CLONE's uuid so its ORCHESTRON_SESSION_ID
+    // reflects the child, not the parent.
+    const mcpConfigPath = await this.ensureSessionMcpConfig(newUuid)
     // Spawn via adapter.resume — reuses the ORIGINAL claudeSessionUuid so
     // Claude loads that context. Fresh tmux name.
     const handle = await adapter.resume(original.claudeSessionUuid, {
@@ -599,6 +643,7 @@ export class SessionManager {
       configDir: spawnConfig.configDir,
       model: effectiveModel,
       effort: effectiveEffort,
+      mcpConfigPath,
     })
 
     const now = new Date().toISOString()

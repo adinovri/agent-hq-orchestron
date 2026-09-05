@@ -145,6 +145,11 @@ export interface SpawnConfig {
   effort?: EffortLevel
   configDir?: string
   detached?: boolean
+  /** Path to a per-session MCP config JSON. Written by session-manager
+   *  and passed through so the adapter can hand it to the agent CLI
+   *  (`--mcp-config <path>` for Claude). Enables auto-inject of the
+   *  orchestron MCP server without user setup. */
+  mcpConfigPath?: string
 }
 
 export interface ResumeConfig {
@@ -152,6 +157,7 @@ export interface ResumeConfig {
   model?: string
   effort?: EffortLevel
   configDir?: string
+  mcpConfigPath?: string
 }
 
 export interface TmuxHandle {

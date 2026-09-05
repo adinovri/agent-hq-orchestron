@@ -45,6 +45,7 @@ function buildArgv(opts: {
   model?: string
   effort?: string
   configDir?: string
+  mcpConfigPath?: string
   sessionMode: { type: 'new'; uuid: string } | { type: 'resume'; uuid: string }
 }): string[] {
   const argv: string[] = ['claude']
@@ -55,6 +56,7 @@ function buildArgv(opts: {
 
   if (opts.model) argv.push('--model', opts.model)
   if (opts.effort) argv.push('--effort', opts.effort)
+  if (opts.mcpConfigPath) argv.push('--mcp-config', opts.mcpConfigPath)
   argv.push('--permission-mode', 'bypassPermissions')
 
   if (opts.sessionMode.type === 'new') {
@@ -84,6 +86,7 @@ export class ClaudeAdapter implements AgentAdapter {
       model: config.model,
       effort: config.effort,
       configDir: config.configDir,
+      mcpConfigPath: config.mcpConfigPath,
       sessionMode: { type: 'new', uuid: claudeUuid },
     })
 
@@ -112,6 +115,7 @@ export class ClaudeAdapter implements AgentAdapter {
       model: config.model,
       effort: config.effort,
       configDir: config.configDir,
+      mcpConfigPath: config.mcpConfigPath,
       sessionMode: { type: 'resume', uuid: sessionUuid },
     })
 
