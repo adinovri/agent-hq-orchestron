@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { readJson, writeJson, listDir } from '@agent-hq-orchestron/file-store'
+import { CronExpressionParser } from 'cron-parser'
 
 export interface ScheduleEntry {
   id: string
@@ -10,6 +11,8 @@ export interface ScheduleEntry {
   vars?: Record<string, string>
   enabled: boolean
   createdAt: string
+  lastRunAt?: string
+  nextRunAt?: string
 }
 
 export class ScheduleNotFoundError extends Error {
@@ -22,11 +25,13 @@ export class ScheduleNotFoundError extends Error {
 export class Scheduler {
   private readonly schedulesDir: string
   private readonly apiBaseUrl: string
-  private timers: Map<string, ReturnType<typeof setInterval>> = new Map()
+  private readonly authToken: string | null
+  private timers: Map<string, ReturnType<typeof setTimeout>> = new Map()
 
-  constructor(dataDir: string, apiBaseUrl: string) {
+  constructor(dataDir: string, apiBaseUrl: string, authToken?: string | null) {
     this.schedulesDir = path.join(dataDir, 'schedules')
     this.apiBaseUrl = apiBaseUrl
+    this.authToken = authToken ?? null
   }
 
   private schedulePath(id: string): string {
@@ -94,40 +99,60 @@ export class Scheduler {
     }
   }
 
+  /**
+   * Schedule the NEXT fire via setTimeout. After firing, reschedule for the
+   * following cron-computed timestamp. Uses cron-parser to support the full
+   * 5-field standard cron syntax plus @hourly/@daily/@weekly shorthands.
+   */
   private scheduleTimer(entry: ScheduleEntry): void {
-    // Minimal cron: parse simple interval patterns or use setInterval for hourly/daily
-    // For full cron expressions we'd use node-cron; this is a lightweight fallback
-    const intervalMs = this.cronToIntervalMs(entry.cron)
-    if (intervalMs === null) return // unsupported pattern — skip
+    let nextTs: Date
+    try {
+      const iter = CronExpressionParser.parse(entry.cron, { currentDate: new Date() })
+      nextTs = iter.next().toDate()
+    } catch (err) {
+      console.warn(`[Scheduler] invalid cron "${entry.cron}" for schedule ${entry.id}:`, (err as Error).message)
+      return
+    }
 
-    const timer = setInterval(() => {
+    const delayMs = Math.max(0, nextTs.getTime() - Date.now())
+    const timer = setTimeout(() => {
+      // Fire, then reschedule for the following next-run.
       this.fireEntry(entry).catch(err =>
         console.error(`[Scheduler] error firing schedule ${entry.id}:`, err)
       )
-    }, intervalMs)
+      // Reschedule (recursively via same entry) — re-read to pick up updates.
+      this.get(entry.id)
+        .then((fresh) => { if (fresh.enabled) this.scheduleTimer(fresh) })
+        .catch(() => { /* deleted/disabled since */ })
+    }, delayMs)
 
     timer.unref()
     this.timers.set(entry.id, timer)
+
+    // Persist nextRunAt for UI display (fire-and-forget, don't block)
+    this.updateNextRunAt(entry.id, nextTs.toISOString()).catch(() => {})
   }
 
   private clearTimer(id: string): void {
     const timer = this.timers.get(id)
     if (timer) {
-      clearInterval(timer)
+      clearTimeout(timer)
       this.timers.delete(id)
     }
   }
 
-  private cronToIntervalMs(cron: string): number | null {
-    // Support common shorthand patterns
-    const patterns: Record<string, number> = {
-      '@hourly': 60 * 60 * 1000,
-      '@daily': 24 * 60 * 60 * 1000,
-      '@weekly': 7 * 24 * 60 * 60 * 1000,
-      '0 * * * *': 60 * 60 * 1000,
-      '0 0 * * *': 24 * 60 * 60 * 1000,
-    }
-    return patterns[cron] ?? null
+  private async updateNextRunAt(id: string, nextRunAt: string): Promise<void> {
+    const entry = await readJson<ScheduleEntry | null>(this.schedulePath(id), null)
+    if (!entry) return
+    entry.nextRunAt = nextRunAt
+    await writeJson(this.schedulePath(id), entry)
+  }
+
+  private async markRun(id: string): Promise<void> {
+    const entry = await readJson<ScheduleEntry | null>(this.schedulePath(id), null)
+    if (!entry) return
+    entry.lastRunAt = new Date().toISOString()
+    await writeJson(this.schedulePath(id), entry)
   }
 
   private async fireEntry(entry: ScheduleEntry): Promise<void> {
@@ -136,14 +161,20 @@ export class Scheduler {
       ...(entry.template ? { template: entry.template, vars: entry.vars } : { prompt: entry.prompt }),
     }
 
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`
+
     const resp = await fetch(`${this.apiBaseUrl}/api/sessions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
     })
 
     if (!resp.ok) {
-      throw new Error(`Scheduler: POST /api/sessions returned ${resp.status} for schedule ${entry.id}`)
+      const text = await resp.text().catch(() => '')
+      throw new Error(`Scheduler: POST /api/sessions returned ${resp.status} for schedule ${entry.id}: ${text.slice(0, 200)}`)
     }
+
+    await this.markRun(entry.id)
   }
 }

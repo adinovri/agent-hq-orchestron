@@ -19,6 +19,8 @@ interface Schedule {
   vars?: Record<string, string>
   enabled: boolean
   createdAt: string
+  lastRunAt?: string
+  nextRunAt?: string
 }
 
 export default function SchedulesPage() {
@@ -130,7 +132,23 @@ export default function SchedulesPage() {
                   {s.template && (
                     <p className="mt-1 text-xs text-zinc-500">Template: <code className="font-mono">{s.template}</code></p>
                   )}
-                  <p className="mt-1.5 text-xs text-zinc-400">Created {formatRelative(s.createdAt)}</p>
+                  <div className="mt-1.5 flex items-center gap-2 text-xs text-zinc-400 flex-wrap">
+                    <span>Created {formatRelative(s.createdAt)}</span>
+                    {s.enabled && s.nextRunAt && (
+                      <>
+                        <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                        <span className="text-emerald-600 dark:text-emerald-400">
+                          Next: {new Date(s.nextRunAt).toLocaleString()}
+                        </span>
+                      </>
+                    )}
+                    {s.lastRunAt && (
+                      <>
+                        <span className="text-zinc-300 dark:text-zinc-700">·</span>
+                        <span>Last: {formatRelative(s.lastRunAt)}</span>
+                      </>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button

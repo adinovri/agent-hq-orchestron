@@ -57,7 +57,11 @@ const projectRegistry = new ProjectRegistry(config.dataDir)
 const delegationTracker = new DelegationTracker(config.dataDir)
 const hookRunner = new HookRunner({ dataDir: config.dataDir })
 const templateResolver = new TemplateResolver(config.dataDir)
-const scheduler = new Scheduler(config.dataDir, `http://${config.bindHost === '0.0.0.0' ? '127.0.0.1' : config.bindHost}:${config.port}`)
+const scheduler = new Scheduler(
+  config.dataDir,
+  `http://${config.bindHost === '0.0.0.0' ? '127.0.0.1' : config.bindHost}:${config.port}`,
+  config.remoteToken,
+)
 
 const fastify = Fastify({
   logger: {
