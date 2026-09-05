@@ -29,24 +29,38 @@ const serwist = new Serwist({
   clientsClaim: true,
   navigationPreload: true,
   runtimeCaching: [
-    // API routes — never cache
+    // App shell — network first, fall back to cache. Explicitly EXCLUDE any
+    // API request or event-stream (SW's fetch() cannot handle infinite SSE
+    // — buffers indefinitely → ERR_FAILED → retry storm).
     {
-      matcher: ({ url }) =>
-        url.pathname.startsWith('/api/') ||
-        url.pathname.startsWith('/api/stream') || url.pathname.includes('/stream'),
-      handler: new NetworkOnly(),
-    },
-    // App shell — network first, fall back to cache
-    {
-      matcher: ({ request }) =>
-        request.mode === 'navigate' ||
-        request.destination === 'style' ||
-        request.destination === 'script' ||
-        request.destination === 'font',
+      matcher: ({ request, url }) => {
+        if (url.pathname.startsWith('/api/')) return false
+        if (request.headers.get('Accept') === 'text/event-stream') return false
+        return (
+          request.mode === 'navigate' ||
+          request.destination === 'style' ||
+          request.destination === 'script' ||
+          request.destination === 'font'
+        )
+      },
       handler: new NetworkFirst({ cacheName: 'shell-cache' }),
     },
     ...defaultCache,
   ],
+})
+
+// Intercept ALL fetch events for /api/* or event-stream and pass through
+// without touching them — this is the ONLY way to keep EventSource working
+// through a service worker.
+self.addEventListener('fetch', (event: FetchEvent) => {
+  const url = new URL(event.request.url)
+  const isApi = url.pathname.startsWith('/api/')
+  const isEventStream = event.request.headers.get('Accept') === 'text/event-stream'
+  if (isApi || isEventStream) {
+    // Do NOT call respondWith — browser handles the request natively,
+    // bypassing SW entirely for streaming semantics.
+    return
+  }
 })
 
 serwist.addEventListeners()
