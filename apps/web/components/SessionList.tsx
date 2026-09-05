@@ -2,7 +2,8 @@
 
 import { SessionMetadata } from '@agent-hq-orchestron/shared'
 import { SessionCard } from './SessionCard'
-import { Folder } from 'lucide-react'
+import { Folder, ChevronDown, ChevronRight } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 interface Props {
   sessions: SessionMetadata[]
@@ -70,26 +71,110 @@ export function SessionList({ sessions, killingIds, onKill, projectNames, projec
 
   return (
     <div className="flex flex-col gap-5">
-      {orderedProjectIds.map((pid) => {
-        const items = groups.get(pid)!
-        const name = projectNames?.get(pid) ?? pid.slice(0, 8)
-        return (
-          <section key={pid}>
-            <div className="flex items-center gap-2 mb-2 px-1">
-              <Folder className="w-3.5 h-3.5 text-zinc-400" />
-              <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                {name}
-              </h2>
-              <span className="text-[10px] text-zinc-400 dark:text-zinc-500 tabular-nums">
-                {items.length}
-              </span>
-            </div>
-            <div className="flex flex-col gap-3">
-              {items.map((s) => renderCard(s, killingIds, onKill, projectNames, projectDefaults))}
-            </div>
-          </section>
-        )
-      })}
+      {orderedProjectIds.map((pid) => (
+        <ProjectGroup
+          key={pid}
+          projectId={pid}
+          items={groups.get(pid)!}
+          projectNames={projectNames}
+          projectDefaults={projectDefaults}
+          killingIds={killingIds}
+          onKill={onKill}
+        />
+      ))}
     </div>
+  )
+}
+
+// ── Collapsible per-project group ─────────────────────────────────────
+
+const COLLAPSED_STORAGE_KEY = 'orchestron.dashboard.collapsedProjects'
+
+function loadCollapsedSet(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_STORAGE_KEY)
+    if (!raw) return new Set()
+    const arr = JSON.parse(raw) as unknown
+    if (Array.isArray(arr)) return new Set(arr.filter((x): x is string => typeof x === 'string'))
+  } catch { /* private mode / corrupt */ }
+  return new Set()
+}
+
+function saveCollapsedSet(s: Set<string>): void {
+  try { localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(Array.from(s))) } catch { /* noop */ }
+}
+
+interface ProjectGroupProps {
+  projectId: string
+  items: SessionMetadata[]
+  projectNames?: Map<string, string>
+  projectDefaults?: Map<string, { model?: string; effort?: string }>
+  killingIds: Set<string>
+  onKill: (id: string) => void
+}
+
+function ProjectGroup({ projectId, items, projectNames, projectDefaults, killingIds, onKill }: ProjectGroupProps) {
+  const [collapsed, setCollapsed] = useState<boolean>(false)
+  // Hydrate collapsed state from localStorage after mount (avoids SSR mismatch).
+  useEffect(() => {
+    setCollapsed(loadCollapsedSet().has(projectId))
+  }, [projectId])
+
+  const toggle = () => {
+    const set = loadCollapsedSet()
+    if (set.has(projectId)) set.delete(projectId)
+    else set.add(projectId)
+    saveCollapsedSet(set)
+    setCollapsed(set.has(projectId))
+  }
+
+  const name = projectNames?.get(projectId) ?? projectId.slice(0, 8)
+  // Surface attention info so a collapsed section still tells you why it matters.
+  const needsInput = items.filter((s) => s.status === 'needs_input').length
+  const running = items.filter((s) => ['running', 'spawning', 'waiting', 'completing'].includes(s.status)).length
+
+  return (
+    <section>
+      <button
+        type="button"
+        onClick={toggle}
+        className="w-full flex items-center gap-2 mb-2 px-1 py-0.5 rounded hover:bg-zinc-100/50 dark:hover:bg-zinc-800/50 transition-colors text-left"
+        aria-expanded={!collapsed}
+        aria-controls={`project-group-${projectId}`}
+      >
+        {collapsed
+          ? <ChevronRight className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+          : <ChevronDown className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+        }
+        <Folder className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 truncate">
+          {name}
+        </h2>
+        <span className="text-[10px] text-zinc-400 dark:text-zinc-500 tabular-nums shrink-0">
+          {items.length}
+        </span>
+        {needsInput > 0 && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded font-mono uppercase bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 shrink-0"
+            title={`${needsInput} session${needsInput === 1 ? '' : 's'} awaiting input`}
+          >
+            {needsInput} need input
+          </span>
+        )}
+        {collapsed && running > 0 && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded font-mono uppercase bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 shrink-0"
+            title={`${running} active`}
+          >
+            {running} active
+          </span>
+        )}
+      </button>
+      {!collapsed && (
+        <div id={`project-group-${projectId}`} className="flex flex-col gap-3">
+          {items.map((s) => renderCard(s, killingIds, onKill, projectNames, projectDefaults))}
+        </div>
+      )}
+    </section>
   )
 }
