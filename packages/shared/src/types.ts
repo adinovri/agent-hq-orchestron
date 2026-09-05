@@ -7,8 +7,6 @@ export type SessionStatus =
   | 'needs_input'     // Agent posed a question — user answer required
   | 'idle'            // Turn done, session alive, no explicit question
   | 'sleeping'        // Idle beyond threshold, tmux released. Wakes on send.
-  | 'completing'
-  | 'completed'
   | 'succeeded'       // User marked done + session archived (terminal, read-only)
   | 'failed'
   | 'killed'

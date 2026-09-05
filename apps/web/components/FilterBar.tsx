@@ -19,13 +19,12 @@ interface Props {
 }
 
 const ALL_STATUSES: SessionStatus[] = [
-  'spawning', 'waiting', 'running', 'needs_input', 'idle', 'sleeping', 'completing', 'completed', 'succeeded', 'failed', 'killed',
+  'spawning', 'waiting', 'running', 'needs_input', 'idle', 'sleeping', 'succeeded', 'failed', 'killed',
 ]
 
 const STATUS_LABELS: Record<SessionStatus, string> = {
   spawning: 'Spawning', waiting: 'Waiting', running: 'Running',
   needs_input: 'Needs input', idle: 'Idle', sleeping: 'Sleeping',
-  completing: 'Completing', completed: 'Completed',
   succeeded: 'Succeeded', failed: 'Failed', killed: 'Killed',
 }
 

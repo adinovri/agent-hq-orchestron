@@ -34,8 +34,6 @@ const HINT: Partial<Record<SessionStatus, string>> = {
   needs_input: 'Type your reply',
   idle: 'Send a follow-up',
   sleeping: 'Session is sleeping — send to wake it up (~3s cold start)',
-  completing: 'Session is completing…',
-  completed: 'Session ended',
   succeeded: 'Session succeeded (archived)',
   failed: 'Session failed',
   killed: 'Session killed',
@@ -65,7 +63,7 @@ export function InputBox({ uuid, status }: Props) {
   const qc = useQueryClient()
 
   useEffect(() => {
-    if (['needs_input', 'idle', 'completed', 'succeeded', 'failed', 'killed'].includes(status)) {
+    if (['needs_input', 'idle', 'succeeded', 'failed', 'killed'].includes(status)) {
       setLastSent(null)
     }
   }, [status])

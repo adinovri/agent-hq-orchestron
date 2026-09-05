@@ -102,8 +102,8 @@ const TOOLS: ToolDef[] = [
         projectId: { type: 'string', description: 'Filter to one project' },
         status: {
           type: 'string',
-          enum: ['spawning', 'waiting', 'running', 'needs_input', 'idle', 'completing',
-                 'completed', 'succeeded', 'failed', 'killed'],
+          enum: ['spawning', 'waiting', 'running', 'needs_input', 'idle', 'sleeping',
+                 'succeeded', 'failed', 'killed'],
         },
       },
     },
@@ -225,7 +225,7 @@ const TOOLS: ToolDef[] = [
     handler: async (args) => {
       const timeoutMs = Number(args['timeoutSec'] ?? 300) * 1000
       const deadline = Date.now() + timeoutMs
-      const DONE = new Set(['idle', 'needs_input', 'succeeded', 'completed', 'failed', 'killed'])
+      const DONE = new Set(['idle', 'needs_input', 'sleeping', 'succeeded', 'failed', 'killed'])
       let last: { status: string } | undefined
       while (Date.now() < deadline) {
         last = await api<{ status: string }>('GET', `/api/sessions/${args['sessionId']}`)

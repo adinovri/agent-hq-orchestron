@@ -15,7 +15,7 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
 - **Multi-project + multi-harness** — one dashboard, sessions scoped per
   project, mix Claude / Codex / OpenCode harnesses (whichever adapters
   are installed).
-- **Full session lifecycle** — reopen a completed session (resume same
+- **Full session lifecycle** — reopen a terminal session (resume same
   Claude conversation), fork one to explore a divergent path, respawn
   from the same prompt with a fresh conversation, interrupt a running
   turn, queue prompts while the model is thinking. Each of those three

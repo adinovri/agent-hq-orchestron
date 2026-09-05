@@ -112,7 +112,7 @@ export default function DashboardPage() {
   }, [sessions, filters])
 
   const activeSessions = sessions.filter((s) =>
-    ['spawning', 'waiting', 'running', 'completing'].includes(s.status),
+    ['spawning', 'waiting', 'running'].includes(s.status),
   ).length
   const needsInputCount = sessions.filter((s) => s.status === 'needs_input').length
 

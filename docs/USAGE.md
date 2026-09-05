@@ -105,7 +105,7 @@ count. Buttons (based on state):
 
 | Icon | Action | Available when |
 |---|---|---|
-| ▶ Play (green) | **Reopen** — resume with same context, same claude-session-uuid | terminal states (`succeeded`, `killed`, `failed`, `completed`) |
+| ▶ Play (green) | **Reopen** — resume with same context, same claude-session-uuid | terminal states (`succeeded`, `killed`, `failed`) |
 | Fork (blue) | **Clone** — spawn a new session inheriting this conversation | always |
 | ✓ Check (green) | **Archive** — mark succeeded, kill tmux | active states |
 | ✕ X (red) | **Kill** — SIGKILL tmux + mark killed | active states |
@@ -139,9 +139,9 @@ spawning ──▶ waiting ──▶ running ──▶ needs_input
                           │                 │
                           │                 └─▶ send input ──▶ spawning ──▶ running  (wake-up)
                           │
-                          └──▶ completing ──▶ succeeded
-                                              │
-                                              ▶ (reopen) waiting…
+                          └──▶ succeeded (archive)
+                                │
+                                ▶ (reopen) waiting…
 
 any active state ──▶ killed  (X button)
 any state       ──▶ failed  (crash)
@@ -192,7 +192,7 @@ Three ways to bring a terminal session back to life:
 | **Requires transcript?** | Yes (JSONL must exist) | Yes | No |
 
 Buttons are only visible for terminal states (`succeeded`, `killed`,
-`failed`, `completed`). Reopen and Fork are additionally hidden when
+`failed`). Reopen and Fork are additionally hidden when
 `hasTranscript === false` (session died before writing any JSONL) —
 Respawn stays visible as the only recovery for that case.
 
@@ -269,7 +269,7 @@ Final response: <last assistant text, first 800 chars>
 ```
 
 Fire-and-forget. Skipped if the parent is itself in a terminal state
-(`succeeded`/`failed`/`killed`/`completed`).
+(`succeeded`/`failed`/`killed`).
 
 ### 5.2 Shared notes (Option 3)
 

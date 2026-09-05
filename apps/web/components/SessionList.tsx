@@ -131,7 +131,7 @@ function ProjectGroup({ projectId, items, projectNames, projectDefaults, killing
   const name = projectNames?.get(projectId) ?? projectId.slice(0, 8)
   // Surface attention info so a collapsed section still tells you why it matters.
   const needsInput = items.filter((s) => s.status === 'needs_input').length
-  const running = items.filter((s) => ['running', 'spawning', 'waiting', 'completing'].includes(s.status)).length
+  const running = items.filter((s) => ['running', 'spawning', 'waiting'].includes(s.status)).length
 
   return (
     <section>

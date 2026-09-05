@@ -40,7 +40,7 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
   // - Sleeping is excluded from Fork because a later wake of the parent
   //   would spawn a second tmux writing to the same JSONL as the fork
   //   (both share claudeSessionUuid). Terminal-only is the safe rule.
-  const TERMINAL = ['succeeded', 'killed', 'failed', 'completed'] as const
+  const TERMINAL = ['succeeded', 'killed', 'failed'] as const
   const isTerminal = TERMINAL.includes(session.status as (typeof TERMINAL)[number])
   // Reopen + Fork both need the Claude JSONL to exist so `claude --resume`
   // has something to load. hasTranscript is populated by the API; undefined

@@ -24,14 +24,12 @@ export class InvalidTransitionError extends Error {
 const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
   spawning: ['waiting', 'failed', 'killed'],
   waiting: ['running', 'killed'],
-  running: ['running', 'idle', 'needs_input', 'completing', 'killed'],
-  idle: ['running', 'needs_input', 'sleeping', 'completing', 'succeeded', 'killed'],
-  needs_input: ['running', 'idle', 'sleeping', 'completing', 'succeeded', 'killed'],
+  running: ['running', 'idle', 'needs_input', 'succeeded', 'killed'],
+  idle: ['running', 'needs_input', 'sleeping', 'succeeded', 'killed'],
+  needs_input: ['running', 'idle', 'sleeping', 'succeeded', 'killed'],
   sleeping: ['spawning', 'succeeded', 'killed'],   // wake → spawning; archive → succeeded; kill remains legal
-  completing: ['completed', 'succeeded', 'failed'],
   // Terminal states allow → 'spawning' for in-place respawn (fresh Claude
   // conversation using the same orchestron session id). No other exits.
-  completed: ['spawning'],
   succeeded: ['spawning'],
   failed: ['spawning'],
   killed: ['spawning'],
@@ -601,8 +599,8 @@ export class SessionManager {
       jsonlPath: session.jsonlPath,
     }).catch(() => { /* tmux may already be gone */ })
 
-    // Direct transition via `completing` → `succeeded`
-    await this.transition(uuid, 'completing').catch(() => {})
+    // Direct terminal transition. Every allowed pre-state (idle,
+    // needs_input, running, sleeping) goes straight to 'succeeded'.
     const succeeded = await this.transition(uuid, 'succeeded')
 
     // Terminal-report callback: if this session had a parent, deliver a
@@ -647,7 +645,7 @@ export class SessionManager {
     const parent = await readJson<SessionMetadata | null>(this.sessionPath(parentId), null)
     if (!parent) return
     // Only deliver if parent is alive (not terminal).
-    const TERMINAL: SessionStatus[] = ['completed', 'succeeded', 'failed', 'killed']
+    const TERMINAL: SessionStatus[] = ['succeeded', 'failed', 'killed']
     if (TERMINAL.includes(parent.status)) return
 
     const summary = (await this.readLastAssistantText(child.jsonlPath)).slice(0, 800)
@@ -669,7 +667,7 @@ export class SessionManager {
       throw new InvalidTransitionError(session.status, newStatus)
     }
 
-    const terminal: SessionStatus[] = ['completed', 'succeeded', 'failed', 'killed']
+    const terminal: SessionStatus[] = ['succeeded', 'failed', 'killed']
     const now = new Date().toISOString()
     const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
     // Track idleSince: set when entering an idle-ish state, clear when leaving.
@@ -828,7 +826,7 @@ export class SessionManager {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
-    const TERMINAL: SessionStatus[] = ['succeeded', 'killed', 'failed', 'completed']
+    const TERMINAL: SessionStatus[] = ['succeeded', 'killed', 'failed']
     if (!TERMINAL.includes(session.status)) {
       throw new Error(`Cannot respawn session in ${session.status} state — only terminal states are supported`)
     }
@@ -906,7 +904,7 @@ export class SessionManager {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
-    const REOPENABLE: SessionStatus[] = ['succeeded', 'killed', 'failed', 'completed']
+    const REOPENABLE: SessionStatus[] = ['succeeded', 'killed', 'failed']
     if (!REOPENABLE.includes(session.status)) {
       throw new Error(`Cannot reopen session in ${session.status} state`)
     }
@@ -1225,7 +1223,7 @@ export class SessionManager {
 
   private async countActiveSessions(): Promise<number> {
     const all = await this.list()
-    const terminal: SessionStatus[] = ['completed', 'succeeded', 'failed', 'killed']
+    const terminal: SessionStatus[] = ['succeeded', 'failed', 'killed']
     return all.filter((s) => !terminal.includes(s.status)).length
   }
 }
