@@ -795,7 +795,13 @@ export class SessionManager {
     // Complete the spawn lifecycle (wait TUI ready → transition to idle/waiting).
     // We DON'T re-send the initial prompt on reopen — the resumed session
     // already has all history; user drives via /input for new turns.
-    this.completeReopen(uuid, adapter, handle).catch(async (err: unknown) => {
+    this.completeReopen(uuid, adapter, handle, {
+      claudeSessionUuid: session.claudeSessionUuid,
+      workspace,
+      configDir: configDir ?? session.configDir,
+      model: effectiveModel,
+      effort: effectiveEffort,
+    }).catch(async (err: unknown) => {
       const msg = (err as Error).message ?? String(err)
       console.error(`[session-manager] completeReopen failed for ${uuid}: ${msg}`)
       try {
@@ -815,8 +821,49 @@ export class SessionManager {
     uuid: string,
     adapter: import('@agent-hq-orchestron/shared').AgentAdapter,
     handle: import('@agent-hq-orchestron/shared').TmuxHandle,
+    resumeCtx?: {
+      claudeSessionUuid: string
+      workspace: string
+      configDir?: string
+      model?: string
+      effort?: import('@agent-hq-orchestron/shared').EffortLevel
+    },
   ): Promise<void> {
-    await adapter.waitTuiReady(handle, 30_000)
+    let currentHandle = handle
+    let attempt = 0
+    const MAX_ATTEMPTS = 2
+
+    while (true) {
+      try {
+        await adapter.waitTuiReady(currentHandle, 30_000)
+        break
+      } catch (err: unknown) {
+        const msg = (err as Error).message ?? ''
+        const paneDied = msg.includes('can\'t find pane') || msg.includes('no such pane')
+        attempt += 1
+        if (!paneDied || attempt >= MAX_ATTEMPTS || !resumeCtx) throw err
+        console.warn(`[session-manager] tmux pane died during reopen for ${uuid}, retrying (attempt ${attempt + 1}/${MAX_ATTEMPTS})`)
+        await adapter.kill(currentHandle).catch(() => {})
+        const mcpConfigPath = await this.ensureSessionMcpConfig(uuid)
+        const fresh = await adapter.resume(resumeCtx.claudeSessionUuid, {
+          workspace: resumeCtx.workspace,
+          configDir: resumeCtx.configDir,
+          model: resumeCtx.model,
+          effort: resumeCtx.effort,
+          mcpConfigPath,
+        })
+        currentHandle = fresh
+        // Update the session record with the new tmux/jsonl handle.
+        const rec = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+        if (rec) {
+          await writeJson(this.sessionPath(uuid), {
+            ...rec,
+            tmuxName: fresh.tmuxName,
+            jsonlPath: fresh.jsonlPath,
+          })
+        }
+      }
+    }
     // Reopen goes STRAIGHT to idle — no fresh prompt to send.
     await this.transition(uuid, 'waiting')
     await this.transition(uuid, 'running')
@@ -882,7 +929,13 @@ export class SessionManager {
     await writeJson(this.sessionPath(newUuid), session)
 
     // Complete lifecycle: wait TUI ready, optionally send extraPrompt, transition
-    this.completeReopen(newUuid, adapter, handle)
+    this.completeReopen(newUuid, adapter, handle, {
+      claudeSessionUuid: original.claudeSessionUuid,
+      workspace: spawnConfig.workspace,
+      configDir: spawnConfig.configDir ?? original.configDir,
+      model: effectiveModel,
+      effort: effectiveEffort,
+    })
       .then(async () => {
         if (extraPrompt) {
           // Send the fork's optional new prompt after resume settles
