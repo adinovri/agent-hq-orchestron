@@ -58,6 +58,12 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
                 {projectName}
               </span>
             )}
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono uppercase bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300"
+              title={`Agent harness: ${session.agentType}`}
+            >
+              {session.agentType}
+            </span>
             {model && (
               <span
                 className={`text-xs font-mono ${modelFromProject ? 'text-zinc-400 dark:text-zinc-500 italic' : 'text-zinc-500 dark:text-zinc-400'}`}

@@ -9,7 +9,8 @@ import { SpawnDialog } from '@/components/SpawnDialog'
 import { SessionListSkeleton } from '@/components/Skeleton'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
 import type { SessionMetadata, ProjectMetadata } from '@agent-hq-orchestron/shared'
-import { Plus, Rocket, Inbox } from 'lucide-react'
+import { Plus, Rocket, Inbox, Rows3, FolderTree } from 'lucide-react'
+import { useEffect } from 'react'
 
 function fuzzyMatch(haystack: string, needle: string): boolean {
   if (!needle) return true
@@ -33,6 +34,18 @@ export default function DashboardPage() {
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
   const [spawnOpen, setSpawnOpen] = useState(false)
   const [killingIds, setKillingIds] = useState<Set<string>>(new Set())
+  const [groupBy, setGroupBy] = useState<'project' | 'none'>('none')
+
+  // Persist grouping preference locally (per browser).
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem('orchestron.dashboard.groupBy')
+      if (v === 'project' || v === 'none') setGroupBy(v)
+    } catch { /* private mode */ }
+  }, [])
+  useEffect(() => {
+    try { localStorage.setItem('orchestron.dashboard.groupBy', groupBy) } catch { /* noop */ }
+  }, [groupBy])
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<SessionMetadata[]>({
     queryKey: ['sessions'],
@@ -117,9 +130,39 @@ export default function DashboardPage() {
             {sessions.length > 0 && ` · ${sessions.length} total`}
           </p>
         </div>
-        <Button onClick={() => setSpawnOpen(true)} className="shrink-0">
-          <Plus className="w-4 h-4 mr-1" /> Spawn
-        </Button>
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center rounded-md border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setGroupBy('none')}
+              className={`p-1.5 transition-colors ${
+                groupBy === 'none'
+                  ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100'
+                  : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60'
+              }`}
+              title="Flat view"
+              aria-pressed={groupBy === 'none'}
+            >
+              <Rows3 className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setGroupBy('project')}
+              className={`p-1.5 transition-colors border-l border-zinc-200 dark:border-zinc-800 ${
+                groupBy === 'project'
+                  ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100'
+                  : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/60'
+              }`}
+              title="Group by project"
+              aria-pressed={groupBy === 'project'}
+            >
+              <FolderTree className="w-4 h-4" />
+            </button>
+          </div>
+          <Button onClick={() => setSpawnOpen(true)}>
+            <Plus className="w-4 h-4 mr-1" /> Spawn
+          </Button>
+        </div>
       </div>
 
       {/* Stats row — surface attention state prominently */}
@@ -182,6 +225,7 @@ export default function DashboardPage() {
           onKill={(id) => killMutation.mutate(id)}
           projectNames={projectNameMap}
           projectDefaults={projectDefaultsMap}
+          groupBy={groupBy}
         />
       )}
 
