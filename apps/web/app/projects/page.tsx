@@ -229,6 +229,20 @@ export default function ProjectsPage() {
                     <p className="text-xs text-zinc-500 dark:text-zinc-400 font-mono mt-0.5 truncate">
                       {project.path}
                     </p>
+                    {(project.defaultModel || project.defaultEffort) && (
+                      <div className="mt-1 flex items-center gap-1 flex-wrap">
+                        {project.defaultModel && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-mono">
+                            {project.defaultModel}
+                          </span>
+                        )}
+                        {project.defaultEffort && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-mono uppercase">
+                            effort:{project.defaultEffort}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     {(project.tags ?? []).length > 0 && (
                       <div className="mt-2 flex gap-1 flex-wrap">
                         {(project.tags ?? []).map((tag) => (

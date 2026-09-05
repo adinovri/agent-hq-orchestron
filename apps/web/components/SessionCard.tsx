@@ -49,6 +49,11 @@ export function SessionCard({ session, onKill, killing }: Props) {
             {session.model && (
               <span className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">{session.model}</span>
             )}
+            {session.effort && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-mono uppercase">
+                effort:{session.effort}
+              </span>
+            )}
             <span className="text-xs text-zinc-400 dark:text-zinc-500 font-mono">{session.id.slice(0, 8)}</span>
           </div>
 

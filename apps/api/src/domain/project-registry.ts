@@ -8,6 +8,8 @@ export interface CreateProjectInput {
   name: string
   path: string
   agentType?: ProjectMetadata['agentType']
+  defaultModel?: ProjectMetadata['defaultModel']
+  defaultEffort?: ProjectMetadata['defaultEffort']
   group?: string | null
   tags?: string[]
   agentConfig?: ProjectMetadata['agentConfig']
@@ -60,6 +62,8 @@ export class ProjectRegistry {
       name: input.name,
       path: input.path,
       agentType: input.agentType ?? 'claude',
+      defaultModel: input.defaultModel,
+      defaultEffort: input.defaultEffort,
       group: input.group ?? null,
       tags: input.tags ?? [],
       agentConfig: input.agentConfig,

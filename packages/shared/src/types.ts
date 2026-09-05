@@ -54,6 +54,8 @@ export interface ProjectMetadata {
   name: string
   path: string
   agentType: AgentType
+  defaultModel?: string
+  defaultEffort?: EffortLevel
   group?: string | null
   tags?: string[]
   agentConfig?: AgentConfig

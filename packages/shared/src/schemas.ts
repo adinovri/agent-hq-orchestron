@@ -5,6 +5,7 @@ import { z } from 'zod'
 // ============================================================================
 
 export const AgentTypeSchema = z.enum(['claude', 'codex', 'opencode'])
+export const EffortLevelSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
 
 // ============================================================================
 // Session lifecycle — 7 states per HLD state diagram
@@ -68,6 +69,8 @@ export const ProjectMetadataSchema = z.object({
   name: z.string().min(1),
   path: z.string().min(1),
   agentType: AgentTypeSchema,
+  defaultModel: z.string().optional(),
+  defaultEffort: EffortLevelSchema.optional(),
   group: z.string().nullable().optional(),
   tags: z.array(z.string()).optional(),
   agentConfig: AgentConfigSchema.optional(),
@@ -168,8 +171,6 @@ export const MetricsRecordSchema = z.object({
 // API request bodies
 // ============================================================================
 
-export const EffortLevelSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
-
 export const SpawnSessionBodySchema = z.object({
   projectId: z.string().uuid(),
   agentType: AgentTypeSchema.optional(),
@@ -187,6 +188,8 @@ export const RegisterProjectBodySchema = z.object({
   name: z.string().min(1),
   path: z.string().min(1),
   agentType: AgentTypeSchema,
+  defaultModel: z.string().optional(),
+  defaultEffort: EffortLevelSchema.optional(),
   group: z.string().nullable().optional(),
   tags: z.array(z.string()).optional(),
   agentConfig: AgentConfigSchema.optional(),

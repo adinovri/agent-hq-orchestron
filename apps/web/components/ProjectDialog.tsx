@@ -23,6 +23,8 @@ interface FormState {
   name: string
   path: string
   agentType: 'claude' | 'codex' | 'opencode'
+  defaultModel: string
+  defaultEffort: string
   claudeConfigDir: string
   group: string
   tags: string
@@ -36,6 +38,8 @@ const BLANK: FormState = {
   name: '',
   path: '',
   agentType: 'claude',
+  defaultModel: '',
+  defaultEffort: '',
   claudeConfigDir: '',
   group: '',
   tags: '',
@@ -59,6 +63,8 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
         name: project.name,
         path: project.path,
         agentType: project.agentType,
+        defaultModel: project.defaultModel ?? '',
+        defaultEffort: project.defaultEffort ?? '',
         claudeConfigDir: env['CLAUDE_CONFIG_DIR'] ?? '',
         group: project.group ?? '',
         tags: (project.tags ?? []).join(', '),
@@ -116,6 +122,8 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
       name: form.name.trim(),
       path: form.path.trim(),
       agentType: form.agentType,
+      ...(form.defaultModel ? { defaultModel: form.defaultModel } : {}),
+      ...(form.defaultEffort ? { defaultEffort: form.defaultEffort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}),
       group: form.group.trim() || null,
       tags: form.tags.split(',').map((s) => s.trim()).filter(Boolean),
       ...(Object.keys(agentConfig).length > 0 ? { agentConfig } : {}),
@@ -194,6 +202,37 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
               <option value="codex">codex</option>
               <option value="opencode">opencode</option>
             </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium block mb-1">Default Model</label>
+              <select
+                value={form.defaultModel}
+                onChange={(e) => set('defaultModel', e.target.value)}
+                className={inputCls}
+              >
+                <option value="">— Claude default</option>
+                <option value="claude-opus-5">Opus 5</option>
+                <option value="claude-sonnet-4-6">Sonnet 4.6</option>
+                <option value="claude-haiku-4-5">Haiku 4.5</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium block mb-1">Default Effort</label>
+              <select
+                value={form.defaultEffort}
+                onChange={(e) => set('defaultEffort', e.target.value)}
+                className={inputCls}
+              >
+                <option value="">— Claude default</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">Extra high</option>
+                <option value="max">Max</option>
+              </select>
+            </div>
           </div>
 
           <div>

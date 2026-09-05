@@ -142,8 +142,9 @@ export function sessionsPlugin(
         workspace: project.path,
         detached,
         configDir,
-        model: body.data.model,
-        effort: body.data.effort,
+        // Body values override project defaults; empty falls back to project.
+        model: body.data.model ?? project.defaultModel,
+        effort: body.data.effort ?? project.defaultEffort,
       })
 
       // Record delegation edge if parent session provided

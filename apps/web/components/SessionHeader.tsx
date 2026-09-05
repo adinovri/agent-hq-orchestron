@@ -43,6 +43,11 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
               {session.model && (
                 <span className="text-xs text-zinc-500 dark:text-zinc-400 font-mono">{session.model}</span>
               )}
+              {session.effort && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-mono uppercase">
+                  effort:{session.effort}
+                </span>
+              )}
               {descendantCount != null && descendantCount > 0 && (
                 <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
                   <GitBranch className="w-3 h-3" />
