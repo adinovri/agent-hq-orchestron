@@ -77,6 +77,13 @@ await fastify.register(cors, { origin: true })
 await fastify.register(sensible)
 await fastify.register(authPlugin, { config })
 
+// Accept YAML/plain-text bodies (used by /api/schedules/import).
+fastify.addContentTypeParser(
+  ['application/x-yaml', 'application/yaml', 'text/yaml', 'text/plain'],
+  { parseAs: 'string' },
+  (_req, body, done) => done(null, body),
+)
+
 // Reset endpoint: served by API (bypass Web service worker) — clears client-side state.
 // Also whitelisted from auth in plugins/auth.ts because Bearer token isn't required to nuke SW.
 fastify.get('/api/reset', async (_req, reply) => {

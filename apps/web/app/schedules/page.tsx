@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, fetchJson } from '@/lib/fetcher'
 import { Button } from '@/components/ui/button'
@@ -8,7 +8,7 @@ import { ScheduleDialog } from '@/components/ScheduleDialog'
 import { Skeleton } from '@/components/Skeleton'
 import { formatRelative } from '@/lib/time'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
-import { Plus, Clock, Play, Pencil, Trash2, Pause } from 'lucide-react'
+import { Plus, Clock, Play, Pencil, Trash2, Pause, Download, Upload } from 'lucide-react'
 
 interface Schedule {
   id: string
@@ -27,6 +27,8 @@ export default function SchedulesPage() {
   const qc = useQueryClient()
   const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState<Schedule | null>(null)
+  const [importBusy, setImportBusy] = useState(false)
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   const { data: schedules = [], isLoading } = useQuery<Schedule[]>({
     queryKey: ['schedules'],
@@ -75,6 +77,44 @@ export default function SchedulesPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
   })
 
+  async function handleExport() {
+    const res = await apiFetch('/api/schedules/export')
+    if (!res.ok) { alert(`Export failed: HTTP ${res.status}`); return }
+    const yaml = await res.text()
+    const blob = new Blob([yaml], { type: 'application/x-yaml' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `orchestron-schedules-${new Date().toISOString().slice(0, 10)}.yml`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  async function handleImportFile(file: File) {
+    const mode = confirm(
+      `Import ${file.name}?\n\nOK = MERGE (add new, update existing by ID)\nCancel = REPLACE (delete all schedules first, then import)`,
+    ) ? 'merge' : 'replace'
+    setImportBusy(true)
+    try {
+      const yamlText = await file.text()
+      const res = await apiFetch(`/api/schedules/import?mode=${mode}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-yaml' },
+        body: yamlText,
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      const result = await res.json() as { total: number; created: number; updated: number; skipped: number; errors: Array<{ error: string }> }
+      alert(`Imported ${result.total} entries (${mode})\nCreated: ${result.created}\nUpdated: ${result.updated}\nSkipped: ${result.skipped}${result.errors.length ? '\n\nErrors:\n' + result.errors.map(e => e.error).join('\n') : ''}`)
+      qc.invalidateQueries({ queryKey: ['schedules'] })
+    } catch (err) {
+      alert(`Import failed: ${(err as Error).message}`)
+    } finally {
+      setImportBusy(false)
+    }
+  }
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-5">
       <div className="flex items-center justify-between gap-3">
@@ -84,9 +124,38 @@ export default function SchedulesPage() {
             {schedules.length} configured · {schedules.filter(s => s.enabled).length} active
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)} className="shrink-0">
-          <Plus className="w-4 h-4 mr-1" /> Schedule
-        </Button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={handleExport}
+            disabled={schedules.length === 0}
+            className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Download all schedules as YAML"
+          >
+            <Download className="w-3.5 h-3.5" /> Export
+          </button>
+          <button
+            onClick={() => importInputRef.current?.click()}
+            disabled={importBusy}
+            className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Import schedules from YAML file"
+          >
+            <Upload className="w-3.5 h-3.5" /> {importBusy ? 'Importing…' : 'Import'}
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".yml,.yaml,application/x-yaml"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) handleImportFile(f)
+              e.target.value = ''
+            }}
+          />
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="w-4 h-4 mr-1" /> Schedule
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (

@@ -2,7 +2,8 @@ import crypto from 'node:crypto'
 import type { FastifyInstance } from 'fastify'
 import fp from 'fastify-plugin'
 import { z } from 'zod'
-import { Scheduler, ScheduleNotFoundError } from '../domain/scheduler.js'
+import YAML from 'yaml'
+import { Scheduler, ScheduleNotFoundError, type ScheduleEntry } from '../domain/scheduler.js'
 
 const CreateScheduleSchema = z.object({
   cron: z.string().min(1),
@@ -74,6 +75,136 @@ export function schedulesPlugin(scheduler: Scheduler) {
         if (err instanceof ScheduleNotFoundError) return reply.code(404).send({ error: err.message })
         throw err
       }
+    })
+
+    // Export all schedules as YAML — for git-versioning / backup / migration.
+    // Strips runtime state (lastRunAt, nextRunAt) — schedule config only.
+    app.get('/api/schedules/export', async (_req, reply) => {
+      const entries = await scheduler.list()
+      const cleaned = entries.map((e) => ({
+        id: e.id,
+        cron: e.cron,
+        projectId: e.projectId,
+        template: e.template,
+        prompt: e.prompt,
+        vars: e.vars,
+        enabled: e.enabled,
+        createdAt: e.createdAt,
+      }))
+      const yaml = YAML.stringify({ schedules: cleaned })
+      return reply
+        .header('Content-Type', 'application/x-yaml; charset=utf-8')
+        .header('Content-Disposition', 'attachment; filename="orchestron-schedules.yml"')
+        .send(yaml)
+    })
+
+    // Import schedules from YAML. Accepts either `application/x-yaml` body
+    // or `application/json` `{ yaml: "..." }`. Modes:
+    //   ?mode=merge (default): add new (skip existing IDs), update if same ID
+    //   ?mode=replace: delete all existing schedules first, then import
+    app.post('/api/schedules/import', async (req, reply) => {
+      const mode = ((req.query as Record<string, string>).mode ?? 'merge') as 'merge' | 'replace'
+      if (mode !== 'merge' && mode !== 'replace') {
+        return reply.code(400).send({ error: `mode must be merge|replace, got ${mode}` })
+      }
+
+      let yamlText = ''
+      const ct = req.headers['content-type'] ?? ''
+      if (ct.includes('yaml') || ct.includes('text/plain')) {
+        yamlText = typeof req.body === 'string' ? req.body : String(req.body)
+      } else if (ct.includes('json')) {
+        const body = req.body as { yaml?: string }
+        if (typeof body?.yaml !== 'string') {
+          return reply.code(400).send({ error: 'body must have { yaml: "..." } for application/json' })
+        }
+        yamlText = body.yaml
+      } else {
+        return reply.code(415).send({ error: 'send application/x-yaml or application/json with {yaml}' })
+      }
+
+      let parsed: unknown
+      try { parsed = YAML.parse(yamlText) } catch (err) {
+        return reply.code(400).send({ error: `YAML parse: ${(err as Error).message}` })
+      }
+      const doc = parsed as { schedules?: ScheduleEntry[] } | null
+      const items = Array.isArray(doc?.schedules) ? doc!.schedules : []
+      if (items.length === 0) {
+        return reply.code(400).send({ error: 'no schedules found in YAML (expected top-level `schedules:` list)' })
+      }
+
+      if (mode === 'replace') {
+        const existing = await scheduler.list()
+        for (const s of existing) {
+          try { await scheduler.delete(s.id) } catch { /* ignore */ }
+        }
+      }
+
+      let created = 0
+      let updated = 0
+      let skipped = 0
+      const errors: Array<{ id?: string; error: string }> = []
+
+      for (const raw of items) {
+        try {
+          if (!raw.cron || !raw.projectId) {
+            errors.push({ id: raw.id, error: 'missing cron or projectId' })
+            continue
+          }
+          if (!raw.template && !raw.prompt) {
+            errors.push({ id: raw.id, error: 'missing prompt or template' })
+            continue
+          }
+
+          if (raw.id) {
+            // Try update if exists; else create with given ID
+            try {
+              await scheduler.get(raw.id)
+              await scheduler.update(raw.id, {
+                cron: raw.cron,
+                projectId: raw.projectId,
+                template: raw.template,
+                prompt: raw.prompt,
+                vars: raw.vars,
+                enabled: raw.enabled ?? true,
+              })
+              updated += 1
+            } catch (err) {
+              if (err instanceof ScheduleNotFoundError) {
+                await scheduler.create({
+                  id: raw.id,
+                  cron: raw.cron,
+                  projectId: raw.projectId,
+                  template: raw.template,
+                  prompt: raw.prompt,
+                  vars: raw.vars,
+                  enabled: raw.enabled ?? true,
+                  createdAt: raw.createdAt ?? new Date().toISOString(),
+                })
+                created += 1
+              } else {
+                throw err
+              }
+            }
+          } else {
+            await scheduler.create({
+              id: crypto.randomUUID(),
+              cron: raw.cron,
+              projectId: raw.projectId,
+              template: raw.template,
+              prompt: raw.prompt,
+              vars: raw.vars,
+              enabled: raw.enabled ?? true,
+              createdAt: new Date().toISOString(),
+            })
+            created += 1
+          }
+        } catch (err) {
+          errors.push({ id: raw.id, error: (err as Error).message })
+          skipped += 1
+        }
+      }
+
+      return { mode, total: items.length, created, updated, skipped, errors }
     })
 
     app.post('/api/schedules/:id/run', async (req, reply) => {
