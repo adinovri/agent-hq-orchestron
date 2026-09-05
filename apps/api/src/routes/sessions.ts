@@ -197,6 +197,21 @@ export function sessionsPlugin(
       }
     })
 
+    // Mark session as done (tycho-style archive). Kills tmux + transitions
+    // through completing → succeeded. Idempotent per allowed-state guard.
+    app.post('/api/sessions/:uuid/archive', async (req, reply) => {
+      const { uuid } = req.params as { uuid: string }
+      try {
+        const session = await manager.archive(uuid)
+        return session
+      } catch (err: unknown) {
+        const msg = (err as Error).message ?? ''
+        if (msg.includes('not found')) return reply.code(404).send({ error: msg })
+        if (msg.includes('Cannot archive')) return reply.code(409).send({ error: msg })
+        throw err
+      }
+    })
+
     app.delete('/api/sessions/:uuid', async (req, reply) => {
       const { uuid } = req.params as { uuid: string }
       try {

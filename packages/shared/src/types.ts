@@ -4,9 +4,11 @@ export type SessionStatus =
   | 'spawning'
   | 'waiting'
   | 'running'
-  | 'awaiting_input'
+  | 'needs_input'     // Agent posed a question — user answer required
+  | 'idle'            // Turn done, session alive, no explicit question
   | 'completing'
   | 'completed'
+  | 'succeeded'       // User marked done + session archived (terminal, read-only)
   | 'failed'
   | 'killed'
 

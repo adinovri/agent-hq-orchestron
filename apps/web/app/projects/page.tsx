@@ -65,7 +65,7 @@ export default function ProjectsPage() {
     for (const s of sessions) {
       const cur = map.get(s.projectId) ?? { total: 0, active: 0 }
       cur.total += 1
-      if (['spawning', 'waiting', 'running', 'awaiting_input', 'completing'].includes(s.status)) {
+      if (['spawning', 'waiting', 'running', 'needs_input', 'idle', 'completing'].includes(s.status)) {
         cur.active += 1
       }
       map.set(s.projectId, cur)

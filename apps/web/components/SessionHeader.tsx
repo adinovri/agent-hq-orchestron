@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/StatusPill'
 import { isActive } from '@/lib/status'
 import { formatRelative, formatDuration } from '@/lib/time'
-import { X, GitBranch, ChevronDown, ChevronUp } from 'lucide-react'
+import { X, Check, GitBranch, ChevronDown, ChevronUp } from 'lucide-react'
 import { useState } from 'react'
 
 interface Props {
@@ -13,11 +13,14 @@ interface Props {
   descendantCount?: number
   readOnly?: boolean
   onKill: () => void
+  onArchive?: () => void
   killing: boolean
+  archiving?: boolean
 }
 
-export function SessionHeader({ session, descendantCount, readOnly, onKill, killing }: Props) {
+export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, killing, archiving }: Props) {
   const active = isActive(session.status)
+  const canArchive = ['needs_input', 'idle', 'waiting', 'running'].includes(session.status)
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -63,17 +66,33 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, kill
               </div>
             )}
           </div>
-          {active && !readOnly && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="shrink-0 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950 h-8 w-8 p-0"
-              disabled={killing}
-              onClick={onKill}
-              title={`Kill session${descendantCount ? ` (${descendantCount} children)` : ''}`}
-            >
-              <X className="w-4 h-4" />
-            </Button>
+          {!readOnly && (
+            <div className="flex items-center gap-1 shrink-0">
+              {canArchive && onArchive && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950 h-8 w-8 p-0"
+                  disabled={archiving}
+                  onClick={onArchive}
+                  title="Mark session as succeeded (archives + kills tmux)"
+                >
+                  <Check className="w-4 h-4" />
+                </Button>
+              )}
+              {active && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950 h-8 w-8 p-0"
+                  disabled={killing}
+                  onClick={onKill}
+                  title={`Kill session${descendantCount ? ` (${descendantCount} children)` : ''}`}
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
           )}
         </div>
       </div>

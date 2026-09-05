@@ -96,7 +96,7 @@ export default function DashboardPage() {
   const activeSessions = sessions.filter((s) =>
     ['spawning', 'waiting', 'running', 'completing'].includes(s.status),
   ).length
-  const needsInputCount = sessions.filter((s) => s.status === 'awaiting_input').length
+  const needsInputCount = sessions.filter((s) => s.status === 'needs_input').length
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-5">
@@ -117,13 +117,13 @@ export default function DashboardPage() {
         </Button>
       </div>
 
-      {/* Stats row — includes awaiting_input to make attention state prominent */}
+      {/* Stats row — surface attention state prominently */}
       <div className="grid grid-cols-4 gap-2 sm:gap-3">
         {(
           [
-            { key: 'awaiting_input', label: 'Needs input', color: 'text-amber-600 dark:text-amber-400' },
+            { key: 'needs_input', label: 'Needs input', color: 'text-amber-600 dark:text-amber-400' },
             { key: 'running', label: 'Running', color: 'text-emerald-600 dark:text-emerald-400' },
-            { key: 'completed', label: 'Completed', color: 'text-zinc-500' },
+            { key: 'succeeded', label: 'Succeeded', color: 'text-emerald-600 dark:text-emerald-400' },
             { key: 'failed', label: 'Failed', color: 'text-red-600 dark:text-red-400' },
           ] as const
         ).map(({ key, label, color }) => {

@@ -10,14 +10,16 @@ interface Props {
   status: SessionStatus
 }
 
-const ENABLED: SessionStatus[] = ['awaiting_input', 'waiting']
+const ENABLED: SessionStatus[] = ['needs_input', 'idle', 'waiting']
 const HINT: Partial<Record<SessionStatus, string>> = {
   spawning: 'Session is spawning…',
   waiting: 'Session ready — type your first message',
   running: 'Claude is thinking…',
-  awaiting_input: 'Type your reply',
+  needs_input: 'Type your reply',
+  idle: 'Send a follow-up',
   completing: 'Session is completing…',
   completed: 'Session ended',
+  succeeded: 'Session succeeded (archived)',
   failed: 'Session failed',
   killed: 'Session killed',
 }
@@ -29,7 +31,7 @@ export function InputBox({ uuid, status }: Props) {
 
   // Clear the "just sent" preview when Claude finishes responding
   useEffect(() => {
-    if (status === 'awaiting_input' || status === 'completed' || status === 'failed' || status === 'killed') {
+    if (status === 'needs_input' || status === 'idle' || status === 'completed' || status === 'succeeded' || status === 'failed' || status === 'killed') {
       setLastSent(null)
     }
   }, [status])
@@ -67,7 +69,7 @@ export function InputBox({ uuid, status }: Props) {
     }
   }
 
-  const isAwaiting = status === 'awaiting_input'
+  const isAwaiting = status === 'needs_input'
   const isThinking = status === 'running' || status === 'spawning'
 
   return (

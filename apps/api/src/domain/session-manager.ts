@@ -20,16 +20,39 @@ export class InvalidTransitionError extends Error {
   }
 }
 
-// Legal transitions per the 8-state machine
+// Legal transitions — tycho-inspired lifecycle
 const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
   spawning: ['waiting', 'failed', 'killed'],
   waiting: ['running', 'killed'],
-  running: ['running', 'awaiting_input', 'completing', 'killed'],
-  awaiting_input: ['running', 'completing', 'killed'],
-  completing: ['completed', 'failed'],
+  running: ['running', 'idle', 'needs_input', 'completing', 'killed'],
+  idle: ['running', 'needs_input', 'completing', 'succeeded', 'killed'],
+  needs_input: ['running', 'idle', 'completing', 'succeeded', 'killed'],
+  completing: ['completed', 'succeeded', 'failed'],
   completed: [],
+  succeeded: [],
   failed: [],
   killed: [],
+}
+
+// Detect whether an assistant text is soliciting user input (question).
+// Cheap heuristic: ends with `?`, or contains typical question phrases.
+const QUESTION_PHRASES = [
+  /\?\s*$/,                         // ends with ?
+  /would you like/i,
+  /do you want/i,
+  /should i /i,
+  /which (one|do you|would)/i,
+  /let me know/i,
+  /please (tell|specify|confirm|clarify|choose)/i,
+  /what (do you|would|should)/i,
+  /any (specific|preference|thoughts)/i,
+  /shall i/i,
+  /could you (tell|specify|clarify|share)/i,
+]
+function textAsksQuestion(text: string): boolean {
+  const t = text.trim()
+  if (!t) return false
+  return QUESTION_PHRASES.some((re) => re.test(t))
 }
 
 export interface SessionManagerConfig {
@@ -131,7 +154,8 @@ export class SessionManager {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
-    if (session.status !== 'awaiting_input' && session.status !== 'waiting') {
+    const INPUT_ALLOWED: SessionStatus[] = ['needs_input', 'idle', 'waiting']
+    if (!INPUT_ALLOWED.includes(session.status)) {
       throw new Error(`Cannot send input while session is ${session.status}`)
     }
 
@@ -176,12 +200,34 @@ export class SessionManager {
     })
     this.turnWatchers.set(uuid, tailer)
 
+    // Track the last assistant text so we can heuristically decide whether the
+    // agent asked a question (→ needs_input) or the turn just ended (→ idle).
+    let lastAssistantText = ''
+
     tailer.on('event', async (ev: { event: unknown }) => {
-      const obj = ev.event as { type?: string; subtype?: string } | null
-      if (!obj || obj.type !== 'system' || obj.subtype !== 'turn_duration') return
+      const obj = ev.event as {
+        type?: string
+        subtype?: string
+        message?: { content?: Array<{ type?: string; text?: string }> }
+      } | null
+      if (!obj) return
+
+      // Buffer the most recent assistant text block seen in this stream.
+      if (obj.type === 'assistant' && Array.isArray(obj.message?.content)) {
+        for (const b of obj.message!.content!) {
+          if (b.type === 'text' && b.text) lastAssistantText = b.text
+        }
+        return
+      }
+
+      if (obj.type !== 'system' || obj.subtype !== 'turn_duration') return
       const current = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
-      if (current && current.status === 'running') {
-        await this.transition(uuid, 'awaiting_input').catch(() => {})
+      if (current && (current.status === 'running' || current.status === 'idle' || current.status === 'needs_input')) {
+        const next: SessionStatus = textAsksQuestion(lastAssistantText) ? 'needs_input' : 'idle'
+        // Only transition if it's a legal move from current state.
+        if (ALLOWED_TRANSITIONS[current.status].includes(next)) {
+          await this.transition(uuid, next).catch(() => {})
+        }
       }
       tailer.close()
       this.turnWatchers.delete(uuid)
@@ -190,6 +236,40 @@ export class SessionManager {
     tailer.start().catch(() => {
       this.turnWatchers.delete(uuid)
     })
+  }
+
+  /**
+   * Mark a session as succeeded — user says "task done". Kills the tmux
+   * session to free resources, then transitions to `succeeded` (terminal,
+   * read-only). Session file + transcript stay for review.
+   */
+  async archive(uuid: string): Promise<SessionMetadata> {
+    const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!session) throw new Error(`Session not found: ${uuid}`)
+
+    const ARCHIVABLE: SessionStatus[] = ['needs_input', 'idle', 'waiting', 'running']
+    if (!ARCHIVABLE.includes(session.status)) {
+      throw new Error(`Cannot archive session in ${session.status} state`)
+    }
+
+    // Close watcher
+    const watcher = this.turnWatchers.get(uuid)
+    if (watcher) {
+      watcher.close()
+      this.turnWatchers.delete(uuid)
+    }
+
+    // Kill tmux — session archived means we don't need the process anymore
+    const adapter = this.registry.getOrThrow(session.agentType)
+    await adapter.kill({
+      tmuxName: session.tmuxName,
+      claudeUuid: session.claudeSessionUuid,
+      jsonlPath: session.jsonlPath,
+    }).catch(() => { /* tmux may already be gone */ })
+
+    // Direct transition via `completing` → `succeeded`
+    await this.transition(uuid, 'completing').catch(() => {})
+    return this.transition(uuid, 'succeeded')
   }
 
   async transition(uuid: string, newStatus: SessionStatus): Promise<SessionMetadata> {
@@ -201,7 +281,7 @@ export class SessionManager {
       throw new InvalidTransitionError(session.status, newStatus)
     }
 
-    const terminal: SessionStatus[] = ['completed', 'failed', 'killed']
+    const terminal: SessionStatus[] = ['completed', 'succeeded', 'failed', 'killed']
     const updated: SessionMetadata = {
       ...session,
       status: newStatus,
@@ -249,7 +329,19 @@ export class SessionManager {
    */
   async resumeWatchers(): Promise<void> {
     const sessions = await this.list()
+    // One-time migration: legacy `awaiting_input` sessions become `idle` under
+    // the new state model (backward-compat). If we later detect a question in
+    // their last assistant text, the next watcher will bump them to needs_input.
     for (const s of sessions) {
+      const legacyStatus = s.status as unknown as string
+      if (legacyStatus === 'awaiting_input') {
+        const migrated: SessionMetadata = { ...s, status: 'idle' }
+        await writeJson(this.sessionPath(s.id), migrated).catch(() => {})
+      }
+    }
+    // Re-read after migration
+    const fresh = await this.list()
+    for (const s of fresh) {
       if (s.status === 'running') {
         this.watchForTurnEnd(s.id, s.jsonlPath, { fromStart: true })
       }
@@ -281,7 +373,7 @@ export class SessionManager {
 
   private async countActiveSessions(): Promise<number> {
     const all = await this.list()
-    const terminal: SessionStatus[] = ['completed', 'failed', 'killed']
+    const terminal: SessionStatus[] = ['completed', 'succeeded', 'failed', 'killed']
     return all.filter((s) => !terminal.includes(s.status)).length
   }
 }

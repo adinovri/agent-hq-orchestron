@@ -20,6 +20,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   const qc = useQueryClient()
   const [killOpen, setKillOpen] = useState(false)
   const [killing, setKilling] = useState(false)
+  const [archiving, setArchiving] = useState(false)
 
   const { data: session, isLoading } = useQuery<SessionMetadata>({
     queryKey: ['session', uuid],
@@ -41,6 +42,16 @@ export default function SessionDetailPage({ params }: PageProps) {
     onSettled: () => {
       setKilling(false)
       setKillOpen(false)
+      qc.invalidateQueries({ queryKey: ['session', uuid] })
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+    },
+  })
+
+  const archiveMutation = useMutation({
+    mutationFn: () => apiFetch(`/api/sessions/${uuid}/archive`, { method: 'POST' }),
+    onMutate: () => setArchiving(true),
+    onSettled: () => {
+      setArchiving(false)
       qc.invalidateQueries({ queryKey: ['session', uuid] })
       qc.invalidateQueries({ queryKey: ['sessions'] })
     },
@@ -78,7 +89,13 @@ export default function SessionDetailPage({ params }: PageProps) {
         descendantCount={descendantCount}
         readOnly={readOnly}
         onKill={() => setKillOpen(true)}
+        onArchive={() => {
+          if (confirm('Mark this session as succeeded? Tmux will be terminated and the transcript will remain read-only for review.')) {
+            archiveMutation.mutate()
+          }
+        }}
         killing={killing}
+        archiving={archiving}
       />
 
       <div className="flex-1 overflow-hidden">

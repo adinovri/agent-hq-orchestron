@@ -22,7 +22,7 @@ const AGENT_ICON: Record<string, React.ReactNode> = {
 
 export function SessionCard({ session, onKill, killing }: Props) {
   const active = isActive(session.status)
-  const needsInput = session.status === 'awaiting_input'
+  const needsInput = session.status === 'needs_input'
   const icon = AGENT_ICON[session.agentType] ?? <Bot className="w-4 h-4" />
 
   return (
