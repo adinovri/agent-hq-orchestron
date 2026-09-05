@@ -4,7 +4,7 @@ import { useState, KeyboardEvent, useEffect, useRef, ClipboardEvent, DragEvent }
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/fetcher'
 import type { SessionStatus } from '@agent-hq-orchestron/shared'
-import { Paperclip, X, FileText, Image as ImageIcon, FileCode, File as FileIcon } from 'lucide-react'
+import { Paperclip, X, FileText, Image as ImageIcon, FileCode, File as FileIcon, Square } from 'lucide-react'
 
 interface Props {
   uuid: string
@@ -24,11 +24,13 @@ interface UploadedFile {
   mime: string
 }
 
-const ENABLED: SessionStatus[] = ['needs_input', 'idle', 'waiting']
+// Queue-during-run: allow sending while Claude is still thinking; the TUI
+// buffers the paste and processes it as the next turn.
+const ENABLED: SessionStatus[] = ['needs_input', 'idle', 'waiting', 'running']
 const HINT: Partial<Record<SessionStatus, string>> = {
   spawning: 'Session is spawning…',
   waiting: 'Session ready — type your first message',
-  running: 'Claude is thinking…',
+  running: 'Queue next turn (Claude is still thinking)',
   needs_input: 'Type your reply',
   idle: 'Send a follow-up',
   completing: 'Session is completing…',
@@ -93,6 +95,15 @@ export function InputBox({ uuid, status }: Props) {
       return prev.filter(a => a.id !== id)
     })
   }
+
+  const interruptMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiFetch(`/api/sessions/${uuid}/interrupt`, { method: 'POST' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      return res.json()
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['session', uuid] }),
+  })
 
   const sendMutation = useMutation({
     mutationFn: async ({ prompt, files }: { prompt: string; files: AttachedFile[] }) => {
@@ -184,9 +195,23 @@ export function InputBox({ uuid, status }: Props) {
         </div>
       )}
       {isThinking && (
-        <div className="flex items-center gap-2 mb-2 text-xs text-zinc-500">
-          <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-          <span>{status === 'spawning' ? 'Starting Claude…' : 'Claude is thinking…'}</span>
+        <div className="flex items-center justify-between gap-2 mb-2 text-xs">
+          <div className="flex items-center gap-2 text-zinc-500">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+            <span>{status === 'spawning' ? 'Starting Claude…' : 'Claude is thinking…'}</span>
+          </div>
+          {status === 'running' && (
+            <button
+              type="button"
+              onClick={() => interruptMutation.mutate()}
+              disabled={interruptMutation.isPending}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 text-[11px] transition disabled:opacity-50"
+              title="Interrupt current turn (sends Escape to Claude)"
+            >
+              <Square className="w-2.5 h-2.5" fill="currentColor" />
+              {interruptMutation.isPending ? 'Interrupting…' : 'Interrupt'}
+            </button>
+          )}
         </div>
       )}
       {isAwaiting && (

@@ -191,7 +191,10 @@ export class SessionManager {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
-    const INPUT_ALLOWED: SessionStatus[] = ['needs_input', 'idle', 'waiting']
+    // Allow queue-during-run: Claude TUI buffers the pasted input and sends
+    // it as the next turn after the current one finishes. Only reject when
+    // the session is terminal or still initializing.
+    const INPUT_ALLOWED: SessionStatus[] = ['needs_input', 'idle', 'waiting', 'running']
     if (!INPUT_ALLOWED.includes(session.status)) {
       throw new Error(`Cannot send input while session is ${session.status}`)
     }
@@ -205,9 +208,46 @@ export class SessionManager {
     await adapter.waitTuiReady(handle, 10_000).catch(() => { /* proceed anyway */ })
 
     await adapter.sendPrompt(handle, prompt)
+    // If session was already running, don't force a transition — the current
+    // turn's watcher will still handle turn_duration → idle/needs_input.
+    // The queued prompt becomes the next turn and a fresh watcher then arms.
+    if (session.status === 'running') {
+      // Just re-arm watcher (safe: idempotent — old watcher closed on next fire)
+      this.watchForTurnEnd(uuid, session.jsonlPath)
+      return session
+    }
     const updated = await this.transition(uuid, 'running')
     this.watchForTurnEnd(uuid, session.jsonlPath)
     return updated
+  }
+
+  /**
+   * Interrupt the current turn — send Escape to the Claude TUI which aborts
+   * the API call in progress without killing the session. Session transitions
+   * back to `idle` once tailer sees `turn_duration` or timeout.
+   */
+  async interrupt(uuid: string): Promise<SessionMetadata> {
+    const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!session) throw new Error(`Session not found: ${uuid}`)
+
+    if (session.status !== 'running' && session.status !== 'needs_input' && session.status !== 'idle') {
+      throw new Error(`Cannot interrupt session in ${session.status} state`)
+    }
+
+    const adapter = this.registry.getOrThrow(session.agentType)
+    const handle = { tmuxName: session.tmuxName, claudeUuid: session.claudeSessionUuid, jsonlPath: session.jsonlPath }
+
+    // Send Escape via adapter — Claude TUI interprets as interrupt-turn.
+    // Uses low-level tmux binding since adapter interface doesn't expose
+    // arbitrary keys. Fallback silently if tmux is dead.
+    try {
+      const tmux = await import('../adapters/tmux.js')
+      await tmux.sendKeys(handle.tmuxName, 'Escape')
+    } catch { /* ignore */ }
+
+    // Don't transition state — let the watcher pick up `turn_duration`
+    // naturally as Claude wraps up the aborted turn.
+    return session
   }
 
   /**

@@ -322,6 +322,22 @@ export function sessionsPlugin(
       return { files: saved }
     })
 
+    // Interrupt the current turn — sends Escape to Claude TUI to abort
+    // the in-flight API call. Session stays alive, transitions to idle
+    // once the tailer picks up turn_duration.
+    app.post('/api/sessions/:uuid/interrupt', async (req, reply) => {
+      const { uuid } = req.params as { uuid: string }
+      try {
+        const session = await manager.interrupt(uuid)
+        return session
+      } catch (err: unknown) {
+        const msg = (err as Error).message ?? ''
+        if (msg.includes('not found')) return reply.code(404).send({ error: msg })
+        if (msg.includes('Cannot interrupt')) return reply.code(409).send({ error: msg })
+        throw err
+      }
+    })
+
     // Reopen a terminal session — same UUID + same Claude session, fresh tmux.
     // Session comes back to `idle` after Claude TUI boots with --resume.
     app.post('/api/sessions/:uuid/reopen', async (req, reply) => {
