@@ -42,6 +42,11 @@ export interface SessionMetadata {
    *  by the idle-sweeper to schedule warm-shutdown at (idleSince + threshold).
    *  Cleared when the session transitions back to an active state. */
   idleSince?: string | null
+  /** Effective CLAUDE_CONFIG_DIR captured at spawn time — the directory
+   *  where Claude CLI writes this session's JSONL. Persisted so wake-up /
+   *  reopen / clone target the same config dir even if the API process's
+   *  env changes across restarts. */
+  configDir?: string
   failureReason?: string
   metadata: Record<string, unknown>
 }

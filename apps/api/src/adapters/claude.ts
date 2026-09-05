@@ -35,8 +35,16 @@ function expandHome(p: string): string {
   return p
 }
 
+/** Effective Claude config dir — falls back to the CLAUDE_CONFIG_DIR env
+ *  var before defaulting to ~/.claude, matching Claude CLI's own resolution.
+ *  Exported so session-manager can persist it in SessionMetadata at spawn
+ *  time and reuse the same value for wake-up / reopen / clone. */
+export function effectiveClaudeConfigDir(explicit?: string): string {
+  return expandHome(explicit ?? process.env['CLAUDE_CONFIG_DIR'] ?? path.join(os.homedir(), '.claude'))
+}
+
 function claudeTranscriptPath(workspace: string, configDir: string | undefined, uuid: string): string {
-  const baseDir = expandHome(configDir ?? path.join(os.homedir(), '.claude'))
+  const baseDir = effectiveClaudeConfigDir(configDir)
   const mangled = expandHome(workspace).replace(/\//g, '-')
   return path.join(baseDir, 'projects', mangled, `${uuid}.jsonl`)
 }

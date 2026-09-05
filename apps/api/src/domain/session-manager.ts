@@ -182,7 +182,14 @@ export class SessionManager {
     const uuid = crypto.randomUUID()
     const adapter = this.registry.getOrThrow(spawnConfig.agentType)
     const mcpConfigPath = await this.ensureSessionMcpConfig(uuid)
-    const handle = await adapter.spawn({ ...spawnConfig, mcpConfigPath })
+    // Capture the effective CLAUDE_CONFIG_DIR that this spawn will run
+    // under, so wake-up / reopen / clone in the future use the SAME dir
+    // regardless of what the API process's env looks like then.
+    const { effectiveClaudeConfigDir } = await import('../adapters/claude.js')
+    const effectiveConfigDir = spawnConfig.agentType === 'claude'
+      ? effectiveClaudeConfigDir(spawnConfig.configDir)
+      : spawnConfig.configDir
+    const handle = await adapter.spawn({ ...spawnConfig, configDir: effectiveConfigDir, mcpConfigPath })
 
     const now = new Date().toISOString()
     const session: SessionMetadata = {
@@ -197,6 +204,7 @@ export class SessionManager {
       claudeSessionUuid: handle.claudeUuid,
       tmuxName: handle.tmuxName,
       jsonlPath: handle.jsonlPath,
+      configDir: effectiveConfigDir,
       initialPrompt: spawnConfig.initialPrompt,
       finalResponse: null,
       tokenUsage: null,
@@ -305,6 +313,7 @@ export class SessionManager {
           const mcpConfigPath = await this.ensureSessionMcpConfig(uuid)
           handle = await adapter.resume(session.claudeSessionUuid, {
             workspace: proj.path,
+            configDir: session.configDir,   // wake-up must use SAME configDir as spawn
             model: session.model ?? proj.defaultModel,
             effort: session.effort ?? proj.defaultEffort,
             mcpConfigPath,
