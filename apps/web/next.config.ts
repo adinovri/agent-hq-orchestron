@@ -30,6 +30,21 @@ const nextConfig: NextConfig = {
       },
     ]
   },
+  // Force HTML to never be cached — Next.js's default prerender cache
+  // (s-maxage=31536000) means stale HTML persists across deploys even when
+  // hashed JS chunks change. Hashed static assets stay long-cached (immutable).
+  async headers() {
+    return [
+      {
+        // Match all NON-static routes (HTML pages).
+        // Excludes /_next/static, /icons/, etc.
+        source: '/:path((?!_next/static|_next/image|icons|.*\\..*).*)*',
+        headers: [
+          { key: 'Cache-Control', value: 'no-store, must-revalidate' },
+        ],
+      },
+    ]
+  },
 }
 
 export default withSerwist(nextConfig)
