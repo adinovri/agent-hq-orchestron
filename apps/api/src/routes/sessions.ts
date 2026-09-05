@@ -226,10 +226,12 @@ export function sessionsPlugin(
         toolName?: string
         content: string
       }> = []
-      // Safety net: if session is still 'running' but JSONL contains a
-      // turn_duration event AFTER the last known transition, fs.watch missed
-      // it (Linux inotify race on appends). Trigger transition here.
-      let sawTurnEnd = false
+      // Safety net: reconcile stuck 'running' when fs.watch misses an
+      // append. Only trigger if the LAST turn_duration event comes AFTER
+      // the LAST user prompt — otherwise the turn_duration is from a
+      // previous turn and the current one is still legitimately running.
+      let lastTurnEndTs = ''
+      let lastUserTs = ''
       let lastAssistantText = ''
       let seq = 0
       for (const line of raw.split('\n')) {
@@ -241,7 +243,12 @@ export function sessionsPlugin(
           message?: { content?: string | Array<{ type?: string; text?: string; name?: string; input?: unknown; content?: string | Array<{ text?: string }> }> }
         }
         try { ev = JSON.parse(line) } catch { continue }
-        if (ev.type === 'system' && ev.subtype === 'turn_duration') sawTurnEnd = true
+        if (ev.type === 'system' && ev.subtype === 'turn_duration' && ev.timestamp) {
+          lastTurnEndTs = ev.timestamp
+        }
+        if (ev.type === 'user' && typeof ev.message?.content === 'string' && ev.timestamp) {
+          lastUserTs = ev.timestamp
+        }
         const ts = ev.timestamp ?? ''
         const t = ev.type
         const content = ev.message?.content
@@ -268,11 +275,11 @@ export function sessionsPlugin(
         }
       }
 
-      // Safety net: reconcile stuck status. If session is 'running' but
-      // JSONL shows turn ended, trigger the transition here (belt-and-
-      // suspenders vs fs.watch race). Fire-and-forget so the response is
-      // never blocked.
-      if (sawTurnEnd && session.status === 'running') {
+      // Safety net: reconcile stuck status. Only if the latest turn_duration
+      // is AFTER the latest user prompt — otherwise the turn_duration belongs
+      // to a previous turn and the current one is still running.
+      const turnEndedAfterUser = lastTurnEndTs && (!lastUserTs || lastTurnEndTs > lastUserTs)
+      if (turnEndedAfterUser && session.status === 'running') {
         manager.reconcileTurnEnd(session.id, lastAssistantText).catch(() => {})
       }
 
