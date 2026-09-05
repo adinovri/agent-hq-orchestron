@@ -31,8 +31,13 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
   const modelFromProject = !session.model && !!projectDefaultModel
   const effortFromProject = !session.effort && !!projectDefaultEffort
   const active = isActive(session.status)
-  const canArchive = ['needs_input', 'idle', 'waiting', 'running'].includes(session.status)
-  const canReopen = ['succeeded', 'killed', 'failed', 'completed'].includes(session.status)
+  const canArchive = ['needs_input', 'idle', 'waiting', 'running', 'sleeping'].includes(session.status)
+  // Reopen + Clone/Fork both spawn a fresh tmux against the same
+  // claudeSessionUuid → same JSONL. Only safe when the ORIGINAL tmux is
+  // guaranteed dead: terminal states or 'sleeping' (which has no tmux held).
+  const RESUMABLE = ['succeeded', 'killed', 'failed', 'completed', 'sleeping'] as const
+  const canReopen = RESUMABLE.includes(session.status as (typeof RESUMABLE)[number])
+  const canClone = RESUMABLE.includes(session.status as (typeof RESUMABLE)[number])
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -120,7 +125,7 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
                   <Play className="w-4 h-4" />
                 </Button>
               )}
-              {onClone && (
+              {canClone && onClone && (
                 <Button
                   variant="ghost"
                   size="sm"
