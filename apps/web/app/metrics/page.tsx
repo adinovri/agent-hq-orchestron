@@ -103,8 +103,18 @@ export default function MetricsPage() {
     sessions: b.sessions,
   }))
 
+  const { data: projectsList = [] } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ['projects-lite'],
+    queryFn: async () => {
+      const r = await fetchJson<{ projects: Array<{ id: string; name: string }> }>('/api/projects')
+      return r.projects.map((p) => ({ id: p.id, name: p.name }))
+    },
+  })
+
+  const nameFor = (id: string) => projectsList.find((p) => p.id === id)?.name ?? id.slice(0, 8)
+
   const projectRows = (projectData?.buckets ?? []).map((b) => ({
-    project: b.key,
+    project: nameFor(b.key),
     cost: b.cost_usd,
     sessions: b.sessions,
     tokens: b.tokens,

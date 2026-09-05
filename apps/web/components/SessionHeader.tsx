@@ -74,7 +74,7 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
             {expanded && (
               <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 space-y-0.5 font-mono">
                 <div>id: {session.id}</div>
-                <div>project: {session.projectId}</div>
+                <div>project: {projectName ?? session.projectId}</div>
                 <div>agent: {session.agentType}</div>
                 <div>started: {new Date(session.startedAt).toLocaleString()}</div>
                 {session.endedAt && <div>ended: {new Date(session.endedAt).toLocaleString()}</div>}
