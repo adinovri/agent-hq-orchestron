@@ -6,6 +6,7 @@ export type SessionStatus =
   | 'running'
   | 'needs_input'     // Agent posed a question — user answer required
   | 'idle'            // Turn done, session alive, no explicit question
+  | 'sleeping'        // Idle beyond threshold, tmux released. Wakes on send.
   | 'completing'
   | 'completed'
   | 'succeeded'       // User marked done + session archived (terminal, read-only)
@@ -37,6 +38,10 @@ export interface SessionMetadata {
   costUsd: number | null
   startedAt: string
   endedAt: string | null
+  /** Timestamp when the session most recently entered idle/needs_input. Used
+   *  by the idle-sweeper to schedule warm-shutdown at (idleSince + threshold).
+   *  Cleared when the session transitions back to an active state. */
+  idleSince?: string | null
   failureReason?: string
   metadata: Record<string, unknown>
 }

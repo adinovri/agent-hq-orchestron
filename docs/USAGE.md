@@ -132,8 +132,12 @@ Bottom of the transcript pane. The composer:
 spawning ──▶ waiting ──▶ running ──▶ needs_input
                           │           │
                           ▼           ▼
-                        idle        (user replies)
+                        idle ────▶ (user replies) ──▶ running
                           │           │
+                          │           └─▶ sleeping    (after IDLE_TIMEOUT)
+                          │                 │
+                          │                 └─▶ send input ──▶ spawning ──▶ running  (wake-up)
+                          │
                           └──▶ completing ──▶ succeeded
                                               │
                                               ▶ (reopen) waiting…
@@ -144,6 +148,34 @@ any state       ──▶ failed  (crash)
 
 The API enforces `ALLOWED_TRANSITIONS` in `SessionManager`; illegal
 transitions throw `InvalidTransitionError`.
+
+### Sleep / wake-up (idle sweeper)
+
+Sessions in `idle` or `needs_input` for longer than `idleTimeoutMs`
+(default **15 min**) automatically warm-shutdown:
+
+- Tmux window is killed → no resources held.
+- Session status transitions to `sleeping`.
+- Claude session state stays intact in JSONL — nothing is lost.
+
+**Waking one up:** just send input. `POST /api/sessions/:uuid/input`
+(or the MCP `send_input` tool, or typing into the composer in the UI)
+does a cold-start `claude --resume <uuid>` transparently — ~3-5s of
+"spawning" state, then back to `running`. No manual reopen button, no
+new session id.
+
+**Config:**
+```json
+// ~/.orchestron/config.json
+{ "idleTimeoutMs": 900000 }    // 15 min default; 0 disables sweeper
+```
+Env override: `ORCHESTRON_IDLE_TIMEOUT_MS=<ms>`.
+
+**Restart safety:** on API boot, `resumeIdleSweepers()` scans every
+`idle`/`needs_input` session and either warm-shuts-down immediately
+(if past threshold) or arms a shortened timer for the remaining time.
+A safety-net sweep every 10 min catches orphans whose primary timer
+was somehow lost.
 
 ### Reopen vs Clone
 

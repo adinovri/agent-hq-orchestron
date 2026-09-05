@@ -33,6 +33,9 @@ export const ConfigSchema = z.object({
     })
     .default({ claude: true, codex: false, opencode: false }),
   logLevel: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
+  /** Milliseconds a session may stay idle/needs_input before its tmux is
+   *  released (transition to 'sleeping'). 0 disables the sweeper. */
+  idleTimeoutMs: z.number().int().min(0).default(15 * 60 * 1000),
 })
 
 export type Config = z.infer<typeof ConfigSchema>
@@ -66,6 +69,7 @@ function envOverrides(env: NodeJS.ProcessEnv): Partial<Config> {
   if (env.ORCHESTRON_PORT) out.port = Number(env.ORCHESTRON_PORT)
   if (env.ORCHESTRON_DATA_DIR) out.dataDir = env.ORCHESTRON_DATA_DIR
   if (env.ORCHESTRON_MAX_CONCURRENT) out.maxConcurrent = Number(env.ORCHESTRON_MAX_CONCURRENT)
+  if (env.ORCHESTRON_IDLE_TIMEOUT_MS) out.idleTimeoutMs = Number(env.ORCHESTRON_IDLE_TIMEOUT_MS)
   if (env.ORCHESTRON_REMOTE_TOKEN) out.remoteToken = env.ORCHESTRON_REMOTE_TOKEN
   if (env.ORCHESTRON_LOG_LEVEL) {
     out.logLevel = env.ORCHESTRON_LOG_LEVEL as Config['logLevel']

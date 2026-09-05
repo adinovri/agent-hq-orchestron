@@ -26,13 +26,14 @@ interface UploadedFile {
 
 // Queue-during-run: allow sending while Claude is still thinking; the TUI
 // buffers the paste and processes it as the next turn.
-const ENABLED: SessionStatus[] = ['needs_input', 'idle', 'waiting', 'running']
+const ENABLED: SessionStatus[] = ['needs_input', 'idle', 'waiting', 'running', 'sleeping']
 const HINT: Partial<Record<SessionStatus, string>> = {
   spawning: 'Session is spawning…',
   waiting: 'Session ready — type your first message',
   running: 'Queue next turn (Claude is still thinking)',
   needs_input: 'Type your reply',
   idle: 'Send a follow-up',
+  sleeping: 'Session is sleeping — send to wake it up (~3s cold start)',
   completing: 'Session is completing…',
   completed: 'Session ended',
   succeeded: 'Session succeeded (archived)',

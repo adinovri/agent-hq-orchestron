@@ -63,6 +63,7 @@ const mcpServerPath = resolve(__serverDir, 'mcp-server.js')
 const sessionManager = new SessionManager({
   dataDir: config.dataDir,
   maxConcurrent: config.maxConcurrent,
+  idleTimeoutMs: config.idleTimeoutMs,
   mcpAutoInject: config.remoteToken
     ? {
         apiUrl: `http://${config.bindHost === '0.0.0.0' ? '127.0.0.1' : config.bindHost}:${config.port}`,
@@ -209,6 +210,19 @@ await scanOrphans(snapshotService, sessionManager).catch((err) => {
 // a restart leaves them unable to auto-transition to `awaiting_input`.
 await sessionManager.resumeWatchers().catch((err) => {
   fastify.log.warn({ err }, 'resume-watchers failed at startup')
+})
+
+// Wire the project resolver so wake-up (sleeping → spawning on sendInput)
+// can look up the workspace path + defaults for the target session.
+sessionManager.setProjectResolver(async (projectId) => {
+  const p = await projectRegistry.get(projectId)
+  return { path: p.path, defaultModel: p.defaultModel, defaultEffort: p.defaultEffort }
+})
+
+// Arm per-session idle timers + safety-net sweep — recovers from any state
+// where a session sat idle beyond the threshold across a restart.
+await sessionManager.resumeIdleSweepers().catch((err) => {
+  fastify.log.warn({ err }, 'resume-idle-sweepers failed at startup')
 })
 
 try {

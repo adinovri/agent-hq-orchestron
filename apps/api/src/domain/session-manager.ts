@@ -25,8 +25,9 @@ const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
   spawning: ['waiting', 'failed', 'killed'],
   waiting: ['running', 'killed'],
   running: ['running', 'idle', 'needs_input', 'completing', 'killed'],
-  idle: ['running', 'needs_input', 'completing', 'succeeded', 'killed'],
-  needs_input: ['running', 'idle', 'completing', 'succeeded', 'killed'],
+  idle: ['running', 'needs_input', 'sleeping', 'completing', 'succeeded', 'killed'],
+  needs_input: ['running', 'idle', 'sleeping', 'completing', 'succeeded', 'killed'],
+  sleeping: ['spawning', 'succeeded', 'killed'],   // wake → spawning; archive → succeeded; kill remains legal
   completing: ['completed', 'succeeded', 'failed'],
   completed: [],
   succeeded: [],
@@ -58,6 +59,9 @@ function textAsksQuestion(text: string): boolean {
 export interface SessionManagerConfig {
   dataDir: string
   maxConcurrent: number
+  /** Milliseconds a session may stay idle/needs_input before its tmux is
+   *  released (session goes to 'sleeping'). 0 disables the sweeper. */
+  idleTimeoutMs?: number
   /** When set, session-manager auto-writes a per-session MCP config that
    *  registers the orchestron MCP server and injects it into every spawn
    *  and reopen via `--mcp-config`. */
@@ -74,9 +78,19 @@ export class SessionManager {
   private readonly maxConcurrent: number
   private readonly registry: AdapterRegistry
   private readonly mcpAutoInject: SessionManagerConfig['mcpAutoInject']
+  private readonly idleTimeoutMs: number
+  // Optional — needed only for the wake-up path (sleeping → spawning). Kept
+  // optional so unit tests don't have to construct a ProjectRegistry.
+  private projectResolver: ((projectId: string) => Promise<{ path: string; defaultModel?: string; defaultEffort?: import('@agent-hq-orchestron/shared').EffortLevel }>) | null = null
   // Watchers that flip running → awaiting_input on the next turn_duration event.
   // Keyed by session uuid; one active watcher per session at a time.
   private readonly turnWatchers = new Map<string, TranscriptTailer>()
+  // Per-session warm-shutdown timers armed when the session enters
+  // idle/needs_input. Fires warmShutdown() at (idleSince + idleTimeoutMs).
+  private readonly idleSweepers = new Map<string, NodeJS.Timeout>()
+  // Safety-net sweep interval — catches sessions whose per-session timer
+  // was lost (e.g. server crash, dropped notification).
+  private safetyNetSweep: NodeJS.Timeout | null = null
 
   constructor(config: SessionManagerConfig, registry: AdapterRegistry) {
     this.dataDir = config.dataDir
@@ -84,6 +98,12 @@ export class SessionManager {
     this.maxConcurrent = config.maxConcurrent
     this.registry = registry
     this.mcpAutoInject = config.mcpAutoInject
+    this.idleTimeoutMs = config.idleTimeoutMs ?? 0
+  }
+
+  /** Wire in a project lookup for the wake-up flow. Called from server boot. */
+  setProjectResolver(resolver: NonNullable<SessionManager['projectResolver']>): void {
+    this.projectResolver = resolver
   }
 
   private mcpConfigPath(sessionId: string): string {
@@ -262,8 +282,39 @@ export class SessionManager {
   }
 
   async sendInput(uuid: string, prompt: string): Promise<SessionMetadata> {
-    const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    let session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
+
+    // Wake-up path: session is sleeping → cold-start tmux with --resume,
+    // wait for TUI ready, then fall through to the normal paste flow.
+    if (session.status === 'sleeping') {
+      if (!this.projectResolver) {
+        throw new Error('Cannot wake sleeping session: project resolver not wired')
+      }
+      const proj = await this.projectResolver(session.projectId)
+      const adapter = this.registry.getOrThrow(session.agentType)
+      const mcpConfigPath = await this.ensureSessionMcpConfig(uuid)
+      const handle = await adapter.resume(session.claudeSessionUuid, {
+        workspace: proj.path,
+        model: session.model ?? proj.defaultModel,
+        effort: session.effort ?? proj.defaultEffort,
+        mcpConfigPath,
+      })
+      // Persist new tmux + jsonl path first, then transition state.
+      await writeJson(this.sessionPath(uuid), {
+        ...session,
+        tmuxName: handle.tmuxName,
+        jsonlPath: handle.jsonlPath,
+        status: 'spawning',
+        endedAt: null,
+        idleSince: null,
+      })
+      await adapter.waitTuiReady(handle, 15_000).catch(() => { /* proceed */ })
+      await this.transition(uuid, 'waiting').catch(() => {})
+      // Re-read after wake-up so downstream sees fresh tmux name.
+      session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+      if (!session) throw new Error(`Session vanished during wake-up: ${uuid}`)
+    }
 
     // Allow queue-during-run: Claude TUI buffers the pasted input and sends
     // it as the next turn after the current one finishes. Only reject when
@@ -517,14 +568,132 @@ export class SessionManager {
     }
 
     const terminal: SessionStatus[] = ['completed', 'succeeded', 'failed', 'killed']
+    const now = new Date().toISOString()
+    const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
+    // Track idleSince: set when entering an idle-ish state, clear when leaving.
+    let nextIdleSince: string | null | undefined = session.idleSince ?? null
+    if (IDLE_STATES.includes(newStatus) && !IDLE_STATES.includes(session.status)) {
+      nextIdleSince = now
+    } else if (!IDLE_STATES.includes(newStatus)) {
+      nextIdleSince = null
+    }
     const updated: SessionMetadata = {
       ...session,
       status: newStatus,
-      endedAt: terminal.includes(newStatus) ? new Date().toISOString() : session.endedAt,
+      endedAt: terminal.includes(newStatus) ? now : session.endedAt,
+      idleSince: nextIdleSince,
     }
 
     await writeJson(this.sessionPath(uuid), updated)
+
+    // Sweeper arming based on target state.
+    if (IDLE_STATES.includes(newStatus)) {
+      this.armIdleSweeper(uuid)
+    } else {
+      this.clearIdleSweeper(uuid)
+    }
+
     return updated
+  }
+
+  // ── Idle sweeper (warm-shutdown after inactivity) ─────────────────
+
+  /** Arm a per-session warm-shutdown timer. No-op when idleTimeoutMs = 0. */
+  private armIdleSweeper(uuid: string): void {
+    if (this.idleTimeoutMs <= 0) return
+    // Cancel any existing timer so we don't accumulate.
+    this.clearIdleSweeper(uuid)
+    const t = setTimeout(() => {
+      this.warmShutdown(uuid).catch((err) => {
+        console.warn(`[session-manager] warmShutdown ${uuid.slice(0, 8)} failed: ${(err as Error).message}`)
+      })
+    }, this.idleTimeoutMs)
+    // Node timers hold the event loop open — unref so the process can exit
+    // cleanly on shutdown without waiting for them.
+    if (typeof t.unref === 'function') t.unref()
+    this.idleSweepers.set(uuid, t)
+  }
+
+  private clearIdleSweeper(uuid: string): void {
+    const t = this.idleSweepers.get(uuid)
+    if (t) {
+      clearTimeout(t)
+      this.idleSweepers.delete(uuid)
+    }
+  }
+
+  /**
+   * Kill the tmux window and transition the session to 'sleeping'. Called
+   * by the idle timer and by the safety-net sweep. Idempotent — a session
+   * already sleeping (or terminal) is a no-op.
+   */
+  async warmShutdown(uuid: string): Promise<void> {
+    const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!session) return
+    const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
+    if (!IDLE_STATES.includes(session.status)) return
+    const adapter = this.registry.getOrThrow(session.agentType)
+    await adapter.kill({
+      tmuxName: session.tmuxName,
+      claudeUuid: session.claudeSessionUuid,
+      jsonlPath: session.jsonlPath,
+    }).catch(() => { /* tmux may already be dead */ })
+    // Close any dangling watcher.
+    const w = this.turnWatchers.get(uuid)
+    if (w) { w.close(); this.turnWatchers.delete(uuid) }
+    await this.transition(uuid, 'sleeping').catch(() => { /* race with kill */ })
+  }
+
+  /** Called from server boot — reconcile in-memory timers with disk state. */
+  async resumeIdleSweepers(): Promise<void> {
+    if (this.idleTimeoutMs <= 0) return
+    const sessions = await this.list()
+    const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
+    const now = Date.now()
+    for (const s of sessions) {
+      if (!IDLE_STATES.includes(s.status)) continue
+      const since = s.idleSince ? Date.parse(s.idleSince) : Date.parse(s.endedAt ?? s.startedAt)
+      const idleFor = now - since
+      if (idleFor >= this.idleTimeoutMs) {
+        // Already past threshold — warm-shutdown immediately.
+        this.warmShutdown(s.id).catch(() => {})
+      } else {
+        // Arm a shortened timer for the remaining time.
+        const remaining = this.idleTimeoutMs - idleFor
+        this.clearIdleSweeper(s.id)
+        const t = setTimeout(() => {
+          this.warmShutdown(s.id).catch(() => {})
+        }, remaining)
+        if (typeof t.unref === 'function') t.unref()
+        this.idleSweepers.set(s.id, t)
+      }
+    }
+    // Safety-net sweep — every 10 minutes, catch orphans whose timer got lost.
+    if (!this.safetyNetSweep) {
+      this.safetyNetSweep = setInterval(() => {
+        this.sweepOrphans().catch(() => {})
+      }, 10 * 60 * 1000)
+      if (typeof this.safetyNetSweep.unref === 'function') this.safetyNetSweep.unref()
+    }
+  }
+
+  private async sweepOrphans(): Promise<void> {
+    if (this.idleTimeoutMs <= 0) return
+    const sessions = await this.list()
+    const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
+    const now = Date.now()
+    for (const s of sessions) {
+      if (!IDLE_STATES.includes(s.status)) continue
+      if (this.idleSweepers.has(s.id)) continue    // covered by primary timer
+      const since = s.idleSince ? Date.parse(s.idleSince) : Date.parse(s.endedAt ?? s.startedAt)
+      if (now - since >= this.idleTimeoutMs) {
+        console.warn(`[session-manager] safety-net sweep: warm-shutdown orphan ${s.id.slice(0, 8)}`)
+        this.warmShutdown(s.id).catch(() => {})
+      } else {
+        // Re-arm primary timer.
+        this.armIdleSweeper(s.id)
+      }
+    }
   }
 
   async resume(uuid: string, workspace: string): Promise<SessionMetadata> {
