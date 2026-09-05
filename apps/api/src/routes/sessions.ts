@@ -38,7 +38,54 @@ export function sessionsPlugin(
     })
 
     app.post('/api/sessions', async (req, reply) => {
-      const body = SpawnSessionBodySchema.safeParse(req.body)
+      // Accept either JSON or multipart (multipart lets the client attach
+      // files at spawn time — same behaviour as follow-up /input's file
+      // upload). Files are staged to /tmp/orchestron/uploads/pending/<random>
+      // and moved to uploads/<session-id>/ once the session is created; their
+      // absolute paths get appended to initialPrompt so Claude's Read tool
+      // can consume them.
+      let parsedBody: unknown
+      const pendingFiles: Array<{ srcPath: string; name: string; size: number; mime: string }> = []
+      const ct = req.headers['content-type'] ?? ''
+
+      if (ct.includes('multipart/form-data')) {
+        const fields: Record<string, string> = {}
+        try {
+          const pendingDir = path.join(UPLOAD_ROOT, 'pending', crypto.randomBytes(8).toString('hex'))
+          await mkdir(pendingDir, { recursive: true, mode: 0o700 })
+          for await (const part of req.parts()) {
+            if (part.type === 'file') {
+              const orig = sanitizeFilename(part.filename ?? 'file')
+              const stamp = crypto.randomBytes(4).toString('hex')
+              const target = path.join(pendingDir, `${stamp}-${orig}`)
+              const buf = await part.toBuffer()
+              await writeFile(target, buf, { mode: 0o600 })
+              pendingFiles.push({ srcPath: target, name: orig, size: buf.length, mime: part.mimetype ?? 'application/octet-stream' })
+            } else {
+              // JSON-encoded fields: `body` (whole spawn payload) OR individual keys
+              fields[part.fieldname] = part.value as string
+            }
+          }
+        } catch (err: unknown) {
+          return reply.code(400).send({ error: (err as Error).message ?? 'multipart parse failed' })
+        }
+        if (fields.body) {
+          try { parsedBody = JSON.parse(fields.body) } catch { return reply.code(400).send({ error: 'body field is not valid JSON' }) }
+        } else {
+          parsedBody = {
+            projectId: fields.projectId,
+            prompt: fields.prompt || undefined,
+            template: fields.template || undefined,
+            vars: fields.vars ? JSON.parse(fields.vars) : undefined,
+            parentSessionId: fields.parentSessionId || undefined,
+            detached: fields.detached === 'true' ? true : undefined,
+          }
+        }
+      } else {
+        parsedBody = req.body
+      }
+
+      const body = SpawnSessionBodySchema.safeParse(parsedBody)
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
 
       const { projectId, prompt, template, vars, parentSessionId, detached } = body.data
@@ -72,7 +119,18 @@ export function sessionsPlugin(
         }
       }
 
-      if (!initialPrompt) return reply.code(422).send({ error: 'prompt or template required' })
+      if (!initialPrompt && pendingFiles.length === 0) {
+        return reply.code(422).send({ error: 'prompt or template required' })
+      }
+      if (!initialPrompt) initialPrompt = '(see attached files)'
+
+      // Append file references to the prompt BEFORE spawn — that way the
+      // pasted initialPrompt includes them and Claude can Read them
+      // immediately in its first turn.
+      if (pendingFiles.length > 0) {
+        const list = pendingFiles.map(f => `- ${f.srcPath}  (${f.name}, ${f.size}B, ${f.mime})`).join('\n')
+        initialPrompt = `${initialPrompt}\n\nAttached files (saved on server, use Read tool to inspect):\n${list}`
+      }
 
       const configDir = project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
 
