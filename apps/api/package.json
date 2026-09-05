@@ -13,6 +13,7 @@
     "@agent-hq-orchestron/file-store": "*",
     "@agent-hq-orchestron/shared": "*",
     "@fastify/cors": "^10.1.0",
+    "@fastify/multipart": "^10.1.1",
     "@fastify/sensible": "^6.0.5",
     "@fastify/websocket": "^11.3.0",
     "fastify": "^5.0.0",

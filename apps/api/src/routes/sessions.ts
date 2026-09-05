@@ -1,8 +1,22 @@
 import type { FastifyInstance } from 'fastify'
 import fp from 'fastify-plugin'
+import multipart from '@fastify/multipart'
 import { z } from 'zod'
+import path from 'node:path'
+import { mkdir, writeFile, chmod } from 'node:fs/promises'
+import crypto from 'node:crypto'
 import { SpawnSessionBodySchema } from '@agent-hq-orchestron/shared'
 import { SessionManager } from '../domain/session-manager.js'
+
+const UPLOAD_ROOT = '/tmp/orchestron/uploads'
+const MAX_FILE_BYTES = 20 * 1024 * 1024   // 20MB per file
+const MAX_FILES_PER_REQ = 10
+
+function sanitizeFilename(name: string): string {
+  // Strip path separators; keep letters, digits, dots, dashes, underscores.
+  const base = name.split(/[/\\]/).pop() ?? 'file'
+  return base.replace(/[^\w.\-]/g, '_').slice(0, 120) || 'file'
+}
 import { HookRunner } from '../domain/hook-runner.js'
 import { TemplateResolver, TemplateValidationError } from '../domain/template-resolver.js'
 import { DelegationTracker } from '../domain/delegation-tracker.js'
@@ -16,6 +30,13 @@ export function sessionsPlugin(
   registry: ProjectRegistry,
 ) {
   return fp(async (app: FastifyInstance) => {
+    await app.register(multipart, {
+      limits: {
+        fileSize: MAX_FILE_BYTES,
+        files: MAX_FILES_PER_REQ,
+      },
+    })
+
     app.post('/api/sessions', async (req, reply) => {
       const body = SpawnSessionBodySchema.safeParse(req.body)
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
@@ -195,6 +216,49 @@ export function sessionsPlugin(
         if (msg.includes('Cannot send input')) return reply.code(409).send({ error: msg })
         throw err
       }
+    })
+
+    // Upload files (images, code, PDFs) to a session's temp dir. Returns
+    // the saved paths so the caller can reference them in a follow-up prompt
+    // (Claude's Read/vision tools consume by absolute path).
+    app.post('/api/sessions/:uuid/upload', async (req, reply) => {
+      const { uuid } = req.params as { uuid: string }
+      const sessions = await manager.list()
+      const session = sessions.find(s => s.id === uuid)
+      if (!session) return reply.code(404).send({ error: `Session not found: ${uuid}` })
+
+      const dir = path.join(UPLOAD_ROOT, uuid)
+      await mkdir(dir, { recursive: true, mode: 0o700 })
+
+      interface SavedFile { path: string; name: string; size: number; mime: string }
+      const saved: SavedFile[] = []
+
+      try {
+        const parts = req.parts()
+        for await (const part of parts) {
+          if (part.type !== 'file') continue
+          const orig = sanitizeFilename(part.filename ?? 'file')
+          const stamp = crypto.randomBytes(4).toString('hex')
+          const finalName = `${stamp}-${orig}`
+          const target = path.join(dir, finalName)
+          const buf = await part.toBuffer()
+          await writeFile(target, buf, { mode: 0o600 })
+          await chmod(target, 0o600)
+          saved.push({
+            path: target,
+            name: orig,
+            size: buf.length,
+            mime: part.mimetype ?? 'application/octet-stream',
+          })
+        }
+      } catch (err: unknown) {
+        return reply.code(400).send({ error: (err as Error).message ?? 'upload failed' })
+      }
+
+      if (saved.length === 0) {
+        return reply.code(400).send({ error: 'no files uploaded' })
+      }
+      return { files: saved }
     })
 
     // Mark session as done (tycho-style archive). Kills tmux + transitions
