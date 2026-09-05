@@ -43,6 +43,7 @@ function claudeTranscriptPath(workspace: string, configDir: string | undefined, 
 
 function buildArgv(opts: {
   model?: string
+  effort?: string
   configDir?: string
   sessionMode: { type: 'new'; uuid: string } | { type: 'resume'; uuid: string }
 }): string[] {
@@ -53,6 +54,7 @@ function buildArgv(opts: {
   }
 
   if (opts.model) argv.push('--model', opts.model)
+  if (opts.effort) argv.push('--effort', opts.effort)
   argv.push('--permission-mode', 'bypassPermissions')
 
   if (opts.sessionMode.type === 'new') {
@@ -80,6 +82,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
     const argv = buildArgv({
       model: config.model,
+      effort: config.effort,
       configDir: config.configDir,
       sessionMode: { type: 'new', uuid: claudeUuid },
     })
@@ -107,6 +110,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
     const argv = buildArgv({
       model: config.model,
+      effort: config.effort,
       configDir: config.configDir,
       sessionMode: { type: 'resume', uuid: sessionUuid },
     })

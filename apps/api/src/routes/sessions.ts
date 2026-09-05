@@ -142,6 +142,8 @@ export function sessionsPlugin(
         workspace: project.path,
         detached,
         configDir,
+        model: body.data.model,
+        effort: body.data.effort,
       })
 
       // Record delegation edge if parent session provided

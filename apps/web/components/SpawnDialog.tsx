@@ -40,10 +40,28 @@ interface Props {
   onSpawned: () => void
 }
 
+const MODEL_OPTIONS = [
+  { value: '', label: 'Default (project setting)' },
+  { value: 'claude-opus-5', label: 'Opus 5 (most capable)' },
+  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6 (balanced)' },
+  { value: 'claude-haiku-4-5', label: 'Haiku 4.5 (fast + cheap)' },
+]
+
+const EFFORT_OPTIONS = [
+  { value: '', label: 'Default' },
+  { value: 'low', label: 'Low (quick answers)' },
+  { value: 'medium', label: 'Medium (balanced)' },
+  { value: 'high', label: 'High (thorough)' },
+  { value: 'xhigh', label: 'Extra high (deep reasoning)' },
+  { value: 'max', label: 'Max (heaviest)' },
+]
+
 export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: Props) {
   const [projectId, setProjectId] = useState('')
   const [template, setTemplate] = useState('')
   const [prompt, setPrompt] = useState('')
+  const [model, setModel] = useState('')
+  const [effort, setEffort] = useState('')
   const [vars, setVars] = useState<Record<string, string>>({})
   const [attachments, setAttachments] = useState<AttachedFile[]>([])
   const [dragOver, setDragOver] = useState(false)
@@ -126,6 +144,8 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
         prompt: prompt || undefined,
         template: template || undefined,
         vars: Object.keys(vars).length > 0 ? vars : undefined,
+        model: model || undefined,
+        effort: effort || undefined,
       }
       let res: Response
       if (attachments.length > 0) {
@@ -147,6 +167,8 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
       setPrompt('')
       setTemplate('')
       setVars({})
+      setModel('')
+      setEffort('')
       onSpawned()
       onClose()
     } catch (err) {
@@ -258,6 +280,30 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
             <p className="text-[10px] text-zinc-400 mt-1">
               {prompt.length} chars · drag/paste/📎 to attach files
             </p>
+          </div>
+
+          {/* Model + Effort */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Model</label>
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"
+              >
+                {MODEL_OPTIONS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Effort</label>
+              <select
+                value={effort}
+                onChange={(e) => setEffort(e.target.value)}
+                className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"
+              >
+                {EFFORT_OPTIONS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+              </select>
+            </div>
           </div>
 
           {/* Attachments */}

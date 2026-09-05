@@ -96,6 +96,7 @@ export class SessionManager {
       projectId: spawnConfig.projectId,
       agentType: spawnConfig.agentType,
       model: spawnConfig.model,
+      effort: spawnConfig.effort,
       status: 'spawning',
       parentSessionId: spawnConfig.parentSessionId ?? null,
       detached: spawnConfig.detached ?? false,

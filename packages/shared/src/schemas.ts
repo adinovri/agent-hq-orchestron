@@ -168,6 +168,8 @@ export const MetricsRecordSchema = z.object({
 // API request bodies
 // ============================================================================
 
+export const EffortLevelSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
+
 export const SpawnSessionBodySchema = z.object({
   projectId: z.string().uuid(),
   agentType: AgentTypeSchema.optional(),
@@ -177,6 +179,8 @@ export const SpawnSessionBodySchema = z.object({
   parentSessionId: z.string().uuid().optional(),
   detached: z.boolean().optional(),
   snapshot: z.string().optional(), // e.g. "pr:123"
+  model: z.string().optional(),
+  effort: EffortLevelSchema.optional(),
 })
 
 export const RegisterProjectBodySchema = z.object({

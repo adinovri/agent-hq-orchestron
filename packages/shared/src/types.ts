@@ -24,6 +24,7 @@ export interface SessionMetadata {
   projectId: string
   agentType: AgentType
   model?: string
+  effort?: EffortLevel
   status: SessionStatus
   parentSessionId: string | null
   detached: boolean
@@ -130,6 +131,8 @@ export interface SessionEvent {
   data: unknown
 }
 
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
 export interface SpawnConfig {
   projectId: string
   agentType: AgentType
@@ -137,6 +140,7 @@ export interface SpawnConfig {
   parentSessionId?: string
   workspace: string
   model?: string
+  effort?: EffortLevel
   configDir?: string
   detached?: boolean
 }
@@ -144,6 +148,7 @@ export interface SpawnConfig {
 export interface ResumeConfig {
   workspace: string
   model?: string
+  effort?: EffortLevel
   configDir?: string
 }
 
