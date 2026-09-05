@@ -4,6 +4,7 @@ import "./globals.css";
 import { Providers } from "@/components/Providers";
 import { NavBar } from "@/components/NavBar";
 import { SwAutoReload } from "@/components/SwAutoReload";
+import { VersionCheck } from "@/components/VersionCheck";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -36,6 +37,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full flex flex-col">
         <Providers>
           <SwAutoReload />
+          <VersionCheck />
           <NavBar />
           <main className="flex-1">{children}</main>
         </Providers>

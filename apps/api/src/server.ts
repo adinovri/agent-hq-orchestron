@@ -146,6 +146,20 @@ fastify.get('/api/health', async () => {
   }
 })
 
+// Live web build id — the api reads the web bundle's BUILD_ID file at request
+// time. Clients baked with a stale NEXT_PUBLIC_BUILD_STAMP can poll this to
+// detect a rolling deploy and hard-refresh themselves out of a stuck SW cache.
+fastify.get('/api/version', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const { resolve } = await import('node:path')
+  let buildId = 'unknown'
+  try {
+    const buildIdPath = resolve(process.cwd(), '../web/.next/BUILD_ID')
+    buildId = (await readFile(buildIdPath, 'utf8')).trim()
+  } catch { /* web not built */ }
+  return { buildId, serverStartedAt: new Date(process.uptime() * -1000 + Date.now()).toISOString() }
+})
+
 await fastify.register(projectsPlugin(projectRegistry))
 await fastify.register(sessionsPlugin(sessionManager, hookRunner, templateResolver, delegationTracker, projectRegistry))
 await fastify.register(delegationPlugin(delegationTracker, sessionManager))
