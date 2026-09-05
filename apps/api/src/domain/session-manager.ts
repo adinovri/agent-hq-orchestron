@@ -344,7 +344,7 @@ export class SessionManager {
    * Claude session continues. Same orchestron UUID, same claudeSessionUuid,
    * new tmux name.
    */
-  async reopen(uuid: string, workspace: string, configDir?: string): Promise<SessionMetadata> {
+  async reopen(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel): Promise<SessionMetadata> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
@@ -353,17 +353,26 @@ export class SessionManager {
       throw new Error(`Cannot reopen session in ${session.status} state`)
     }
 
+    // Backfill model/effort from project defaults if the record is missing
+    // them (old sessions predate the model/effort feature).
+    const effectiveModel = session.model ?? fallbackModel
+    const effectiveEffort = session.effort ?? fallbackEffort
+
     const adapter = this.registry.getOrThrow(session.agentType)
     const handle = await adapter.resume(session.claudeSessionUuid, {
       workspace,
       configDir,
-      model: session.model,
+      model: effectiveModel,
+      effort: effectiveEffort,
     })
 
     // Manually rewrite session record — reopen changes tmuxName + jsonlPath
     // + endedAt (cleared) but keeps id, claudeSessionUuid, initialPrompt, etc.
+    // Persist the effective model/effort so the UI shows them going forward.
     const updated: SessionMetadata = {
       ...session,
+      model: effectiveModel,
+      effort: effectiveEffort,
       status: 'spawning',
       tmuxName: handle.tmuxName,
       jsonlPath: handle.jsonlPath,
@@ -407,7 +416,7 @@ export class SessionManager {
    * original's Claude conversation (via --resume). Creates a new orchestron
    * UUID + new tmux; original session record is untouched.
    */
-  async clone(uuid: string, spawnConfig: Pick<SpawnConfig, 'workspace' | 'configDir'>, extraPrompt?: string): Promise<SessionMetadata> {
+  async clone(uuid: string, spawnConfig: Pick<SpawnConfig, 'workspace' | 'configDir'>, extraPrompt?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel): Promise<SessionMetadata> {
     const active = await this.countActiveSessions()
     if (active >= this.maxConcurrent) {
       throw new PoolFullError(this.maxConcurrent)
@@ -416,6 +425,11 @@ export class SessionManager {
     const original = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!original) throw new Error(`Session not found: ${uuid}`)
 
+    // Backfill model/effort from project defaults if the source lacks them
+    // (old sessions predate the model/effort feature).
+    const effectiveModel = original.model ?? fallbackModel
+    const effectiveEffort = original.effort ?? fallbackEffort
+
     const newUuid = crypto.randomUUID()
     const adapter = this.registry.getOrThrow(original.agentType)
     // Spawn via adapter.resume — reuses the ORIGINAL claudeSessionUuid so
@@ -423,7 +437,8 @@ export class SessionManager {
     const handle = await adapter.resume(original.claudeSessionUuid, {
       workspace: spawnConfig.workspace,
       configDir: spawnConfig.configDir,
-      model: original.model,
+      model: effectiveModel,
+      effort: effectiveEffort,
     })
 
     const now = new Date().toISOString()
@@ -431,7 +446,8 @@ export class SessionManager {
       id: newUuid,
       projectId: original.projectId,
       agentType: original.agentType,
-      model: original.model,
+      model: effectiveModel,
+      effort: effectiveEffort,
       status: 'spawning',
       parentSessionId: original.id,   // record fork lineage
       detached: original.detached,

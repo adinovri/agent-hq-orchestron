@@ -335,7 +335,7 @@ export function sessionsPlugin(
       }
       const configDir = project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
       try {
-        const updated = await manager.reopen(uuid, project.path, configDir)
+        const updated = await manager.reopen(uuid, project.path, configDir, project.defaultModel, project.defaultEffort)
         return updated
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''
@@ -365,7 +365,7 @@ export function sessionsPlugin(
         const cloned = await manager.clone(uuid, {
           workspace: project.path,
           configDir,
-        }, body.data.prompt)
+        }, body.data.prompt, project.defaultModel, project.defaultEffort)
         return reply.code(201).send(cloned)
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''
