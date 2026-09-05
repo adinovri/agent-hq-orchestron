@@ -243,12 +243,17 @@ export function TranscriptPane({ uuid, status }: Props) {
         setConnected(false)
         connectedRef.current = false
         if (closed) return
-        // Aggressive reconnect regardless of readyState — mobile browsers
-        // frequently claim CONNECTING but never actually reconnect.
-        if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+        // Don't stack up reconnects — health-check will kick in if needed.
+        // Only schedule a reconnect if we don't already have one pending AND
+        // the EventSource has actually closed (not just transiently erroring).
+        if (reconnectTimerRef.current) return
+        if (es.readyState !== EventSource.CLOSED) return
         const delay = Math.min(2000 * Math.pow(2, attemptRef.current), 30_000)
         attemptRef.current += 1
-        reconnectTimerRef.current = setTimeout(connect, delay)
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null
+          connect()
+        }, delay)
       }
     }
 

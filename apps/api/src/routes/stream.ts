@@ -5,7 +5,9 @@ import type { WebSocket } from 'ws'
 import { SessionManager } from '../domain/session-manager.js'
 import { TranscriptTailer } from '../streaming/transcript-tailer.js'
 
-const SSE_PING_MS = 30_000
+// Short ping keeps mobile-cellular connections alive — many carriers drop
+// idle TCP after 20-30s without traffic.
+const SSE_PING_MS = 10_000
 
 export function streamPlugin(manager: SessionManager, dataDir: string) {
   return fp(async (app: FastifyInstance) => {
