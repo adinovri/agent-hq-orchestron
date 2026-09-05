@@ -106,9 +106,12 @@ export default function SessionDetailPage({ params }: PageProps) {
       return res.json() as Promise<SessionMetadata>
     },
     onMutate: () => setRespawning(true),
-    onSuccess: (data) => {
+    onSuccess: () => {
+      // Respawn is now in-place — same session id, just refresh queries so
+      // the header + transcript pick up the new claudeSessionUuid + status.
+      qc.invalidateQueries({ queryKey: ['session', uuid] })
       qc.invalidateQueries({ queryKey: ['sessions'] })
-      router.push(`/session/${data.id}`)
+      qc.invalidateQueries({ queryKey: ['transcript', uuid] })
     },
     onSettled: () => setRespawning(false),
   })
@@ -161,7 +164,7 @@ export default function SessionDetailPage({ params }: PageProps) {
           cloneMutation.mutate(extra || undefined)
         }}
         onRespawn={() => {
-          if (confirm('Start a FRESH session with the same prompt? A new Claude conversation will be created — this does NOT continue the previous conversation.')) {
+          if (confirm('Restart this session in-place? A fresh Claude conversation will start with the same prompt — the previous conversation is discarded.')) {
             respawnMutation.mutate()
           }
         }}

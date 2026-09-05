@@ -29,10 +29,12 @@ const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
   needs_input: ['running', 'idle', 'sleeping', 'completing', 'succeeded', 'killed'],
   sleeping: ['spawning', 'succeeded', 'killed'],   // wake → spawning; archive → succeeded; kill remains legal
   completing: ['completed', 'succeeded', 'failed'],
-  completed: [],
-  succeeded: [],
-  failed: [],
-  killed: [],
+  // Terminal states allow → 'spawning' for in-place respawn (fresh Claude
+  // conversation using the same orchestron session id). No other exits.
+  completed: ['spawning'],
+  succeeded: ['spawning'],
+  failed: ['spawning'],
+  killed: ['spawning'],
 }
 
 // Detect whether an assistant text is soliciting user input (question).
@@ -754,37 +756,91 @@ export class SessionManager {
    * new tmux name.
    */
   /**
-   * Respawn a terminal session as a FRESH orchestron session — inherits the
-   * original's project, initialPrompt, model, effort, and parentSessionId
-   * lineage, but gets a brand-new Claude session UUID. Use this when the
-   * original's Claude conversation is unrecoverable (no JSONL on disk) or
-   * when the user just wants to "start over" from the same prompt without
-   * carrying forward the failed run's context.
+   * Respawn a terminal session IN-PLACE — reuses the same orchestron session
+   * id + record, but starts a fresh Claude conversation (new claudeSessionUuid,
+   * new tmux, new JSONL). initialPrompt / model / effort / project all
+   * preserved. Old Claude JSONL is left on disk untouched (Claude CLI owns
+   * that directory).
+   *
+   * Contrast with reopen(): reopen keeps the same claudeSessionUuid and
+   * resumes the prior conversation. Respawn discards the prior conversation
+   * and starts over from the initialPrompt.
    */
   async respawn(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel): Promise<SessionMetadata> {
-    const original = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
-    if (!original) throw new Error(`Session not found: ${uuid}`)
+    const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!session) throw new Error(`Session not found: ${uuid}`)
 
     const TERMINAL: SessionStatus[] = ['succeeded', 'killed', 'failed', 'completed']
-    if (!TERMINAL.includes(original.status)) {
-      throw new Error(`Cannot respawn session in ${original.status} state — only terminal states are supported`)
+    if (!TERMINAL.includes(session.status)) {
+      throw new Error(`Cannot respawn session in ${session.status} state — only terminal states are supported`)
     }
 
-    // Delegate to spawn() — pass parentSessionId so the new session shows
-    // its lineage to the original (for terminal-report + audit trail).
-    // spawn()'s own guardrails still apply (depth, per-parent children,
-    // rate limit) because parentSessionId is set.
-    return this.spawn({
-      projectId: original.projectId,
-      agentType: original.agentType,
-      initialPrompt: original.initialPrompt,
-      parentSessionId: original.id,
+    // Spawn a fresh Claude conversation. adapter.spawn() generates a new
+    // claudeSessionUuid internally + returns handle with new tmuxName + jsonlPath.
+    const adapter = this.registry.getOrThrow(session.agentType)
+    const mcpConfigPath = await this.ensureSessionMcpConfig(uuid)
+    const { effectiveClaudeConfigDir } = await import('../adapters/claude.js')
+    const effectiveConfigDir = session.agentType === 'claude'
+      ? effectiveClaudeConfigDir(configDir ?? session.configDir)
+      : (configDir ?? session.configDir)
+    const effectiveModel = session.model ?? fallbackModel
+    const effectiveEffort = session.effort ?? fallbackEffort
+
+    const handle = await adapter.spawn({
+      projectId: session.projectId,
+      agentType: session.agentType,
+      initialPrompt: session.initialPrompt,
       workspace,
-      configDir,
-      model: original.model ?? fallbackModel,
-      effort: original.effort ?? fallbackEffort,
-      detached: original.detached,
+      configDir: effectiveConfigDir,
+      model: effectiveModel,
+      effort: effectiveEffort,
+      detached: session.detached,
+      mcpConfigPath,
     })
+
+    // Transition terminal → spawning first (state machine now allows this),
+    // then overwrite the mutable identity fields with the new Claude session.
+    await this.transition(uuid, 'spawning')
+    const updated: SessionMetadata = {
+      ...session,
+      status: 'spawning',
+      claudeSessionUuid: handle.claudeUuid,
+      tmuxName: handle.tmuxName,
+      jsonlPath: handle.jsonlPath,
+      configDir: effectiveConfigDir,
+      model: effectiveModel,
+      effort: effectiveEffort,
+      endedAt: null,
+      idleSince: null,
+      finalResponse: null,
+      tokenUsage: null,
+      costUsd: null,
+      failureReason: undefined,
+    }
+    await writeJson(this.sessionPath(uuid), updated)
+
+    // Kick off the async completion — waitTuiReady → paste → running.
+    this.completeSpawn(uuid, adapter, handle, session.initialPrompt, {
+      projectId: session.projectId,
+      agentType: session.agentType,
+      initialPrompt: session.initialPrompt,
+      workspace,
+      configDir: effectiveConfigDir,
+      model: effectiveModel,
+      effort: effectiveEffort,
+      detached: session.detached,
+    }).catch(async (err: unknown) => {
+      const msg = (err as Error).message ?? String(err)
+      console.error(`[session-manager] completeSpawn during respawn failed for ${uuid}: ${msg}`)
+      try {
+        const rec = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+        if (rec && rec.status !== 'failed') {
+          await this.transition(uuid, 'failed').catch(() => {})
+        }
+      } catch { /* ignore */ }
+    })
+
+    return updated
   }
 
   async reopen(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel): Promise<SessionMetadata> {

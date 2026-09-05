@@ -446,8 +446,10 @@ export function sessionsPlugin(
       }
       const configDir = project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
       try {
+        // In-place respawn — returns the SAME session id, updated record.
+        // 200 OK (not 201) since no new resource was created.
         const fresh = await manager.respawn(uuid, project.path, configDir, project.defaultModel, project.defaultEffort)
-        return reply.code(201).send(fresh)
+        return fresh
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''
         if (msg.includes('Cannot respawn')) return reply.code(409).send({ error: msg })
