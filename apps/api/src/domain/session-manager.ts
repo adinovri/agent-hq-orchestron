@@ -64,6 +64,13 @@ export interface SessionManagerConfig {
   /** Milliseconds a session may stay idle/needs_input before its tmux is
    *  released (session goes to 'sleeping'). 0 disables the sweeper. */
   idleTimeoutMs?: number
+  /** Absolute path to a shared Claude-memory directory. When set, every
+   *  claude spawn/reopen/clone/respawn ensures the per-workspace
+   *  `<configDir>/projects/<mangled-cwd>/memory/` is a symlink pointing at
+   *  this dir — so all sessions across all workspaces share one memory
+   *  pool. Real memory dirs found in the path get safety-renamed with a
+   *  timestamp suffix so nothing is lost. Empty/unset disables the feature. */
+  sharedMemoryDir?: string
   /** When set, session-manager auto-writes a per-session MCP config that
    *  registers the orchestron MCP server and injects it into every spawn
    *  and reopen via `--mcp-config`. */
@@ -81,6 +88,7 @@ export class SessionManager {
   private readonly registry: AdapterRegistry
   private readonly mcpAutoInject: SessionManagerConfig['mcpAutoInject']
   private readonly idleTimeoutMs: number
+  private readonly sharedMemoryDir: string
   // Optional — needed only for the wake-up path (sleeping → spawning). Kept
   // optional so unit tests don't have to construct a ProjectRegistry.
   private projectResolver: ((projectId: string) => Promise<{ path: string; defaultModel?: string; defaultEffort?: import('@agent-hq-orchestron/shared').EffortLevel }>) | null = null
@@ -101,6 +109,54 @@ export class SessionManager {
     this.registry = registry
     this.mcpAutoInject = config.mcpAutoInject
     this.idleTimeoutMs = config.idleTimeoutMs ?? 0
+    this.sharedMemoryDir = config.sharedMemoryDir ?? ''
+  }
+
+  /**
+   * Ensure `<configDir>/projects/<mangled-cwd>/memory/` is a symlink into
+   * the shared Claude-memory pool. Claude CLI creates this dir as a real
+   * directory the first time a workspace is used — we detect that and
+   * convert it (safety-renaming the real dir with a timestamp).
+   */
+  private async ensureMemorySymlink(agentType: import('@agent-hq-orchestron/shared').AgentType, configDir: string | undefined, workspace: string): Promise<void> {
+    if (agentType !== 'claude' || !this.sharedMemoryDir) return
+    try {
+      const fsp = await import('node:fs/promises')
+      const p = await import('node:path')
+      const os = await import('node:os')
+      const expandHome = (x: string) => x.startsWith('~/') ? p.join(os.homedir(), x.slice(2)) : x === '~' ? os.homedir() : x
+      const sharedTarget = expandHome(this.sharedMemoryDir)
+      const baseDir = expandHome(configDir ?? process.env['CLAUDE_CONFIG_DIR'] ?? p.join(os.homedir(), '.claude'))
+      const mangled = expandHome(workspace).replace(/\//g, '-')
+      const memPath = p.join(baseDir, 'projects', mangled, 'memory')
+
+      // Make sure the shared pool exists first.
+      await fsp.mkdir(sharedTarget, { recursive: true, mode: 0o700 })
+      // And the parent so we can create the symlink.
+      await fsp.mkdir(p.dirname(memPath), { recursive: true, mode: 0o700 })
+
+      let stat: import('node:fs').Stats | null = null
+      try { stat = await fsp.lstat(memPath) } catch { stat = null }
+      if (!stat) {
+        await fsp.symlink(sharedTarget, memPath)
+        return
+      }
+      if (stat.isSymbolicLink()) return   // already linked (to anything) — leave alone
+      if (stat.isDirectory()) {
+        // Real dir — safety-move + symlink. Never delete: files could be
+        // hand-edited memory the user wants to merge into the pool later.
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const bak = `${memPath}.bak-${stamp}`
+        await fsp.rename(memPath, bak)
+        console.warn(`[session-manager] moved real memory dir to ${bak} and symlinked ${memPath} → ${sharedTarget}`)
+        await fsp.symlink(sharedTarget, memPath)
+        return
+      }
+      console.warn(`[session-manager] unexpected fs type at ${memPath}; skipping shared-memory symlink`)
+    } catch (err) {
+      // Never let this block a spawn — memory-symlink is a convenience, not a hard dep.
+      console.warn(`[session-manager] ensureMemorySymlink failed: ${(err as Error).message}`)
+    }
   }
 
   /** Wire in a project lookup for the wake-up flow. Called from server boot. */
@@ -191,6 +247,7 @@ export class SessionManager {
     const effectiveConfigDir = spawnConfig.agentType === 'claude'
       ? effectiveClaudeConfigDir(spawnConfig.configDir)
       : spawnConfig.configDir
+    await this.ensureMemorySymlink(spawnConfig.agentType, effectiveConfigDir, spawnConfig.workspace)
     const handle = await adapter.spawn({ ...spawnConfig, configDir: effectiveConfigDir, mcpConfigPath })
 
     const now = new Date().toISOString()
@@ -303,6 +360,7 @@ export class SessionManager {
       }
       const proj = await this.projectResolver(session.projectId)
       const adapter = this.registry.getOrThrow(session.agentType)
+      await this.ensureMemorySymlink(session.agentType, session.configDir, proj.path)
 
       // Claude subprocess sometimes dies within a few seconds of boot
       // (transient auth / quota / MCP-connect flakiness). Same retry pattern
@@ -783,6 +841,7 @@ export class SessionManager {
     const effectiveConfigDir = session.agentType === 'claude'
       ? effectiveClaudeConfigDir(configDir ?? session.configDir)
       : (configDir ?? session.configDir)
+    await this.ensureMemorySymlink(session.agentType, effectiveConfigDir, workspace)
     const effectiveModel = overrides?.model ?? session.model ?? fallbackModel
     const effectiveEffort = overrides?.effort ?? session.effort ?? fallbackEffort
 
@@ -870,6 +929,7 @@ export class SessionManager {
     const effectiveEffort = overrides?.effort ?? session.effort ?? fallbackEffort
 
     const adapter = this.registry.getOrThrow(session.agentType)
+    await this.ensureMemorySymlink(session.agentType, configDir ?? session.configDir, workspace)
     // Regenerate MCP config on every reopen so token/URL updates take effect.
     const mcpConfigPath = await this.ensureSessionMcpConfig(uuid)
     const handle = await adapter.resume(session.claudeSessionUuid, {
@@ -1002,6 +1062,7 @@ export class SessionManager {
 
     const newUuid = crypto.randomUUID()
     const adapter = this.registry.getOrThrow(original.agentType)
+    await this.ensureMemorySymlink(original.agentType, spawnConfig.configDir ?? original.configDir, spawnConfig.workspace)
     // Fresh MCP config keyed to the CLONE's uuid so its ORCHESTRON_SESSION_ID
     // reflects the child, not the parent.
     const mcpConfigPath = await this.ensureSessionMcpConfig(newUuid)

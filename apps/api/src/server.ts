@@ -3,6 +3,8 @@ import cors from '@fastify/cors'
 import sensible from '@fastify/sensible'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import os from 'node:os'
+import path from 'node:path'
 import {
   loadConfig,
   assertSafeBind,
@@ -64,6 +66,12 @@ const sessionManager = new SessionManager({
   dataDir: config.dataDir,
   maxConcurrent: config.maxConcurrent,
   idleTimeoutMs: config.idleTimeoutMs,
+  // Every claude spawn/reopen/clone/respawn ensures the per-workspace
+  // memory dir is a symlink to this shared pool. Matches the manual layout
+  // Adi already uses for CLI sessions. Set env ORCHESTRON_SHARED_MEMORY_DIR=''
+  // to disable.
+  sharedMemoryDir: process.env['ORCHESTRON_SHARED_MEMORY_DIR']
+    ?? path.join(os.homedir(), '.claude', 'shared-memory'),
   mcpAutoInject: config.remoteToken
     ? {
         apiUrl: `http://${config.bindHost === '0.0.0.0' ? '127.0.0.1' : config.bindHost}:${config.port}`,
