@@ -83,18 +83,66 @@ interface ToolDef {
 
 const TOOLS: ToolDef[] = [
   {
-    name: 'spawn_session',
+    name: 'list_projects',
     description:
-      'Spawn a new agent session as a child of the current session. Guardrails: max depth 5, ' +
-      'max 10 children per parent, max 5 spawns/minute. Returns the new session uuid.',
+      'List all registered projects. Returns id, name, workspace path, default agent/model/effort. ' +
+      'Use this to discover which project to spawn a session under.',
+    inputSchema: { type: 'object', properties: {} },
+    handler: async () => api('GET', '/api/projects'),
+  },
+  {
+    name: 'list_sessions',
+    description:
+      'List all sessions across every project. Optionally filter by projectId or status. ' +
+      'Returns metadata (id, projectId, agentType, model, effort, status, parentSessionId). ' +
+      'Use this to discover peer sessions to talk to via send_input.',
     inputSchema: {
       type: 'object',
       properties: {
-        projectId: { type: 'string', description: 'Project uuid to spawn under' },
+        projectId: { type: 'string', description: 'Filter to one project' },
+        status: {
+          type: 'string',
+          enum: ['spawning', 'waiting', 'running', 'needs_input', 'idle', 'completing',
+                 'completed', 'succeeded', 'failed', 'killed'],
+        },
+      },
+    },
+    handler: async (args) => {
+      const q: string[] = []
+      if (args['projectId']) q.push(`projectId=${encodeURIComponent(String(args['projectId']))}`)
+      if (args['status']) q.push(`status=${encodeURIComponent(String(args['status']))}`)
+      const qs = q.length ? `?${q.join('&')}` : ''
+      return api('GET', `/api/sessions${qs}`)
+    },
+  },
+  {
+    name: 'spawn_session',
+    description:
+      'Spawn a new agent session as a child of the current session. Every dimension is ' +
+      'independent — project, agent type, model, and effort can differ from the caller. ' +
+      'Guardrails: max depth 5, max 10 children per parent, max 5 spawns/minute. ' +
+      'Returns the new session uuid.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        projectId: { type: 'string', description: 'Project uuid — use list_projects to discover' },
         initialPrompt: { type: 'string', description: 'Prompt to send after spawn' },
-        agentType: { type: 'string', enum: ['claude', 'codex', 'opencode'], default: 'claude' },
-        model: { type: 'string', description: 'e.g. claude-opus-5, claude-sonnet-5, claude-haiku-4-5' },
-        effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'] },
+        agentType: {
+          type: 'string',
+          enum: ['claude', 'codex', 'opencode'],
+          default: 'claude',
+          description: 'Which agent harness to spawn — can differ from caller',
+        },
+        model: {
+          type: 'string',
+          description: 'Model id (e.g. claude-opus-5, claude-sonnet-5, claude-haiku-4-5). ' +
+                       'Falls back to project default if omitted.',
+        },
+        effort: {
+          type: 'string',
+          enum: ['low', 'medium', 'high', 'xhigh', 'max'],
+          description: 'Reasoning effort. Falls back to project default if omitted.',
+        },
       },
       required: ['projectId', 'initialPrompt'],
     },
