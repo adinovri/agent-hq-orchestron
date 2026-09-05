@@ -53,6 +53,13 @@ export function NavBar() {
         })}
       </div>
 
+      <span
+        title={`Build ${process.env.NEXT_PUBLIC_BUILD_STAMP ?? 'unknown'}`}
+        className="hidden sm:inline text-[10px] font-mono text-zinc-400 dark:text-zinc-500 shrink-0"
+      >
+        {process.env.NEXT_PUBLIC_BUILD_STAMP?.slice(-8) ?? '?'}
+      </span>
+
       {pwaInstalled && (
         <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 shrink-0 font-medium">
           PWA
