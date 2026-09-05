@@ -119,6 +119,68 @@ export function sessionsPlugin(
       return session
     })
 
+    // Poll-based transcript — client-friendly alternative to SSE. Returns
+    // the full JSONL parsed into user/assistant/tool_use/tool_result entries
+    // with a stable seq. Client uses React Query polling; no SSE, no dedupe,
+    // no reconnect logic needed.
+    app.get('/api/sessions/:uuid/transcript', async (req, reply) => {
+      const { uuid } = req.params as { uuid: string }
+      const sessions = await manager.list()
+      const session = sessions.find(s => s.id === uuid)
+      if (!session) return reply.code(404).send({ error: `Session not found: ${uuid}` })
+
+      const { readFile } = await import('node:fs/promises')
+      let raw = ''
+      try {
+        raw = await readFile(session.jsonlPath, 'utf8')
+      } catch {
+        return { entries: [], size: 0 }
+      }
+
+      const entries: Array<{
+        seq: number
+        timestamp: string
+        kind: 'user' | 'assistant' | 'tool_use' | 'tool_result'
+        toolName?: string
+        content: string
+      }> = []
+      let seq = 0
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue
+        let ev: {
+          type?: string
+          timestamp?: string
+          message?: { content?: string | Array<{ type?: string; text?: string; name?: string; input?: unknown; content?: string | Array<{ text?: string }> }> }
+        }
+        try { ev = JSON.parse(line) } catch { continue }
+        const ts = ev.timestamp ?? ''
+        const t = ev.type
+        const content = ev.message?.content
+        if (t === 'user' && typeof content === 'string') {
+          entries.push({ seq: seq++, timestamp: ts, kind: 'user', content })
+        } else if (t === 'assistant' && Array.isArray(content)) {
+          for (const b of content) {
+            if (b.type === 'text' && b.text) {
+              entries.push({ seq: seq++, timestamp: ts, kind: 'assistant', content: b.text })
+            } else if (b.type === 'tool_use') {
+              const inputStr = JSON.stringify(b.input ?? {}, null, 2).slice(0, 4000)
+              entries.push({ seq: seq++, timestamp: ts, kind: 'tool_use', toolName: b.name, content: inputStr })
+            }
+          }
+        } else if (t === 'user' && Array.isArray(content)) {
+          for (const b of content) {
+            if (b.type === 'tool_result') {
+              const c = b.content
+              const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => x.text ?? '').join('') : ''
+              if (text) entries.push({ seq: seq++, timestamp: ts, kind: 'tool_result', content: text.slice(0, 4000) })
+            }
+          }
+        }
+      }
+
+      return { entries, size: raw.length }
+    })
+
     app.post('/api/sessions/:uuid/input', async (req, reply) => {
       const { uuid } = req.params as { uuid: string }
       const body = z.object({ prompt: z.string().min(1) }).safeParse(req.body)

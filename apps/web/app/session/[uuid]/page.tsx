@@ -4,7 +4,7 @@ import { use, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { SessionHeader } from '@/components/SessionHeader'
-import { TranscriptPane } from '@/components/TranscriptPane'
+import { TranscriptPanePoll } from '@/components/TranscriptPanePoll'
 import { InputBox } from '@/components/InputBox'
 import { KillConfirmDialog } from '@/components/KillConfirmDialog'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
@@ -82,7 +82,7 @@ export default function SessionDetailPage({ params }: PageProps) {
       />
 
       <div className="flex-1 overflow-hidden">
-        <TranscriptPane uuid={uuid} status={session.status} />
+        <TranscriptPanePoll uuid={uuid} status={session.status} />
       </div>
 
       {!readOnly && <InputBox uuid={uuid} status={session.status} />}
