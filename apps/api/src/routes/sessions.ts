@@ -226,15 +226,22 @@ export function sessionsPlugin(
         toolName?: string
         content: string
       }> = []
+      // Safety net: if session is still 'running' but JSONL contains a
+      // turn_duration event AFTER the last known transition, fs.watch missed
+      // it (Linux inotify race on appends). Trigger transition here.
+      let sawTurnEnd = false
+      let lastAssistantText = ''
       let seq = 0
       for (const line of raw.split('\n')) {
         if (!line.trim()) continue
         let ev: {
           type?: string
+          subtype?: string
           timestamp?: string
           message?: { content?: string | Array<{ type?: string; text?: string; name?: string; input?: unknown; content?: string | Array<{ text?: string }> }> }
         }
         try { ev = JSON.parse(line) } catch { continue }
+        if (ev.type === 'system' && ev.subtype === 'turn_duration') sawTurnEnd = true
         const ts = ev.timestamp ?? ''
         const t = ev.type
         const content = ev.message?.content
@@ -244,6 +251,7 @@ export function sessionsPlugin(
           for (const b of content) {
             if (b.type === 'text' && b.text) {
               entries.push({ seq: seq++, timestamp: ts, kind: 'assistant', content: b.text })
+              lastAssistantText = b.text
             } else if (b.type === 'tool_use') {
               const inputStr = JSON.stringify(b.input ?? {}, null, 2).slice(0, 4000)
               entries.push({ seq: seq++, timestamp: ts, kind: 'tool_use', toolName: b.name, content: inputStr })
@@ -258,6 +266,14 @@ export function sessionsPlugin(
             }
           }
         }
+      }
+
+      // Safety net: reconcile stuck status. If session is 'running' but
+      // JSONL shows turn ended, trigger the transition here (belt-and-
+      // suspenders vs fs.watch race). Fire-and-forget so the response is
+      // never blocked.
+      if (sawTurnEnd && session.status === 'running') {
+        manager.reconcileTurnEnd(session.id, lastAssistantText).catch(() => {})
       }
 
       return { entries, size: raw.length }

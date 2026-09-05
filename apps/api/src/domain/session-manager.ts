@@ -222,6 +222,27 @@ export class SessionManager {
   }
 
   /**
+   * Safety-net reconciliation: forces a running→idle/needs_input transition
+   * based on the last assistant text, when the tailer's fs.watch missed the
+   * turn_duration event (known Linux inotify quirk for appends). Called by
+   * the transcript polling endpoint.
+   */
+  async reconcileTurnEnd(uuid: string, lastAssistantText: string): Promise<void> {
+    const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!session || session.status !== 'running') return
+    const next: SessionStatus = textAsksQuestion(lastAssistantText) ? 'needs_input' : 'idle'
+    if (ALLOWED_TRANSITIONS[session.status].includes(next)) {
+      await this.transition(uuid, next).catch(() => {})
+    }
+    // Close any dangling watcher for cleanliness
+    const w = this.turnWatchers.get(uuid)
+    if (w) {
+      w.close()
+      this.turnWatchers.delete(uuid)
+    }
+  }
+
+  /**
    * Interrupt the current turn — send Escape to the Claude TUI which aborts
    * the API call in progress without killing the session. Session transitions
    * back to `idle` once tailer sees `turn_duration` or timeout.
