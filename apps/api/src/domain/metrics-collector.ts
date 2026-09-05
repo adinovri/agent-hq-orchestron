@@ -23,7 +23,7 @@ export interface MetricsQueryResult {
   }
 }
 
-export type GroupBy = 'project' | 'adapter' | 'model' | 'day'
+export type GroupBy = 'project' | 'adapter' | 'model' | 'day' | 'session'
 
 export interface MetricsQuery {
   groupBy: GroupBy
@@ -136,6 +136,7 @@ function extractKey(r: MetricsRecord, groupBy: GroupBy): string {
     case 'project': return r.projectId
     case 'adapter': return r.adapter
     case 'model': return r.model ?? 'unknown'
+    case 'session': return r.sessionUuid
     case 'day': return r.endedAt.slice(0, 10) // YYYY-MM-DD
   }
 }
@@ -234,6 +235,7 @@ async function queryFromJsonl(sm: SessionManager, q: MetricsQuery): Promise<Metr
       case 'project': key = r.projectId; break
       case 'adapter': key = r.adapter; break
       case 'model': key = r.model; break
+      case 'session': key = r.sessionUuid; break
       case 'day':
       default: key = r.endedAt.slice(0, 10)
     }
@@ -253,7 +255,9 @@ async function queryFromJsonl(sm: SessionManager, q: MetricsQuery): Promise<Metr
       cost_usd: v.cost_usd,
       avg_duration_ms: v.sessions > 0 ? v.total_duration_ms / v.sessions : 0,
     }))
-    .sort((a, b) => a.key.localeCompare(b.key))
+    .sort((a, b) => q.groupBy === 'session' || q.groupBy === 'day'
+      ? b.key.localeCompare(a.key) // newest first for time-ish keys
+      : b.cost_usd - a.cost_usd) // else by cost desc
 
   const total = {
     sessions: perSession.length,

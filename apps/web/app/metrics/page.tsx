@@ -4,10 +4,12 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { CostChart } from '@/components/CostChart'
 import { ProjectBreakdown } from '@/components/ProjectBreakdown'
+import { SessionBreakdown } from '@/components/SessionBreakdown'
 import { DateRangePicker } from '@/components/DateRangePicker'
 import { fetchJson } from '@/lib/fetcher'
 import { Skeleton } from '@/components/Skeleton'
-import { BarChart3, Coins, Hash, Activity, TrendingUp, FolderKanban } from 'lucide-react'
+import { BarChart3, Coins, Hash, Activity, TrendingUp, FolderKanban, MessageSquare } from 'lucide-react'
+import type { SessionMetadata } from '@agent-hq-orchestron/shared'
 
 interface MetricsBucket {
   key: string
@@ -70,6 +72,7 @@ export default function MetricsPage() {
 
   const params = new URLSearchParams({ groupBy: 'day', from: range.from, to: range.to })
   const paramsProject = new URLSearchParams({ groupBy: 'project', from: range.from, to: range.to })
+  const paramsSession = new URLSearchParams({ groupBy: 'session', from: range.from, to: range.to })
 
   const { data: dayData, isLoading: dayLoading } = useQuery<MetricsQueryResult>({
     queryKey: ['metrics', 'day', range],
@@ -79,6 +82,19 @@ export default function MetricsPage() {
   const { data: projectData, isLoading: projLoading } = useQuery<MetricsQueryResult>({
     queryKey: ['metrics', 'project', range],
     queryFn: () => fetchJson(`/api/metrics?${paramsProject}`),
+  })
+
+  const { data: sessionData, isLoading: sessLoading } = useQuery<MetricsQueryResult>({
+    queryKey: ['metrics', 'session', range],
+    queryFn: () => fetchJson(`/api/metrics?${paramsSession}`),
+  })
+
+  const { data: sessionsList } = useQuery<SessionMetadata[]>({
+    queryKey: ['sessions'],
+    queryFn: async () => {
+      const r = await fetchJson<{ sessions: SessionMetadata[] }>('/api/sessions')
+      return r.sessions
+    },
   })
 
   const dailyPoints = (dayData?.buckets ?? []).map((b) => ({
@@ -92,6 +108,13 @@ export default function MetricsPage() {
     cost: b.cost_usd,
     sessions: b.sessions,
     tokens: b.tokens,
+  }))
+
+  const sessionRows = (sessionData?.buckets ?? []).map((b) => ({
+    sessionId: b.key,
+    cost: b.cost_usd,
+    tokens: b.tokens,
+    avgDurationMs: b.avg_duration_ms,
   }))
 
   const total = dayData?.total ?? { sessions: 0, tokens: 0, cost_usd: 0 }
@@ -163,6 +186,15 @@ export default function MetricsPage() {
           <div className="text-center py-8 text-sm text-zinc-500">No project activity in this range</div>
         ) : (
           <ProjectBreakdown data={projectRows} />
+        )}
+      </Section>
+
+      {/* Session breakdown */}
+      <Section title="Per-Session Cost" icon={<MessageSquare className="w-4 h-4" />}>
+        {sessLoading ? (
+          <Skeleton className="h-40 w-full" />
+        ) : (
+          <SessionBreakdown data={sessionRows} sessions={sessionsList} />
         )}
       </Section>
     </div>

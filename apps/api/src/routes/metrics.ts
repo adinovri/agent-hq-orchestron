@@ -3,7 +3,7 @@ import fp from 'fastify-plugin'
 import { MetricsCollector, type GroupBy } from '../domain/metrics-collector.js'
 import type { AgentType } from '@agent-hq-orchestron/shared'
 
-const VALID_GROUP_BY = new Set<GroupBy>(['project', 'adapter', 'model', 'day'])
+const VALID_GROUP_BY = new Set<GroupBy>(['project', 'adapter', 'model', 'day', 'session'])
 const VALID_ADAPTERS = new Set<AgentType>(['claude', 'codex', 'opencode'])
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
