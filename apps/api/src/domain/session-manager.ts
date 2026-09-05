@@ -762,6 +762,17 @@ export class SessionManager {
       throw new Error(`Cannot reopen session in ${session.status} state`)
     }
 
+    // Refuse when the underlying Claude JSONL doesn't exist — happens when
+    // the original spawn failed before Claude wrote its first turn. `claude
+    // --resume <uuid>` would just say "No conversation found" and die.
+    const { existsSync } = await import('node:fs')
+    if (!existsSync(session.jsonlPath)) {
+      throw new Error(
+        `Cannot reopen: original Claude conversation has no transcript on disk (${session.claudeSessionUuid}). ` +
+        `The initial spawn likely failed before writing any turn. Start a fresh session with the same prompt instead.`,
+      )
+    }
+
     // Backfill model/effort from project defaults if the record is missing
     // them (old sessions predate the model/effort feature).
     const effectiveModel = session.model ?? fallbackModel
@@ -883,6 +894,15 @@ export class SessionManager {
 
     const original = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!original) throw new Error(`Session not found: ${uuid}`)
+
+    // Refuse when the source has no Claude transcript to fork from.
+    const { existsSync } = await import('node:fs')
+    if (!existsSync(original.jsonlPath)) {
+      throw new Error(
+        `Cannot fork: original Claude conversation has no transcript on disk (${original.claudeSessionUuid}). ` +
+        `Nothing to inherit. Start a fresh session instead.`,
+      )
+    }
 
     // Backfill model/effort from project defaults if the source lacks them
     // (old sessions predate the model/effort feature).

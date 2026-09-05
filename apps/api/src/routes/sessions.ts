@@ -426,6 +426,7 @@ export function sessionsPlugin(
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''
         if (msg.includes('Cannot reopen')) return reply.code(409).send({ error: msg })
+        if (msg.includes('no transcript on disk')) return reply.code(409).send({ error: msg })
         throw err
       }
     })
@@ -456,6 +457,9 @@ export function sessionsPlugin(
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''
         if (msg.includes('Session pool is full')) return reply.code(429).send({ error: msg })
+        if (msg.includes('Cannot fork') || msg.includes('no transcript on disk')) {
+          return reply.code(409).send({ error: msg })
+        }
         throw err
       }
     })
