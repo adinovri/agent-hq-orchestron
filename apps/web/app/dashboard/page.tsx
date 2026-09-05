@@ -63,7 +63,7 @@ export default function DashboardPage() {
 
   const killMutation = useMutation({
     mutationFn: (id: string) =>
-      apiFetch(`/api/sessions/${id}/kill`, { method: 'POST' }),
+      apiFetch(`/api/sessions/${id}`, { method: 'DELETE' }),
     onMutate: (id) => setKillingIds((s) => new Set(s).add(id)),
     onSettled: (_, __, id) => {
       setKillingIds((s) => { const n = new Set(s); n.delete(id); return n })

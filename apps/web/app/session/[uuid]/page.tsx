@@ -36,7 +36,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   const descendantCount = delegation?.edges?.length ?? 0
 
   const killMutation = useMutation({
-    mutationFn: () => apiFetch(`/api/sessions/${uuid}/kill`, { method: 'POST' }),
+    mutationFn: () => apiFetch(`/api/sessions/${uuid}`, { method: 'DELETE' }),
     onMutate: () => setKilling(true),
     onSettled: () => {
       setKilling(false)

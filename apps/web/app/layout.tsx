@@ -19,9 +19,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Agent HQ Orchestron",
   description: "Multi-agent orchestration hub",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+  },
   other: {
-    "apple-mobile-web-app-capable": "yes",
-    "apple-mobile-web-app-status-bar-style": "default",
+    "mobile-web-app-capable": "yes",
   },
 };
 
