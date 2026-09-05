@@ -2,6 +2,12 @@
 
 function getToken(): string | null {
   if (typeof window === 'undefined') return null
+  // Prefer localStorage (persists across tabs + reloads); fall back to
+  // sessionStorage for legacy pairings that predate the switch.
+  try {
+    const local = localStorage.getItem('orchestron_token')
+    if (local) return local
+  } catch { /* blocked */ }
   try {
     return sessionStorage.getItem('orchestron_token')
   } catch {

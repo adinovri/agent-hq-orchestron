@@ -209,7 +209,9 @@ export function TranscriptPane({ uuid, status }: Props) {
       }
 
       let token: string | null = null
-      try { token = sessionStorage.getItem('orchestron_token') } catch { /* ignore */ }
+      try {
+        token = localStorage.getItem('orchestron_token') || sessionStorage.getItem('orchestron_token')
+      } catch { /* ignore */ }
       const url = `/api/sessions/${uuid}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`
       const es = new EventSource(url)
       esRef.current = es

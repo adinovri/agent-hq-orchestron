@@ -18,11 +18,10 @@ function PairInner() {
       return
     }
 
-    try {
-      sessionStorage.setItem('orchestron_token', token)
-    } catch {
-      // sessionStorage blocked
-    }
+    // Persist to localStorage so all tabs (and PWA install) share the token.
+    // Also mirror to sessionStorage for any legacy callers still reading it.
+    try { localStorage.setItem('orchestron_token', token) } catch { /* blocked */ }
+    try { sessionStorage.setItem('orchestron_token', token) } catch { /* blocked */ }
 
     setStatus('done')
 
