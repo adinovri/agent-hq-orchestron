@@ -177,6 +177,7 @@ export function TranscriptPane({ uuid, status }: Props) {
   const [entries, setEntries] = useState<TranscriptEntry[]>([])
   const [connected, setConnected] = useState(false)
   const [nonce, setNonce] = useState(0)
+  const [debugCounts, setDebugCounts] = useState({ raw: 0, parsed: 0 })
   const bottomRef = useRef<HTMLDivElement>(null)
   const esRef = useRef<EventSource | null>(null)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -184,6 +185,8 @@ export function TranscriptPane({ uuid, status }: Props) {
   const connectedRef = useRef(false)
   const lastEventAtRef = useRef<number>(Date.now())
   const seenRef = useRef<Set<string>>(new Set())
+  const debugRawRef = useRef(0)
+  const debugParsedRef = useRef(0)
 
   const isThinking = status === 'running' || status === 'spawning'
   const isEmpty = entries.length === 0
@@ -221,7 +224,11 @@ export function TranscriptPane({ uuid, status }: Props) {
 
       const handleTranscript = (e: MessageEvent) => {
         lastEventAtRef.current = Date.now()
+        debugRawRef.current += 1
         const newEntries = parseEvent(e.data)
+        debugParsedRef.current += newEntries.length
+        // Batch state updates
+        setDebugCounts({ raw: debugRawRef.current, parsed: debugParsedRef.current })
         if (newEntries.length === 0) return
         const fresh: TranscriptEntry[] = []
         for (const entry of newEntries) {
@@ -319,8 +326,14 @@ export function TranscriptPane({ uuid, status }: Props) {
           </>
         )}
         {entries.length > 0 && (
-          <span className="text-zinc-400 dark:text-zinc-500">· {entries.length} events</span>
+          <span className="text-zinc-400 dark:text-zinc-500">· {entries.length} shown</span>
         )}
+        <span
+          className="text-[10px] text-zinc-400 dark:text-zinc-600 font-mono"
+          title="Raw SSE frames received / entries parsed / entries shown"
+        >
+          [{debugCounts.raw}/{debugCounts.parsed}/{entries.length}]
+        </span>
         <button
           onClick={forceRefresh}
           className="ml-auto p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition"
