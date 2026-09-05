@@ -155,6 +155,21 @@ export class ClaudeAdapter implements AgentAdapter {
   async sendPrompt(handle: TmuxHandle, prompt: string): Promise<void> {
     await tmux.setBuffer(handle.tmuxName, prompt)
     await tmux.pasteBuffer(handle.tmuxName)
+
+    // Wait for the paste to actually appear in the input line, then wait a
+    // beat more for the TUI to settle (welcome banners, MCP-auth warnings)
+    // before pressing Enter. Otherwise Enter races the paste or gets
+    // consumed by a still-settling banner and the prompt sits stuck.
+    const marker = prompt.trim().slice(0, 40)
+    const deadline = Date.now() + 3_000
+    while (Date.now() < deadline) {
+      const pane = await tmux.capturePane(handle.tmuxName)
+      if (marker && pane.includes(marker)) break
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    // Small settle delay after paste is visible — TUI may still be
+    // absorbing the paste-buffer redraw.
+    await new Promise((r) => setTimeout(r, 250))
     await tmux.sendKeys(handle.tmuxName, 'Enter')
   }
 
