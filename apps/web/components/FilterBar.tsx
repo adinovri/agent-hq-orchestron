@@ -13,7 +13,7 @@ export interface FilterState {
 
 interface Props {
   filters: FilterState
-  projects: string[]
+  projects: Array<{ id: string; name: string }>
   allTags: string[]
   onChange: (f: Partial<FilterState>) => void
 }
@@ -82,7 +82,7 @@ export function FilterBar({ filters, projects, allTags, onChange }: Props) {
       >
         <option value="">All projects</option>
         {projects.map((p) => (
-          <option key={p} value={p}>{p}</option>
+          <option key={p.id} value={p.id}>{p.name}</option>
         ))}
       </select>
 

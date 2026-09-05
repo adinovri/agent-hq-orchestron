@@ -71,7 +71,7 @@ export default function DashboardPage() {
     },
   })
 
-  const projectNames = useMemo(() => projects.map((p) => p.id), [projects])
+  const projectOptions = useMemo(() => projects.map((p) => ({ id: p.id, name: p.name })), [projects])
   const projectNameMap = useMemo(() => new Map(projects.map((p) => [p.id, p.name])), [projects])
   const projectDefaultsMap = useMemo(
     () => new Map(projects.map((p) => [p.id, { model: p.defaultModel, effort: p.defaultEffort }])),
@@ -145,7 +145,7 @@ export default function DashboardPage() {
       {/* Filters */}
       <FilterBar
         filters={filters}
-        projects={projectNames}
+        projects={projectOptions}
         allTags={allTags}
         onChange={(patch) => setFilters((f) => ({ ...f, ...patch }))}
       />
