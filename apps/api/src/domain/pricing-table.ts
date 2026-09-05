@@ -5,28 +5,25 @@ export interface ModelPricing {
   cacheCreationPer1M?: number
 }
 
+// Standard tier rates used for models whose exact per-token pricing we
+// haven't verified yet — same-generation successors inherit the tier
+// pricing so cost tracking stays reasonable until we confirm and split
+// them out.
+const SONNET_TIER: ModelPricing = { inputPer1M: 3.0, outputPer1M: 15.0, cacheReadPer1M: 0.30, cacheCreationPer1M: 3.75 }
+const OPUS_TIER:   ModelPricing = { inputPer1M: 15.0, outputPer1M: 75.0, cacheReadPer1M: 1.50, cacheCreationPer1M: 18.75 }
+const HAIKU_TIER:  ModelPricing = { inputPer1M: 0.80, outputPer1M: 4.0,  cacheReadPer1M: 0.08, cacheCreationPer1M: 1.0 }
+
 const PRICING: Record<string, ModelPricing> = {
-  // Claude Sonnet 4.6
-  'claude-sonnet-4-6': {
-    inputPer1M: 3.0,
-    outputPer1M: 15.0,
-    cacheReadPer1M: 0.30,
-    cacheCreationPer1M: 3.75,
-  },
-  // Claude Opus 5
-  'claude-opus-5': {
-    inputPer1M: 15.0,
-    outputPer1M: 75.0,
-    cacheReadPer1M: 1.50,
-    cacheCreationPer1M: 18.75,
-  },
-  // Claude Haiku 4.5
-  'claude-haiku-4-5': {
-    inputPer1M: 0.80,
-    outputPer1M: 4.0,
-    cacheReadPer1M: 0.08,
-    cacheCreationPer1M: 1.0,
-  },
+  // Claude 5 family
+  'claude-opus-5':    OPUS_TIER,
+  'claude-sonnet-5':  SONNET_TIER,
+  'claude-fable-5-2': HAIKU_TIER,    // Fable = fast-tier (best guess until confirmed)
+  'claude-fable-5':   HAIKU_TIER,
+  'claude-fable-5-1': HAIKU_TIER,
+  // Prior generation
+  'claude-opus-4-8':  OPUS_TIER,
+  'claude-sonnet-4-6': SONNET_TIER,
+  'claude-haiku-4-5': HAIKU_TIER,
   // Legacy aliases
   'claude-sonnet': {
     inputPer1M: 3.0,

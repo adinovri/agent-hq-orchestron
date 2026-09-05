@@ -42,7 +42,13 @@ interface Props {
 
 const MODEL_OPTIONS = [
   { value: '', label: 'Default (project setting)' },
+  // Latest tier — Claude 5 family
   { value: 'claude-opus-5', label: 'Opus 5 (most capable)' },
+  { value: 'claude-sonnet-5', label: 'Sonnet 5' },
+  { value: 'claude-fable-5-2', label: 'Fable 5.2 (fast experimental)' },
+  { value: 'claude-fable-5', label: 'Fable 5' },
+  // Prior generation
+  { value: 'claude-opus-4-8', label: 'Opus 4.8' },
   { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6 (balanced)' },
   { value: 'claude-haiku-4-5', label: 'Haiku 4.5 (fast + cheap)' },
 ]
