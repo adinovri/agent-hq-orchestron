@@ -761,12 +761,22 @@ export class SessionManager {
         }),
     )
 
-    return sessions.filter(s => {
+    const filtered = sessions.filter(s => {
       if (filter?.status && s.status !== filter.status) return false
       if (filter?.projectId && s.projectId !== filter.projectId) return false
       if (filter?.from && s.startedAt < filter.from) return false
       if (filter?.to && s.startedAt > filter.to) return false
       return true
+    })
+
+    // Order by "last activity" — endedAt when the session has one, else
+    // startedAt (matches Tycho: `finished_at || started_at || created_at`,
+    // desc). Keeps the "loudest right now" session at the top and reflects
+    // recent input/interrupt/archive events naturally.
+    return filtered.sort((a, b) => {
+      const at = a.endedAt ?? a.startedAt
+      const bt = b.endedAt ?? b.startedAt
+      return at < bt ? 1 : at > bt ? -1 : 0
     })
   }
 
