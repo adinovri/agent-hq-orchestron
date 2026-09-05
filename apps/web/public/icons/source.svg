@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Orchestron brand mark — "O" with 3 orbiting agent dots.
+  - "O" = Orchestron, agents orbit like electrons around a nucleus.
+  - Warm orange primary (#ff8700) — same accent as the Tycho theme.
+  - Dark charcoal ground (#0e0e10) so it lands cleanly on both themes.
+  - Composition is safely inside the 80% "safe area" for iOS maskable.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Orchestron">
+  <!-- Rounded-square ground (iOS-style tile) -->
+  <rect width="512" height="512" rx="96" ry="96" fill="#0e0e10"/>
+
+  <!-- Faint orbit ring -->
+  <circle cx="256" cy="256" r="176" fill="none" stroke="#ff8700" stroke-opacity="0.14" stroke-width="4"/>
+
+  <!-- Core "O" ring — thick, warm orange -->
+  <circle cx="256" cy="256" r="112" fill="none" stroke="#ff8700" stroke-width="32" stroke-linecap="round"/>
+
+  <!-- Three orbiting agent dots on the outer ring -->
+  <!-- Top-right (12 o'clock area, offset right) -->
+  <circle cx="356" cy="112" r="20" fill="#ff8700"/>
+  <!-- Bottom-left -->
+  <circle cx="130" cy="360" r="20" fill="#ff8700"/>
+  <!-- Right (4 o'clock) -->
+  <circle cx="404" cy="308" r="20" fill="#ff8700"/>
+</svg>

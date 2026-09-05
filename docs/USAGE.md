@@ -16,7 +16,8 @@ finished [DEPLOY.md](DEPLOY.md) and can reach the dashboard.
 7. [Themes & appearance](#7-themes--appearance)
 8. [Pairing & mobile](#8-pairing--mobile)
 9. [Data on disk](#9-data-on-disk)
-10. [Keyboard & touch shortcuts](#10-keyboard--touch-shortcuts)
+10. [Terminal interfaces (CLI + TUI)](#10-terminal-interfaces-cli--tui)
+11. [Keyboard & touch shortcuts](#11-keyboard--touch-shortcuts)
 
 ---
 
@@ -347,7 +348,53 @@ reads these directly for the transcript view.
 
 ---
 
-## 10. Keyboard & touch shortcuts
+## 10. Terminal interfaces (CLI + TUI)
+
+Two ways to drive orchestron without opening the browser.
+
+### CLI — `orchestron`
+
+Commander-based CLI in `apps/cli`. Link once, then run from anywhere.
+
+```bash
+cd apps/cli && npm link         # exposes `orchestron` globally
+orchestron --help
+```
+
+Subcommands:
+
+| Command | Purpose |
+|---|---|
+| `orchestron serve` | Boot the API + web bundle (dev alt to systemd) |
+| `orchestron tui` | Launch the Ink-based TUI |
+| `orchestron token rotate` | Regenerate Bearer token in config.json |
+| `orchestron project` | CRUD projects (`list`, `add`, `remove`) |
+| `orchestron session` | Spawn / list / kill sessions |
+| `orchestron schedule` | Manage cron entries |
+| `orchestron qr` | Print pairing QR to terminal (for phone scan) |
+| `orchestron doctor` | Health check — tmux, claude, config, adapters |
+
+Good for scripting: e.g. `orchestron session spawn --project=<uuid> --prompt="…"`
+from a git hook or a shell one-liner.
+
+### TUI — Ink-based dashboard
+
+React-Ink terminal UI. Two screens (Dashboard + Session detail). Same
+data as the web dashboard — reads the same API.
+
+```bash
+orchestron tui                            # picks up ~/.orchestron/config.json
+# or manually
+orchestron tui --url http://127.0.0.1:8090 --token "$TOKEN"
+```
+
+Useful when SSH'd into the server and you don't want to tunnel a browser
+back. Doesn't replace the web UI (no transcript renderer yet); a quick
+scan-and-kill or spawn-and-detach workflow.
+
+---
+
+## 11. Keyboard & touch shortcuts
 
 Currently limited (mobile-first UX). Notable:
 

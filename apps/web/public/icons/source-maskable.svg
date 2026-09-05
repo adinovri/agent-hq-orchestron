@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Orchestron maskable variant — same mark, ground fills the whole square
+  (no rounded corners), and the "O" is shrunk to fit within the iOS/
+  Android maskable "safe zone" (inner 80% ≈ inset by 51 px on each side).
+  The launcher will apply its own mask shape on top.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Orchestron">
+  <rect width="512" height="512" fill="#0e0e10"/>
+
+  <!-- Faint orbit ring, shrunk to fit safe area -->
+  <circle cx="256" cy="256" r="140" fill="none" stroke="#ff8700" stroke-opacity="0.14" stroke-width="4"/>
+
+  <!-- Core "O" ring, shrunk -->
+  <circle cx="256" cy="256" r="90" fill="none" stroke="#ff8700" stroke-width="26" stroke-linecap="round"/>
+
+  <!-- Orbiting dots within safe zone -->
+  <circle cx="336" cy="140" r="16" fill="#ff8700"/>
+  <circle cx="152" cy="344" r="16" fill="#ff8700"/>
+  <circle cx="376" cy="304" r="16" fill="#ff8700"/>
+</svg>
