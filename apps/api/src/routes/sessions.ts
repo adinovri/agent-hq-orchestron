@@ -410,8 +410,15 @@ export function sessionsPlugin(
 
     // Reopen a terminal session — same UUID + same Claude session, fresh tmux.
     // Session comes back to `idle` after Claude TUI boots with --resume.
+    // Body { model?, effort? } lets the user override for this reopen.
     app.post('/api/sessions/:uuid/reopen', async (req, reply) => {
       const { uuid } = req.params as { uuid: string }
+      const body = z.object({
+        model: z.string().optional(),
+        effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+      }).safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
       const sessions = await manager.list()
       const existing = sessions.find(s => s.id === uuid)
       if (!existing) return reply.code(404).send({ error: `Session not found: ${uuid}` })
@@ -421,7 +428,11 @@ export function sessionsPlugin(
       }
       const configDir = project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
       try {
-        const updated = await manager.reopen(uuid, project.path, configDir, project.defaultModel, project.defaultEffort)
+        const updated = await manager.reopen(
+          uuid, project.path, configDir,
+          project.defaultModel, project.defaultEffort,
+          { model: body.data.model, effort: body.data.effort },
+        )
         return updated
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''
@@ -437,6 +448,12 @@ export function sessionsPlugin(
     // or when you just want to start over from the same prompt.
     app.post('/api/sessions/:uuid/respawn', async (req, reply) => {
       const { uuid } = req.params as { uuid: string }
+      const body = z.object({
+        model: z.string().optional(),
+        effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+      }).safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
       const sessions = await manager.list()
       const existing = sessions.find(s => s.id === uuid)
       if (!existing) return reply.code(404).send({ error: `Session not found: ${uuid}` })
@@ -448,7 +465,11 @@ export function sessionsPlugin(
       try {
         // In-place respawn — returns the SAME session id, updated record.
         // 200 OK (not 201) since no new resource was created.
-        const fresh = await manager.respawn(uuid, project.path, configDir, project.defaultModel, project.defaultEffort)
+        const fresh = await manager.respawn(
+          uuid, project.path, configDir,
+          project.defaultModel, project.defaultEffort,
+          { model: body.data.model, effort: body.data.effort },
+        )
         return fresh
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''
@@ -463,7 +484,11 @@ export function sessionsPlugin(
     // a new user turn (else just re-enters the shared context idle).
     app.post('/api/sessions/:uuid/clone', async (req, reply) => {
       const { uuid } = req.params as { uuid: string }
-      const body = z.object({ prompt: z.string().optional() }).safeParse(req.body ?? {})
+      const body = z.object({
+        prompt: z.string().optional(),
+        model: z.string().optional(),
+        effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+      }).safeParse(req.body ?? {})
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
 
       const sessions = await manager.list()
@@ -476,10 +501,13 @@ export function sessionsPlugin(
       const configDir = project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
 
       try {
-        const cloned = await manager.clone(uuid, {
-          workspace: project.path,
-          configDir,
-        }, body.data.prompt, project.defaultModel, project.defaultEffort)
+        const cloned = await manager.clone(
+          uuid,
+          { workspace: project.path, configDir },
+          body.data.prompt,
+          project.defaultModel, project.defaultEffort,
+          { model: body.data.model, effort: body.data.effort },
+        )
         return reply.code(201).send(cloned)
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''

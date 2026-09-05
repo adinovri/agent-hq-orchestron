@@ -5,6 +5,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { SessionHeader } from '@/components/SessionHeader'
 import { TranscriptPanePoll } from '@/components/TranscriptPanePoll'
+import { SessionActionDialog, type SessionActionKind } from '@/components/SessionActionDialog'
+import type { EffortLevel } from '@agent-hq-orchestron/shared'
 import { InputBox } from '@/components/InputBox'
 import { KillConfirmDialog } from '@/components/KillConfirmDialog'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
@@ -69,8 +71,15 @@ export default function SessionDetailPage({ params }: PageProps) {
     },
   })
 
+  const [actionDialog, setActionDialog] = useState<SessionActionKind | null>(null)
+
   const reopenMutation = useMutation({
-    mutationFn: () => apiFetch(`/api/sessions/${uuid}/reopen`, { method: 'POST' }),
+    mutationFn: (opts: { model?: string; effort?: EffortLevel } = {}) =>
+      apiFetch(`/api/sessions/${uuid}/reopen`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(opts),
+      }),
     onMutate: () => setReopening(true),
     onSettled: () => {
       setReopening(false)
@@ -80,11 +89,11 @@ export default function SessionDetailPage({ params }: PageProps) {
   })
 
   const cloneMutation = useMutation({
-    mutationFn: async (extraPrompt?: string) => {
+    mutationFn: async (opts: { prompt?: string; model?: string; effort?: EffortLevel } = {}) => {
       const res = await apiFetch(`/api/sessions/${uuid}/clone`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: extraPrompt }),
+        body: JSON.stringify(opts),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
       return res.json() as Promise<SessionMetadata>
@@ -100,8 +109,12 @@ export default function SessionDetailPage({ params }: PageProps) {
 
   const [respawning, setRespawning] = useState(false)
   const respawnMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiFetch(`/api/sessions/${uuid}/respawn`, { method: 'POST' })
+    mutationFn: async (opts: { model?: string; effort?: EffortLevel } = {}) => {
+      const res = await apiFetch(`/api/sessions/${uuid}/respawn`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(opts),
+      })
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
       return res.json() as Promise<SessionMetadata>
     },
@@ -153,21 +166,9 @@ export default function SessionDetailPage({ params }: PageProps) {
             archiveMutation.mutate()
           }
         }}
-        onReopen={() => {
-          if (confirm('Reopen this session? A fresh tmux + Claude will start with the same conversation loaded via --resume.')) {
-            reopenMutation.mutate()
-          }
-        }}
-        onClone={() => {
-          const extra = prompt('Optional prompt for the cloned session (leave empty to just re-enter the shared context):', '')
-          if (extra === null) return   // user cancelled
-          cloneMutation.mutate(extra || undefined)
-        }}
-        onRespawn={() => {
-          if (confirm('Restart this session in-place? A fresh Claude conversation will start with the same prompt — the previous conversation is discarded.')) {
-            respawnMutation.mutate()
-          }
-        }}
+        onReopen={() => setActionDialog('reopen')}
+        onClone={() => setActionDialog('fork')}
+        onRespawn={() => setActionDialog('respawn')}
         killing={killing}
         archiving={archiving}
         reopening={reopening}
@@ -190,6 +191,29 @@ export default function SessionDetailPage({ params }: PageProps) {
         onConfirm={() => killMutation.mutate()}
         descendantCount={descendantCount}
         killing={killing}
+      />
+
+      <SessionActionDialog
+        open={actionDialog !== null}
+        kind={actionDialog ?? 'reopen'}
+        agentType={session.agentType}
+        currentModel={session.model}
+        currentEffort={session.effort}
+        defaultModel={currentProject?.defaultModel}
+        defaultEffort={currentProject?.defaultEffort}
+        pending={reopening || cloning || respawning}
+        onClose={() => setActionDialog(null)}
+        onConfirm={(opts) => {
+          const action = actionDialog
+          setActionDialog(null)
+          if (action === 'reopen') {
+            reopenMutation.mutate({ model: opts.model, effort: opts.effort })
+          } else if (action === 'fork') {
+            cloneMutation.mutate({ prompt: opts.prompt, model: opts.model, effort: opts.effort })
+          } else if (action === 'respawn') {
+            respawnMutation.mutate({ model: opts.model, effort: opts.effort })
+          }
+        }}
       />
     </div>
   )

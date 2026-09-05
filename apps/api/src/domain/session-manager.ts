@@ -766,7 +766,7 @@ export class SessionManager {
    * resumes the prior conversation. Respawn discards the prior conversation
    * and starts over from the initialPrompt.
    */
-  async respawn(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel): Promise<SessionMetadata> {
+  async respawn(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
@@ -783,8 +783,8 @@ export class SessionManager {
     const effectiveConfigDir = session.agentType === 'claude'
       ? effectiveClaudeConfigDir(configDir ?? session.configDir)
       : (configDir ?? session.configDir)
-    const effectiveModel = session.model ?? fallbackModel
-    const effectiveEffort = session.effort ?? fallbackEffort
+    const effectiveModel = overrides?.model ?? session.model ?? fallbackModel
+    const effectiveEffort = overrides?.effort ?? session.effort ?? fallbackEffort
 
     const handle = await adapter.spawn({
       projectId: session.projectId,
@@ -843,7 +843,7 @@ export class SessionManager {
     return updated
   }
 
-  async reopen(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel): Promise<SessionMetadata> {
+  async reopen(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
@@ -863,10 +863,11 @@ export class SessionManager {
       )
     }
 
-    // Backfill model/effort from project defaults if the record is missing
-    // them (old sessions predate the model/effort feature).
-    const effectiveModel = session.model ?? fallbackModel
-    const effectiveEffort = session.effort ?? fallbackEffort
+    // Precedence for model/effort: caller override > session's own value >
+    // project default. Overrides let the user pick a different model/effort
+    // just for this reopen without permanently mutating the record.
+    const effectiveModel = overrides?.model ?? session.model ?? fallbackModel
+    const effectiveEffort = overrides?.effort ?? session.effort ?? fallbackEffort
 
     const adapter = this.registry.getOrThrow(session.agentType)
     // Regenerate MCP config on every reopen so token/URL updates take effect.
@@ -976,7 +977,7 @@ export class SessionManager {
    * original's Claude conversation (via --resume). Creates a new orchestron
    * UUID + new tmux; original session record is untouched.
    */
-  async clone(uuid: string, spawnConfig: Pick<SpawnConfig, 'workspace' | 'configDir'>, extraPrompt?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel): Promise<SessionMetadata> {
+  async clone(uuid: string, spawnConfig: Pick<SpawnConfig, 'workspace' | 'configDir'>, extraPrompt?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
     const active = await this.countActiveSessions()
     if (active >= this.maxConcurrent) {
       throw new PoolFullError(this.maxConcurrent)
@@ -994,10 +995,10 @@ export class SessionManager {
       )
     }
 
-    // Backfill model/effort from project defaults if the source lacks them
-    // (old sessions predate the model/effort feature).
-    const effectiveModel = original.model ?? fallbackModel
-    const effectiveEffort = original.effort ?? fallbackEffort
+    // Overrides let the user pick different model/effort for the fork
+    // without touching the original. Falls back to original's, then project.
+    const effectiveModel = overrides?.model ?? original.model ?? fallbackModel
+    const effectiveEffort = overrides?.effort ?? original.effort ?? fallbackEffort
 
     const newUuid = crypto.randomUUID()
     const adapter = this.registry.getOrThrow(original.agentType)
