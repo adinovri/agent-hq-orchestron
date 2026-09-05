@@ -227,19 +227,32 @@ export function TranscriptPane({ uuid, status }: Props) {
       const handleTranscript = (e: MessageEvent) => {
         lastEventAtRef.current = Date.now()
         debugRawRef.current += 1
-        const newEntries = parseEvent(e.data)
+        let newEntries: TranscriptEntry[] = []
+        try {
+          newEntries = parseEvent(e.data)
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error('[transcript] parseEvent threw', err, e.data.slice(0, 200))
+        }
         debugParsedRef.current += newEntries.length
-        // Batch state updates
         setDebugCounts({ raw: debugRawRef.current, parsed: debugParsedRef.current })
+        // eslint-disable-next-line no-console
+        console.info('[transcript]', 'raw#' + debugRawRef.current, 'parsed=' + newEntries.length, e.data.slice(0, 100))
         if (newEntries.length === 0) return
         const fresh: TranscriptEntry[] = []
         for (const entry of newEntries) {
           const key = entryKey(entry)
-          if (seenRef.current.has(key)) continue
+          if (seenRef.current.has(key)) {
+            // eslint-disable-next-line no-console
+            console.info('[transcript] DEDUPE SKIP', key.slice(0, 100))
+            continue
+          }
           seenRef.current.add(key)
           fresh.push(entry)
         }
         if (fresh.length === 0) return
+        // eslint-disable-next-line no-console
+        console.info('[transcript] APPEND', fresh.length, 'entries; kinds:', fresh.map(f => f.kind).join(','))
         setEntries((prev) => {
           const next = [...prev, ...fresh]
           return next.length > MAX_EVENTS ? next.slice(next.length - MAX_EVENTS) : next
