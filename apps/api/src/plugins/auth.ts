@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import fp from 'fastify-plugin'
 import type { Config } from '@agent-hq-orchestron/shared'
 
-const AUTH_WHITELIST = new Set(['/api/health', '/api/readiness', '/api/reset'])
+const AUTH_WHITELIST = new Set(['/api/health', '/api/readiness', '/api/reset', '/api/version'])
 
 function timingSafeCompare(a: string, b: string): boolean {
   const aBuf = Buffer.from(a, 'utf8')
