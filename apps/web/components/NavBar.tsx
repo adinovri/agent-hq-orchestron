@@ -3,11 +3,12 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { LayoutDashboard, FolderKanban, BarChart3, Network, Settings } from 'lucide-react'
+import { LayoutDashboard, FolderKanban, BarChart3, Network, Settings, Clock } from 'lucide-react'
 
 const NAV_LINKS = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/projects', label: 'Projects', icon: FolderKanban },
+  { href: '/schedules', label: 'Schedules', icon: Clock },
   { href: '/metrics', label: 'Metrics', icon: BarChart3 },
   { href: '/graph', label: 'Graph', icon: Network },
   { href: '/settings', label: 'Settings', icon: Settings },
