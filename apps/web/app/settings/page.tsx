@@ -6,8 +6,9 @@ import { fetchJson } from '@/lib/fetcher'
 import { Skeleton } from '@/components/Skeleton'
 import {
   Server, Key, FileCog, AlertCircle, CheckCircle2, Copy, Check,
-  ShieldCheck, ShieldOff,
+  ShieldCheck, ShieldOff, Palette,
 } from 'lucide-react'
+import { ThemeSelect } from '@/components/ThemeSwitcher'
 
 interface HealthResponse {
   ok: boolean
@@ -137,6 +138,15 @@ export default function SettingsPage() {
             <p className="text-xs text-zinc-500 mb-1">Restart after editing:</p>
             <CopyableCommand command="systemctl --user restart orchestron-api.service orchestron-web.service" />
           </div>
+        </div>
+      </Section>
+
+      <Section title="Appearance" icon={<Palette className="w-4 h-4" />}>
+        <div className="py-3 space-y-2">
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            Switch between the default Orchestron dark theme, Tycho's warm-orange dark, or a light theme. Saved per-browser.
+          </p>
+          <ThemeSelect />
         </div>
       </Section>
 

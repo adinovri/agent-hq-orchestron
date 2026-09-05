@@ -117,6 +117,100 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* Tycho-inspired warm dark theme — orange accent, brown-gray borders */
+html[data-theme="tycho"] {
+  --background: #11100e;           /* warm near-black */
+  --foreground: #f7f2e8;           /* warm off-white */
+  --card: #191817;                 /* panel */
+  --card-foreground: #f7f2e8;
+  --popover: #1c1b1a;
+  --popover-foreground: #f7f2e8;
+  --primary: #ff8700;              /* orange */
+  --primary-foreground: #19110a;
+  --secondary: #201e1c;
+  --secondary-foreground: #f7f2e8;
+  --muted: #201e1c;
+  --muted-foreground: #bcb4a8;
+  --accent: #ff8700;
+  --accent-foreground: #19110a;
+  --destructive: #ef4a3d;
+  --border: #3a352d;
+  --input: #2a2723;
+  --ring: #ffb35a;                 /* soft orange for focus */
+  --chart-1: #ff8700;              /* orange primary */
+  --chart-2: #ffb35a;              /* soft orange */
+  --chart-3: #88b8ff;              /* blue */
+  --chart-4: #7bd88f;              /* green */
+  --chart-5: #bcb4a8;              /* muted */
+  --sidebar: #191817;
+  --sidebar-foreground: #f7f2e8;
+  --sidebar-primary: #ff8700;
+  --sidebar-primary-foreground: #19110a;
+  --sidebar-accent: #201e1c;
+  --sidebar-accent-foreground: #f7f2e8;
+  --sidebar-border: #3a352d;
+  --sidebar-ring: #ffb35a;
+}
+
+/* Apply tycho theme via body background gradient (subtle orange glow from top) */
+html[data-theme="tycho"] body {
+  background: linear-gradient(180deg, rgba(255,135,0,0.08), transparent 460px), #11100e;
+  color: #f7f2e8;
+}
+
+/* Also flip default Tailwind zinc/gray shades in tycho theme so existing
+ * classes (bg-zinc-*, text-zinc-*) inherit the warm palette. Only the most
+ * common shades to avoid breaking too much — the rest degrade gracefully. */
+html[data-theme="tycho"] .bg-white,
+html[data-theme="tycho"] .dark\:bg-zinc-900 {
+  background-color: #191817 !important;
+}
+html[data-theme="tycho"] .bg-zinc-50,
+html[data-theme="tycho"] .dark\:bg-zinc-950 {
+  background-color: #0b0a09 !important;
+}
+html[data-theme="tycho"] .bg-zinc-100,
+html[data-theme="tycho"] .dark\:bg-zinc-800 {
+  background-color: #201e1c !important;
+}
+html[data-theme="tycho"] .border-zinc-200,
+html[data-theme="tycho"] .dark\:border-zinc-800,
+html[data-theme="tycho"] .border-zinc-300,
+html[data-theme="tycho"] .dark\:border-zinc-700 {
+  border-color: #3a352d !important;
+}
+html[data-theme="tycho"] .text-zinc-900,
+html[data-theme="tycho"] .dark\:text-zinc-100,
+html[data-theme="tycho"] .text-zinc-800,
+html[data-theme="tycho"] .dark\:text-zinc-200 {
+  color: #f7f2e8 !important;
+}
+html[data-theme="tycho"] .text-zinc-500,
+html[data-theme="tycho"] .dark\:text-zinc-400,
+html[data-theme="tycho"] .text-zinc-600,
+html[data-theme="tycho"] .dark\:text-zinc-300 {
+  color: #bcb4a8 !important;
+}
+html[data-theme="tycho"] .text-zinc-400,
+html[data-theme="tycho"] .dark\:text-zinc-500,
+html[data-theme="tycho"] .text-zinc-300,
+html[data-theme="tycho"] .dark\:text-zinc-600 {
+  color: #8a8378 !important;
+}
+/* Signature: swap blue accents (buttons, links, active tab) for orange */
+html[data-theme="tycho"] .bg-blue-600 { background-color: #ff8700 !important; }
+html[data-theme="tycho"] .bg-blue-600:hover,
+html[data-theme="tycho"] .hover\:bg-blue-700:hover { background-color: #e67800 !important; }
+html[data-theme="tycho"] .text-blue-600,
+html[data-theme="tycho"] .text-blue-700,
+html[data-theme="tycho"] .dark\:text-blue-400,
+html[data-theme="tycho"] .dark\:text-blue-300 { color: #ff8700 !important; }
+html[data-theme="tycho"] .bg-blue-50,
+html[data-theme="tycho"] .dark\:bg-blue-950\/40,
+html[data-theme="tycho"] .dark\:bg-blue-950 { background-color: rgba(255,135,0,0.12) !important; }
+html[data-theme="tycho"] .border-blue-400,
+html[data-theme="tycho"] .focus\:ring-blue-400:focus { border-color: #ffb35a !important; }
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
