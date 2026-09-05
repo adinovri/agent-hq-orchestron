@@ -518,7 +518,10 @@ export class SessionManager {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
-    const ARCHIVABLE: SessionStatus[] = ['needs_input', 'idle', 'waiting', 'running']
+    // Sleeping sessions can also be archived — no tmux to kill, straight
+    // path to 'succeeded'. The state machine already allows sleeping →
+    // succeeded; this guard was the only thing rejecting the flow.
+    const ARCHIVABLE: SessionStatus[] = ['needs_input', 'idle', 'waiting', 'running', 'sleeping']
     if (!ARCHIVABLE.includes(session.status)) {
       throw new Error(`Cannot archive session in ${session.status} state`)
     }
