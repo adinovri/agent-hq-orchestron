@@ -115,7 +115,8 @@ export class SessionManager {
 
     // Fire-and-forget: complete the spawn lifecycle async so the HTTP response is fast.
     // Dismisses trust folder / theme picker, waits for TUI ready, pastes prompt, then transitions.
-    this.completeSpawn(uuid, adapter, handle, spawnConfig.initialPrompt).catch(async (err: unknown) => {
+    // Passes spawnConfig so completeSpawn can re-spawn on transient tmux/claude-boot failure.
+    this.completeSpawn(uuid, adapter, handle, spawnConfig.initialPrompt, spawnConfig).catch(async (err: unknown) => {
       const msg = (err as Error).message ?? String(err)
       console.error(`[session-manager] completeSpawn failed for ${uuid}: ${msg}`)
       try {
@@ -139,15 +140,50 @@ export class SessionManager {
     adapter: import('@agent-hq-orchestron/shared').AgentAdapter,
     handle: import('@agent-hq-orchestron/shared').TmuxHandle,
     prompt: string,
+    spawnConfig?: SpawnConfig,
   ): Promise<void> {
-    // TUI ready (auto-dismisses trust/menu interstitials) — 30s timeout for cold start
-    await adapter.waitTuiReady(handle, 30_000)
+    let currentHandle = handle
+    let attempt = 0
+    const MAX_ATTEMPTS = 2
+
+    while (true) {
+      try {
+        // TUI ready (auto-dismisses trust/menu interstitials) — 30s timeout for cold start
+        await adapter.waitTuiReady(currentHandle, 30_000)
+        break
+      } catch (err: unknown) {
+        const msg = (err as Error).message ?? ''
+        // Only retry when the tmux pane vanished early (Claude subprocess died
+        // at boot — usually a transient auth/subscription glitch). Other errors
+        // (timeouts on interstitials etc.) propagate.
+        const paneDied = msg.includes('can\'t find pane') || msg.includes('no such pane')
+        attempt += 1
+        if (!paneDied || attempt >= MAX_ATTEMPTS || !spawnConfig) {
+          throw err
+        }
+        console.warn(`[session-manager] tmux pane died for ${uuid}, respawning (attempt ${attempt + 1}/${MAX_ATTEMPTS})`)
+        // Clean up dead tmux (best-effort) and respawn with fresh claude UUID.
+        await adapter.kill(currentHandle).catch(() => {})
+        const newHandle = await adapter.spawn(spawnConfig)
+        currentHandle = newHandle
+
+        // Update the session record with the new tmux/claude handles.
+        const rec = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+        if (rec) {
+          rec.tmuxName = newHandle.tmuxName
+          rec.claudeSessionUuid = newHandle.claudeUuid
+          rec.jsonlPath = newHandle.jsonlPath
+          await writeJson(this.sessionPath(uuid), rec)
+        }
+      }
+    }
+
     await this.transition(uuid, 'waiting')
 
     // Paste initial prompt + Enter
-    await adapter.sendPrompt(handle, prompt)
+    await adapter.sendPrompt(currentHandle, prompt)
     await this.transition(uuid, 'running')
-    this.watchForTurnEnd(uuid, handle.jsonlPath)
+    this.watchForTurnEnd(uuid, currentHandle.jsonlPath)
   }
 
   async sendInput(uuid: string, prompt: string): Promise<SessionMetadata> {
