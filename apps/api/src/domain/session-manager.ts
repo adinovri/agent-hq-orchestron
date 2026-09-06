@@ -287,21 +287,31 @@ export class SessionManager {
     // for codex, sonnet for claude).
     const effectiveModel = filterModelForHarness(spawnConfig.model, spawnConfig.agentType)
     await this.ensureMemorySymlink(spawnConfig.agentType, effectiveConfigDir, spawnConfig.workspace)
+    const spawnedAt = Date.now()
     let handle = await adapter.spawn({ ...spawnConfig, model: effectiveModel, configDir: effectiveConfigDir, mcpConfigPath, mcpConfigInline })
 
     // Codex path: adapter returns handle with empty claudeUuid + jsonlPath
     // because codex assigns its own session UUID (UUID v7) — capture happens
     // after TUI is ready by scanning the rollout dir. Wait for TUI first,
     // then invoke the adapter's captureNewSessionId() method.
+    //
+    // spawnedAt is passed so captureNewSessionId ignores pre-existing rollout
+    // files (e.g. a stale `codex exec` rollout from an earlier session). If no
+    // rollout appears (interactive TUI doesn't write JSONL), it returns empty ids
+    // and we rely on the idle-timeout sweeper for session lifecycle management.
     if (spawnConfig.agentType === 'codex' && handle.claudeUuid === '') {
       try {
         await adapter.waitTuiReady(handle, 30_000)
         const maybeCodex = adapter as unknown as {
-          captureNewSessionId?: (h: typeof handle, cd?: string, t?: number) => Promise<{ sessionId: string; jsonlPath: string }>
+          captureNewSessionId?: (h: typeof handle, cd?: string, t?: number, spawnedAfter?: number) => Promise<{ sessionId: string; jsonlPath: string }>
         }
         if (typeof maybeCodex.captureNewSessionId === 'function') {
-          const captured = await maybeCodex.captureNewSessionId(handle, effectiveConfigDir, 10_000)
-          handle = { ...handle, claudeUuid: captured.sessionId, jsonlPath: captured.jsonlPath }
+          const captured = await maybeCodex.captureNewSessionId(handle, effectiveConfigDir, 10_000, spawnedAt)
+          // Only update handle when a real session was captured — empty means interactive
+          // TUI (no JSONL rollout); leave handle ids empty and fall through.
+          if (captured.sessionId) {
+            handle = { ...handle, claudeUuid: captured.sessionId, jsonlPath: captured.jsonlPath }
+          }
         }
       } catch (err) {
         console.warn(`[session-manager] codex session-id capture failed for ${uuid}: ${(err as Error).message}`)
@@ -404,7 +414,9 @@ export class SessionManager {
     // Paste initial prompt + Enter
     await adapter.sendPrompt(currentHandle, prompt)
     await this.transition(uuid, 'running')
-    this.watchForTurnEnd(uuid, currentHandle.jsonlPath)
+    if (currentHandle.jsonlPath) {
+      this.watchForTurnEnd(uuid, currentHandle.jsonlPath)
+    }
   }
 
   async sendInput(uuid: string, prompt: string): Promise<SessionMetadata> {

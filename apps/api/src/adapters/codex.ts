@@ -185,7 +185,7 @@ export class CodexAdapter implements AgentAdapter {
    * TODO(probe): confirm codex also prints session id in interactive TUI
    * header — if yes, parse from tmux.capturePane instead of dir scan.
    */
-  async captureNewSessionId(handle: TmuxHandle, codexHome?: string, timeoutMs = 10_000): Promise<{ sessionId: string; jsonlPath: string }> {
+  async captureNewSessionId(handle: TmuxHandle, codexHome?: string, timeoutMs = 10_000, spawnedAfter?: number): Promise<{ sessionId: string; jsonlPath: string }> {
     // First try pane capture for `session id: <uuid>` line
     const pane = await tmux.capturePane(handle.tmuxName).catch(() => '')
     const paneMatch = SESSION_ID_RE.exec(pane)
@@ -195,15 +195,19 @@ export class CodexAdapter implements AgentAdapter {
       if (jsonlPath) return { sessionId: sid, jsonlPath }
     }
 
-    // Fallback: watch rollout dir for newest file with our tmux session's
-    // approximate spawn time. Poll every 200ms up to timeoutMs.
+    // Fallback: watch rollout dir for a NEW file that appeared after this spawn.
+    // Interactive TUI (codex --no-alt-screen) does NOT write JSONL rollout files —
+    // those are only created by `codex exec`. When spawnedAfter is set we filter out
+    // pre-existing files so a stale exec-mode rollout is not mistaken for this session.
+    // If no matching file appears within timeoutMs, return empty (caller keeps empty
+    // ids and relies on idle-timeout for session lifecycle management).
     const baseDir = effectiveCodexHome(codexHome)
     const sessionsDir = path.join(baseDir, 'sessions')
     const { readdir } = await import('node:fs/promises')
 
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
-      // Newest rollout file across YYYY/MM/DD tree
+      // Newest rollout file across YYYY/MM/DD tree, optionally newer than spawnedAfter
       async function newestRollout(dir: string, depth: number): Promise<{ path: string; mtime: number } | null> {
         let entries: string[]
         try { entries = (await readdir(dir)).sort().reverse() } catch { return null }
@@ -215,7 +219,9 @@ export class CodexAdapter implements AgentAdapter {
           } else if (entry.startsWith('rollout-') && entry.endsWith('.jsonl')) {
             const { stat } = await import('node:fs/promises')
             const s = await stat(full).catch(() => null)
-            if (s) return { path: full, mtime: s.mtimeMs }
+            if (s && (spawnedAfter === undefined || s.mtimeMs > spawnedAfter)) {
+              return { path: full, mtime: s.mtimeMs }
+            }
           }
         }
         return null
@@ -228,7 +234,9 @@ export class CodexAdapter implements AgentAdapter {
       }
       await new Promise((r) => setTimeout(r, 200))
     }
-    throw new Error(`[codex] captureNewSessionId timeout — no rollout appeared in ${sessionsDir}`)
+    // No rollout found within timeout. Interactive TUI sessions don't create rollout
+    // JSONL — return empty so caller can manage lifecycle via idle-timeout instead.
+    return { sessionId: '', jsonlPath: '' }
   }
 
   async resume(sessionUuid: string, config: ResumeConfig): Promise<TmuxHandle> {
