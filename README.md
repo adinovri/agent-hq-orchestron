@@ -25,10 +25,13 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
 - **Sleep on idle** — sessions unused for 15 min go to `sleeping`
   (tmux released, no resources held). Sending input auto-wakes them
   via the harness's native resume flag in ~3 s.
-- **Shared memory pool (Claude only)** — every Claude session across
-  every workspace automatically points at `~/.claude/shared-memory`,
-  so MEMORY.md and entries are visible fleet-wide. Codex sessions
-  keep their own per-workspace memory (`~/.codex/` is not pooled).
+- **Shared memory pool** — Claude sessions across every workspace
+  symlink `<configDir>/projects/<cwd>/memory/` → `~/.claude/shared-memory/`,
+  so MEMORY.md and entries are visible fleet-wide. Codex sessions get
+  the equivalent for their curated cross-thread memory: every session
+  symlinks `<CODEX_HOME>/memories_1.sqlite` → `~/.codex-shared-memory/memories_1.sqlite`
+  (only the memories DB is pooled — `thread_history` / `goals` / `queue`
+  stay per-CODEX_HOME so conversation state remains isolated per identity).
 - **Context indicator** — the transcript header shows live
   `ctx N / limit [bar] ⤴compactions` so you know how heavy a session
   is running. Claude uses a fixed 200K ceiling client-side; Codex

@@ -108,6 +108,11 @@ export ORCHESTRON_IDLE_TIMEOUT_MS=900000     # 15 min
 # <configDir>/projects/<mangled-cwd>/memory/ is a symlink here.
 # Set to "" to disable the auto-symlink.
 export ORCHESTRON_SHARED_MEMORY_DIR=~/.claude/shared-memory
+# Shared Codex memories pool — every codex spawn/reopen/clone/respawn
+# ensures <CODEX_HOME>/memories_1.sqlite is a symlink into this dir.
+# Only the memories DB is shared; thread_history/goals/queue stay per-
+# CODEX_HOME so conversation state remains isolated. Set to "" to disable.
+export ORCHESTRON_SHARED_CODEX_MEMORY_DIR=~/.codex-shared-memory
 ```
 
 ### Option B: Config file
@@ -139,14 +144,24 @@ harness's native resume path (`claude --resume <uuid>` or
 `codex resume <uuid>`) takes ~3-5 s. Set 0 to disable. See
 [USAGE.md §3](USAGE.md) for details.
 
-**Shared memory (`ORCHESTRON_SHARED_MEMORY_DIR`)**: default
-`~/.claude/shared-memory`. Env-only for now (not in config.json).
-**Claude-only** — every Claude spawn/reopen/fork/respawn/wake-up
-symlinks the per-workspace memory dir into this pool so all Claude
-sessions share one memory pool. Codex sessions are skipped by the
-symlink logic (`~/.codex/` is per-user, not per-workspace, so it is
-already effectively shared — but there is no MEMORY.md convention on
-the codex side to pool).
+**Shared memory (Claude — `ORCHESTRON_SHARED_MEMORY_DIR`)**: default
+`~/.claude/shared-memory`. Env-only for now (not in config.json). Every
+Claude spawn/reopen/fork/respawn/wake-up symlinks the per-workspace
+`<configDir>/projects/<mangled-cwd>/memory/` dir into this pool so all
+Claude sessions across all workspaces share one memory pool. If a real
+dir is found at that path (Claude CLI created it eagerly), it is
+safety-renamed with a timestamp suffix before the symlink is created —
+no data lost, but you may want to hand-merge the `.bak-<stamp>` copy
+into the pool later.
+
+**Shared memory (Codex — `ORCHESTRON_SHARED_CODEX_MEMORY_DIR`)**:
+default `~/.codex-shared-memory`. Env-only. Every Codex spawn/reopen/
+fork/respawn/wake-up symlinks the single file
+`<CODEX_HOME>/memories_1.sqlite` into this dir. Only the memories DB
+(codex's curated cross-thread memory pool) is shared — `thread_history`,
+`goals`, and `queue` DBs stay per-`CODEX_HOME` so conversation state
+remains isolated per identity. Same safety-rename semantics apply if a
+real SQLite file already exists at the target path.
 
 **Enable Codex adapter**: flip `adapters.codex` to `true` in
 `config.json` above and restart the API. On startup the adapter probes
