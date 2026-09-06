@@ -217,20 +217,54 @@ at least once; tooltip has the full breakdown + timestamp of last
 compaction. Not shown for non-Claude harnesses (different transcript
 shape).
 
-### Shared memory pool (Claude only)
+### Shared memory pool
 
-Every claude spawn/reopen/fork/respawn/wake-up ensures the per-workspace
-memory directory
-(`<CLAUDE_CONFIG_DIR>/projects/<mangled-cwd>/memory/`) is a symlink to
-a shared pool — default `~/.claude/shared-memory`, override with the
-env `ORCHESTRON_SHARED_MEMORY_DIR`. Effect: MEMORY.md and every entry
-under it is visible to every Claude session across every workspace and
-every harness invocation (orchestron + CLI + other bridges).
+Orchestron auto-symlinks per-workspace memory storage to a shared pool
+so every session across every workspace contributes to (and reads from)
+one memory location. Behavior differs per harness:
 
-If orchestron finds a real memory directory already at the expected
-path, it renames it to `memory.bak-<timestamp>` before creating the
-symlink — nothing is deleted, so you can merge manually if needed. Set
-the env var to `""` to disable the auto-symlink.
+**Claude** — memory is a directory of markdown files. Symlink
+`<CLAUDE_CONFIG_DIR>/projects/<mangled-cwd>/memory/` → default
+`~/.claude/shared-memory` (override `ORCHESTRON_SHARED_MEMORY_DIR`,
+`""` to disable). MEMORY.md and every entry visible fleet-wide across
+orchestron + CLI + other bridges.
+
+**Codex** — memory is a SQLite file (`memories_1.sqlite`) holding
+derived cross-thread memory selections. Symlink
+`<CODEX_HOME>/memories_1.sqlite` → default
+`~/.codex-shared-memory/memories_1.sqlite` (override
+`ORCHESTRON_SHARED_CODEX_MEMORY_DIR`, `""` to disable). WAL sidecars
+live in the shared dir; concurrent codex processes serialize via
+SQLite WAL locks. thread_history / goals / queue stay per-CODEX_HOME
+so conversation content remains private per identity.
+
+If orchestron finds a real file/dir already at the expected path, it
+renames to `<name>.bak-<timestamp>` before creating the symlink —
+nothing is deleted, safe to merge manually.
+
+### Codex adapter (WIP)
+
+Codex support is scaffolded but has an outstanding limitation:
+interactive TUI mode (`codex --no-alt-screen`) does not write JSONL
+rollout files — only `codex exec` mode does. Orchestron's transcript
+polling reads from JSONL, so codex interactive sessions currently
+show no transcript entries. Fix in progress: SQLite reader that
+queries `thread_history_1.sqlite` directly.
+
+Once wired end-to-end, codex sessions behave like claude sessions in
+orchestron — same spawn/reopen/fork/respawn flow, harness-aware model
+picker (GPT-6-Astra, GPT-5.6-Sol/Terra/Luna, etc), effort picker
+adding `ultra` (max + auto delegation). 1-project-1-harness rule
+means you register a codex-specific project (`agentType: codex`),
+sessions spawned under it use codex CLI; you cannot mix harnesses in
+one project.
+
+Prerequisites:
+- `npm install -g @openai/codex` (or brew)
+- `codex login --device-auth` (browser device code, one-time)
+- Set `config.adapters.codex = true` in `~/.orchestron/config.json`
+- Register a codex-only project via `POST /api/projects` with
+  `agentType: "codex"` or via ProjectDialog UI
 
 ---
 
