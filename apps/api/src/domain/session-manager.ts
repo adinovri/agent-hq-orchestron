@@ -82,6 +82,15 @@ export interface SessionManagerConfig {
    *  pool. Real memory dirs found in the path get safety-renamed with a
    *  timestamp suffix so nothing is lost. Empty/unset disables the feature. */
   sharedMemoryDir?: string
+  /** Absolute path to a directory holding the shared codex memories SQLite.
+   *  When set, every codex spawn/reopen/clone/respawn ensures
+   *  `<CODEX_HOME>/memories_1.sqlite` is a symlink pointing at
+   *  `<sharedCodexMemoryDir>/memories_1.sqlite` — so codex sessions across
+   *  every CODEX_HOME share one derived-memory pool. Only the memories DB
+   *  is symlinked; thread_history / goals / queue stay per-CODEX_HOME so
+   *  conversation state remains isolated per identity. Empty/unset
+   *  disables the feature. */
+  sharedCodexMemoryDir?: string
   /** When set, session-manager auto-writes a per-session MCP config that
    *  registers the orchestron MCP server and injects it into every spawn
    *  and reopen via `--mcp-config`. */
@@ -100,6 +109,7 @@ export class SessionManager {
   private readonly mcpAutoInject: SessionManagerConfig['mcpAutoInject']
   private readonly idleTimeoutMs: number
   private readonly sharedMemoryDir: string
+  private readonly sharedCodexMemoryDir: string
   // Optional — needed only for the wake-up path (sleeping → spawning). Kept
   // optional so unit tests don't have to construct a ProjectRegistry.
   private projectResolver: ((projectId: string) => Promise<{ path: string; defaultModel?: string; defaultEffort?: import('@agent-hq-orchestron/shared').EffortLevel }>) | null = null
@@ -121,6 +131,7 @@ export class SessionManager {
     this.mcpAutoInject = config.mcpAutoInject
     this.idleTimeoutMs = config.idleTimeoutMs ?? 0
     this.sharedMemoryDir = config.sharedMemoryDir ?? ''
+    this.sharedCodexMemoryDir = config.sharedCodexMemoryDir ?? ''
   }
 
   /**
@@ -130,6 +141,7 @@ export class SessionManager {
    * convert it (safety-renaming the real dir with a timestamp).
    */
   private async ensureMemorySymlink(agentType: import('@agent-hq-orchestron/shared').AgentType, configDir: string | undefined, workspace: string): Promise<void> {
+    if (agentType === 'codex') return this.ensureCodexMemorySymlink(configDir)
     if (agentType !== 'claude' || !this.sharedMemoryDir) return
     try {
       const fsp = await import('node:fs/promises')
@@ -167,6 +179,64 @@ export class SessionManager {
     } catch (err) {
       // Never let this block a spawn — memory-symlink is a convenience, not a hard dep.
       console.warn(`[session-manager] ensureMemorySymlink failed: ${(err as Error).message}`)
+    }
+  }
+
+  /**
+   * Ensure <CODEX_HOME>/memories_1.sqlite is a symlink into the shared
+   * codex-memory pool. Codex writes its curated cross-thread memory pool
+   * to this single SQLite file; symlinking to a shared location lets
+   * multiple CODEX_HOME identities (different profiles) contribute to one
+   * pool of learned patterns. Auto-generated -wal / -shm sidecars live in
+   * the same directory as the symlinked DB file — SQLite handles the
+   * concurrent-writer serialization via WAL locks.
+   *
+   * Deliberately does NOT symlink thread_history / goals / queue — those
+   * carry conversation content that should stay isolated per identity.
+   */
+  private async ensureCodexMemorySymlink(configDir: string | undefined): Promise<void> {
+    if (!this.sharedCodexMemoryDir) return
+    try {
+      const fsp = await import('node:fs/promises')
+      const p = await import('node:path')
+      const os = await import('node:os')
+      const expandHome = (x: string) => x.startsWith('~/') ? p.join(os.homedir(), x.slice(2)) : x === '~' ? os.homedir() : x
+      const sharedDir = expandHome(this.sharedCodexMemoryDir)
+      const codexHome = expandHome(configDir ?? process.env['CODEX_HOME'] ?? p.join(os.homedir(), '.codex'))
+
+      const sharedDbPath = p.join(sharedDir, 'memories_1.sqlite')
+      const localDbPath = p.join(codexHome, 'memories_1.sqlite')
+
+      // Ensure both directories exist so symlink() can succeed.
+      await fsp.mkdir(sharedDir, { recursive: true, mode: 0o700 })
+      await fsp.mkdir(codexHome, { recursive: true, mode: 0o700 })
+
+      let stat: import('node:fs').Stats | null = null
+      try { stat = await fsp.lstat(localDbPath) } catch { stat = null }
+      if (!stat) {
+        // Sqlite file doesn't exist yet — create the symlink; SQLite will
+        // materialize the DB (and WAL sidecars) at the shared location on
+        // first codex write.
+        await fsp.symlink(sharedDbPath, localDbPath)
+        return
+      }
+      if (stat.isSymbolicLink()) return   // already linked
+      if (stat.isFile()) {
+        // Real DB file. Safety-move to bak (never delete — codex's own
+        // derived memories from this identity), then symlink. WAL sidecars
+        // stay behind and become stale; codex re-creates them at shared
+        // location on next write.
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const bak = `${localDbPath}.bak-${stamp}`
+        await fsp.rename(localDbPath, bak)
+        console.warn(`[session-manager] moved codex memories DB to ${bak} and symlinked ${localDbPath} → ${sharedDbPath}`)
+        await fsp.symlink(sharedDbPath, localDbPath)
+        return
+      }
+      console.warn(`[session-manager] unexpected fs type at ${localDbPath}; skipping codex-memory symlink`)
+    } catch (err) {
+      // Convenience feature — never block spawn.
+      console.warn(`[session-manager] ensureCodexMemorySymlink failed: ${(err as Error).message}`)
     }
   }
 

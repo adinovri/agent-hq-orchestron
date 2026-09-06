@@ -72,6 +72,13 @@ const sessionManager = new SessionManager({
   // to disable.
   sharedMemoryDir: process.env['ORCHESTRON_SHARED_MEMORY_DIR']
     ?? path.join(os.homedir(), '.claude', 'shared-memory'),
+  // Codex equivalent: every codex spawn/reopen/clone/respawn symlinks
+  // <CODEX_HOME>/memories_1.sqlite to this shared file. Only the memories
+  // DB is shared — thread_history / goals / queue remain per-CODEX_HOME so
+  // conversation state stays isolated per identity. Set env
+  // ORCHESTRON_SHARED_CODEX_MEMORY_DIR='' to disable.
+  sharedCodexMemoryDir: process.env['ORCHESTRON_SHARED_CODEX_MEMORY_DIR']
+    ?? path.join(os.homedir(), '.codex-shared-memory'),
   mcpAutoInject: config.remoteToken
     ? {
         apiUrl: `http://${config.bindHost === '0.0.0.0' ? '127.0.0.1' : config.bindHost}:${config.port}`,
