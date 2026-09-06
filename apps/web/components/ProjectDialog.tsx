@@ -27,6 +27,7 @@ interface FormState {
   defaultModel: string
   defaultEffort: string
   claudeConfigDir: string
+  codexHome: string
   group: string
   tags: string
   extraEnvKey: string
@@ -42,6 +43,7 @@ const BLANK: FormState = {
   defaultModel: '',
   defaultEffort: '',
   claudeConfigDir: '',
+  codexHome: '',
   group: '',
   tags: '',
   extraEnvKey: '',
@@ -67,12 +69,13 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
         defaultModel: project.defaultModel ?? '',
         defaultEffort: project.defaultEffort ?? '',
         claudeConfigDir: env['CLAUDE_CONFIG_DIR'] ?? '',
+        codexHome: env['CODEX_HOME'] ?? '',
         group: project.group ?? '',
         tags: (project.tags ?? []).join(', '),
         extraEnvKey: '',
         extraEnvVal: '',
         extraEnvPairs: Object.entries(env)
-          .filter(([k]) => k !== 'CLAUDE_CONFIG_DIR')
+          .filter(([k]) => k !== 'CLAUDE_CONFIG_DIR' && k !== 'CODEX_HOME')
           .map(([key, value]) => ({ key, value })),
         extraArgs: (project.agentConfig?.extraArgs ?? []).join(', '),
       })
@@ -109,7 +112,16 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
     setError(null)
 
     const env: Record<string, string> = {}
-    if (form.claudeConfigDir.trim()) env['CLAUDE_CONFIG_DIR'] = form.claudeConfigDir.trim()
+    // Harness-specific config-dir env: CLAUDE_CONFIG_DIR for claude,
+    // CODEX_HOME for codex. Only persist the one that matches this
+    // project's agentType so unrelated env vars aren't carried over
+    // when the harness is switched.
+    if (form.agentType === 'claude' && form.claudeConfigDir.trim()) {
+      env['CLAUDE_CONFIG_DIR'] = form.claudeConfigDir.trim()
+    }
+    if (form.agentType === 'codex' && form.codexHome.trim()) {
+      env['CODEX_HOME'] = form.codexHome.trim()
+    }
     form.extraEnvPairs.forEach(({ key, value }) => { if (key) env[key] = value })
 
     const agentConfig = {
@@ -234,16 +246,39 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
             </div>
           </div>
 
-          <div>
-            <label className="text-sm font-medium block mb-1">CLAUDE_CONFIG_DIR</label>
-            <input
-              type="text"
-              value={form.claudeConfigDir}
-              onChange={(e) => set('claudeConfigDir', e.target.value)}
-              placeholder="~/ClaudeConfigs/adi.novriansyah"
-              className={inputCls}
-            />
-          </div>
+          {/* Harness-specific config-dir env — only the one matching the
+              selected agent type is shown. Values persist independently so
+              switching harnesses back and forth doesn't lose the other. */}
+          {form.agentType === 'claude' && (
+            <div>
+              <label className="text-sm font-medium block mb-1">CLAUDE_CONFIG_DIR</label>
+              <input
+                type="text"
+                value={form.claudeConfigDir}
+                onChange={(e) => set('claudeConfigDir', e.target.value)}
+                placeholder="~/ClaudeConfigs/adi.novriansyah"
+                className={inputCls}
+              />
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                Overrides <code>CLAUDE_CONFIG_DIR</code> for sessions in this project. Leave blank to inherit from the orchestron API process.
+              </p>
+            </div>
+          )}
+          {form.agentType === 'codex' && (
+            <div>
+              <label className="text-sm font-medium block mb-1">CODEX_HOME</label>
+              <input
+                type="text"
+                value={form.codexHome}
+                onChange={(e) => set('codexHome', e.target.value)}
+                placeholder="~/.codex"
+                className={inputCls}
+              />
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                Overrides <code>CODEX_HOME</code> for sessions in this project — split identities need pre-registered <code>auth.json</code> in that dir. Blank inherits from the orchestron API process.
+              </p>
+            </div>
+          )}
 
           <div>
             <label className="text-sm font-medium block mb-1">Group</label>

@@ -272,15 +272,15 @@ export class SessionManager {
     const mcpConfigInline = spawnConfig.agentType === 'codex'
       ? this.buildCodexMcpArgs(uuid)
       : undefined
-    // Effective config dir: harness-specific. For claude, resolve the Claude
-    // configDir cascade (arg → CLAUDE_CONFIG_DIR env → ~/.claude). For codex,
-    // spawnConfig.configDir is usually a Claude project's configDir which is
-    // WRONG for codex (codex uses CODEX_HOME). Drop it — codex adapter falls
-    // back to CODEX_HOME env or ~/.codex.
+    // Effective config dir: harness-specific. Route layer resolves the
+    // right env-var per harness (CLAUDE_CONFIG_DIR for claude, CODEX_HOME
+    // for codex). For claude we also cascade to CLAUDE_CONFIG_DIR env and
+    // ~/.claude default via effectiveClaudeConfigDir. Codex adapter reads
+    // CODEX_HOME env internally when passed undefined.
     const { effectiveClaudeConfigDir } = await import('../adapters/claude.js')
     const effectiveConfigDir = spawnConfig.agentType === 'claude'
       ? effectiveClaudeConfigDir(spawnConfig.configDir)
-      : undefined
+      : spawnConfig.configDir
     // Same-harness model check: project defaults might carry a Claude model
     // that Codex would reject at spawn. Drop the model if it looks like the
     // wrong family; adapter will fall back to its own default (gpt-6-astra

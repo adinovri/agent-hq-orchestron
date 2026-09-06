@@ -330,7 +330,9 @@ export function sessionsPlugin(
         initialPrompt = `${initialPrompt}\n\nAttached files (saved on server, use Read tool to inspect):\n${list}`
       }
 
-      const configDir = project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
+      const configDir = project.agentType === 'codex'
+        ? project.agentConfig?.env?.['CODEX_HOME']
+        : project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
 
       // Enforce 1-project-1-harness rule: a project's agentType is
       // authoritative. Body agentType (if any) must match, else reject —
@@ -560,7 +562,9 @@ export function sessionsPlugin(
       try { project = await registry.get(existing.projectId) } catch {
         return reply.code(404).send({ error: `Project not found: ${existing.projectId}` })
       }
-      const configDir = project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
+      const configDir = project.agentType === 'codex'
+        ? project.agentConfig?.env?.['CODEX_HOME']
+        : project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
       try {
         const updated = await manager.reopen(
           uuid, project.path, configDir,
@@ -595,7 +599,9 @@ export function sessionsPlugin(
       try { project = await registry.get(existing.projectId) } catch {
         return reply.code(404).send({ error: `Project not found: ${existing.projectId}` })
       }
-      const configDir = project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
+      const configDir = project.agentType === 'codex'
+        ? project.agentConfig?.env?.['CODEX_HOME']
+        : project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
       try {
         // In-place respawn — returns the SAME session id, updated record.
         // 200 OK (not 201) since no new resource was created.
@@ -632,7 +638,9 @@ export function sessionsPlugin(
       try { project = await registry.get(existing.projectId) } catch {
         return reply.code(404).send({ error: `Project not found: ${existing.projectId}` })
       }
-      const configDir = project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
+      const configDir = project.agentType === 'codex'
+        ? project.agentConfig?.env?.['CODEX_HOME']
+        : project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
 
       try {
         const cloned = await manager.clone(
