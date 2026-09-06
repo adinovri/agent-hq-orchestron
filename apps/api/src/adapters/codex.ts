@@ -111,12 +111,19 @@ function buildArgv(opts: {
   sessionMode: { type: 'new' } | { type: 'resume'; sessionId: string }
   bypassApprovals?: boolean
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access'
+  mcpConfigInline?: string[]
 }): string[] {
   // Root command vs `codex resume` subcommand. Interactive TUI = root
   // command with prompt-less start; resume = `codex resume <uuid>`.
   const argv: string[] = ['codex']
   if (opts.sessionMode.type === 'resume') {
     argv.push('resume', opts.sessionMode.sessionId)
+  }
+
+  // MCP inline config overrides (`-c mcp_servers.NAME.*=VALUE`) — must come
+  // BEFORE other flags so codex sees them at config-parse time.
+  if (opts.mcpConfigInline && opts.mcpConfigInline.length > 0) {
+    argv.push(...opts.mcpConfigInline)
   }
 
   if (opts.model) argv.push('--model', opts.model)
@@ -154,6 +161,7 @@ export class CodexAdapter implements AgentAdapter {
       workspace: config.workspace,
       sessionMode: { type: 'new' },
       bypassApprovals: true,
+      mcpConfigInline: config.mcpConfigInline,
     })
 
     const env: NodeJS.ProcessEnv | undefined = config.configDir
@@ -231,6 +239,7 @@ export class CodexAdapter implements AgentAdapter {
       workspace: config.workspace,
       sessionMode: { type: 'resume', sessionId: sessionUuid },
       bypassApprovals: true,
+      mcpConfigInline: config.mcpConfigInline,
     })
 
     const env: NodeJS.ProcessEnv | undefined = config.configDir

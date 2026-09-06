@@ -166,11 +166,26 @@ export class SessionManager {
     return path.join(this.dataDir, 'mcp-configs', `${sessionId}.json`)
   }
 
+  /** Build inline MCP config args for Codex (`-c mcp_servers.NAME.*=VALUE`).
+   *  Codex accepts TOML-typed config overrides via `-c KEY=VALUE`. Strings
+   *  need TOML quoting; arrays use TOML array syntax. Kept in sync with the
+   *  claude JSON config shape written by ensureSessionMcpConfig(). */
+  private buildCodexMcpArgs(sessionId: string): string[] | undefined {
+    if (!this.mcpAutoInject) return undefined
+    const q = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+    const args: string[] = []
+    args.push('-c', `mcp_servers.orchestron.command=${q('node')}`)
+    args.push('-c', `mcp_servers.orchestron.args=[${q(this.mcpAutoInject.mcpServerPath)}]`)
+    args.push('-c', `mcp_servers.orchestron.env.ORCHESTRON_API_URL=${q(this.mcpAutoInject.apiUrl)}`)
+    args.push('-c', `mcp_servers.orchestron.env.ORCHESTRON_TOKEN=${q(this.mcpAutoInject.token)}`)
+    args.push('-c', `mcp_servers.orchestron.env.ORCHESTRON_SESSION_ID=${q(sessionId)}`)
+    return args
+  }
+
   /** Write a per-session MCP config that exposes the orchestron server to
    *  the child agent. Returns the file path, or undefined if auto-inject
-   *  is not configured. Currently CLAUDE-only — Codex uses a different
-   *  MCP config surface (inline `-c mcp_servers.*` overrides at spawn),
-   *  wiring for that lives in the codex adapter directly. */
+   *  is not configured. Currently CLAUDE-only — Codex uses buildCodexMcpArgs()
+   *  above which returns inline `-c` flags instead. */
   private async ensureSessionMcpConfig(sessionId: string, agentType?: import('@agent-hq-orchestron/shared').AgentType): Promise<string | undefined> {
     if (!this.mcpAutoInject) return undefined
     if (agentType && agentType !== 'claude') return undefined
@@ -241,6 +256,9 @@ export class SessionManager {
     const uuid = crypto.randomUUID()
     const adapter = this.registry.getOrThrow(spawnConfig.agentType)
     const mcpConfigPath = await this.ensureSessionMcpConfig(uuid, spawnConfig.agentType)
+    const mcpConfigInline = spawnConfig.agentType === 'codex'
+      ? this.buildCodexMcpArgs(uuid)
+      : undefined
     // Capture the effective config dir for this spawn — helper is claude-
     // specific (reads CLAUDE_CONFIG_DIR), but the pattern applies to any
     // harness that keeps a per-user config directory. For codex the adapter
@@ -250,7 +268,7 @@ export class SessionManager {
       ? effectiveClaudeConfigDir(spawnConfig.configDir)
       : spawnConfig.configDir
     await this.ensureMemorySymlink(spawnConfig.agentType, effectiveConfigDir, spawnConfig.workspace)
-    let handle = await adapter.spawn({ ...spawnConfig, configDir: effectiveConfigDir, mcpConfigPath })
+    let handle = await adapter.spawn({ ...spawnConfig, configDir: effectiveConfigDir, mcpConfigPath, mcpConfigInline })
 
     // Codex path: adapter returns handle with empty claudeUuid + jsonlPath
     // because codex assigns its own session UUID (UUID v7) — capture happens

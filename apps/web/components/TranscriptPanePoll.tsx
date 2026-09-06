@@ -27,6 +27,9 @@ interface ContextStats {
   assistantTurns: number
   compactionCount: number
   lastCompactedAt?: string
+  /** Adapter-reported context limit (Codex sends model_context_window; Claude
+   *  doesn't expose one, so we fall back to a 200K native default). */
+  contextWindow?: number
 }
 
 interface TranscriptResponse {
@@ -154,9 +157,10 @@ function EntryView({ entry }: { entry: Entry }) {
  * are to the next likely auto-compact.
  */
 function ContextIndicator({ stats }: { stats: ContextStats }) {
-  const NATIVE_LIMIT = 200_000
+  // Prefer adapter-reported limit (Codex), fall back to Claude's 200K native.
+  const limit = stats.contextWindow ?? 200_000
   const ctx = stats.lastEffectiveContext
-  const pct = Math.min(999, Math.round((ctx / NATIVE_LIMIT) * 100))
+  const pct = Math.min(999, Math.round((ctx / limit) * 100))
   const barColor =
     pct < 60 ? 'bg-emerald-500' :
     pct < 85 ? 'bg-amber-500' :
@@ -169,7 +173,9 @@ function ContextIndicator({ stats }: { stats: ContextStats }) {
     `  cache creation: ${stats.lastCacheCreationTokens}`,
     `Turns: ${stats.assistantTurns}`,
     `Compactions: ${stats.compactionCount}${stats.lastCompactedAt ? ` (last ${new Date(stats.lastCompactedAt).toLocaleString()})` : ''}`,
-    `Native ceiling shown: ${NATIVE_LIMIT.toLocaleString()} — session may run on 1M tier`,
+    stats.contextWindow
+      ? `Model context window: ${stats.contextWindow.toLocaleString()}`
+      : `Native ceiling shown: ${limit.toLocaleString()} — session may run on 1M tier`,
   ].join('\n')
 
   return (
@@ -179,7 +185,7 @@ function ContextIndicator({ stats }: { stats: ContextStats }) {
     >
       <span className="text-[10px] uppercase tracking-wide text-zinc-400">ctx</span>
       <span className="text-zinc-700 dark:text-zinc-300">{formatTokens(ctx)}</span>
-      <span className="text-zinc-400 dark:text-zinc-600">/{formatTokens(NATIVE_LIMIT)}</span>
+      <span className="text-zinc-400 dark:text-zinc-600">/{formatTokens(limit)}</span>
       <span className={`inline-block h-1.5 w-8 rounded-full overflow-hidden bg-zinc-200 dark:bg-zinc-800`}>
         <span className={`block h-full ${barColor}`} style={{ width: `${Math.min(100, pct)}%` }} />
       </span>

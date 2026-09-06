@@ -22,6 +22,204 @@ import { TemplateResolver, TemplateValidationError } from '../domain/template-re
 import { DelegationTracker } from '../domain/delegation-tracker.js'
 import { ProjectRegistry, ProjectNotFoundError } from '../domain/project-registry.js'
 
+// ── Rollout parsers (per-adapter) ────────────────────────────────
+
+interface RolloutEntry {
+  seq: number
+  timestamp: string
+  kind: 'user' | 'assistant' | 'tool_use' | 'tool_result'
+  toolName?: string
+  content: string
+}
+
+interface RolloutStats {
+  lastInputTokens: number
+  lastCacheReadTokens: number
+  lastCacheCreationTokens: number
+  lastOutputTokens: number
+  lastEffectiveContext: number
+  assistantTurns: number
+  compactionCount: number
+  lastCompactedAt?: string
+  contextWindow?: number
+}
+
+interface RolloutParsed {
+  entries: RolloutEntry[]
+  lastTurnEndTs: string
+  lastUserTs: string
+  lastAssistantText: string
+  contextStats: RolloutStats | null
+}
+
+/** Parse Claude JSONL rollout. */
+function parseClaudeRollout(raw: string): RolloutParsed {
+  const entries: RolloutEntry[] = []
+  let lastTurnEndTs = ''
+  let lastUserTs = ''
+  let lastAssistantText = ''
+  let assistantTurns = 0
+  let compactionCount = 0
+  let lastCompactedAt: string | undefined
+  let lastUsage: {
+    input_tokens?: number
+    output_tokens?: number
+    cache_read_input_tokens?: number
+    cache_creation_input_tokens?: number
+  } | undefined
+  let seq = 0
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue
+    let ev: {
+      type?: string
+      subtype?: string
+      timestamp?: string
+      message?: {
+        content?: string | Array<{ type?: string; text?: string; name?: string; input?: unknown; content?: string | Array<{ text?: string }> }>
+        usage?: {
+          input_tokens?: number
+          output_tokens?: number
+          cache_read_input_tokens?: number
+          cache_creation_input_tokens?: number
+        }
+      }
+    }
+    try { ev = JSON.parse(line) } catch { continue }
+    if (ev.type === 'system' && ev.subtype === 'turn_duration' && ev.timestamp) lastTurnEndTs = ev.timestamp
+    if (ev.type === 'system' && ev.subtype === 'compact_boundary') {
+      compactionCount += 1
+      if (ev.timestamp) lastCompactedAt = ev.timestamp
+    }
+    if (ev.type === 'user' && typeof ev.message?.content === 'string' && ev.timestamp) lastUserTs = ev.timestamp
+    if (ev.type === 'assistant' && ev.message?.usage) {
+      assistantTurns += 1
+      lastUsage = ev.message.usage
+    }
+    const ts = ev.timestamp ?? ''
+    const t = ev.type
+    const content = ev.message?.content
+    if (t === 'user' && typeof content === 'string') {
+      entries.push({ seq: seq++, timestamp: ts, kind: 'user', content })
+    } else if (t === 'assistant' && Array.isArray(content)) {
+      for (const b of content) {
+        if (b.type === 'text' && b.text) {
+          entries.push({ seq: seq++, timestamp: ts, kind: 'assistant', content: b.text })
+          lastAssistantText = b.text
+        } else if (b.type === 'tool_use') {
+          const inputStr = JSON.stringify(b.input ?? {}, null, 2).slice(0, 4000)
+          entries.push({ seq: seq++, timestamp: ts, kind: 'tool_use', toolName: b.name, content: inputStr })
+        }
+      }
+    } else if (t === 'user' && Array.isArray(content)) {
+      for (const b of content) {
+        if (b.type === 'tool_result') {
+          const c = b.content
+          const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => x.text ?? '').join('') : ''
+          if (text) entries.push({ seq: seq++, timestamp: ts, kind: 'tool_result', content: text.slice(0, 4000) })
+        }
+      }
+    }
+  }
+  const contextStats: RolloutStats | null = lastUsage
+    ? {
+        lastInputTokens: lastUsage.input_tokens ?? 0,
+        lastCacheReadTokens: lastUsage.cache_read_input_tokens ?? 0,
+        lastCacheCreationTokens: lastUsage.cache_creation_input_tokens ?? 0,
+        lastOutputTokens: lastUsage.output_tokens ?? 0,
+        lastEffectiveContext:
+          (lastUsage.input_tokens ?? 0) +
+          (lastUsage.cache_read_input_tokens ?? 0) +
+          (lastUsage.cache_creation_input_tokens ?? 0),
+        assistantTurns,
+        compactionCount,
+        lastCompactedAt,
+      }
+    : null
+  return { entries, lastTurnEndTs, lastUserTs, lastAssistantText, contextStats }
+}
+
+/** Parse Codex JSONL rollout. Event schema differs from Claude:
+ *    { timestamp, ordinal, type, payload }
+ *  types: session_meta | turn_context | world_state | event_msg |
+ *         response_item | token_usage_record
+ *  event_msg.type: task_started | task_complete | token_count | item_completed
+ *  response_item.type: message (with role + content parts) | tool-use etc.
+ */
+function parseCodexRollout(raw: string): RolloutParsed {
+  const entries: RolloutEntry[] = []
+  let lastTurnEndTs = ''
+  let lastUserTs = ''
+  let lastAssistantText = ''
+  let assistantTurns = 0
+  let lastTokenInfo: {
+    input_tokens?: number
+    cached_input_tokens?: number
+    cache_write_input_tokens?: number
+    output_tokens?: number
+  } | undefined
+  let modelContextWindow: number | undefined
+  let seq = 0
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue
+    let ev: {
+      timestamp?: string
+      type?: string
+      payload?: {
+        type?: string
+        role?: string
+        content?: unknown
+        info?: {
+          last_token_usage?: {
+            input_tokens?: number
+            cached_input_tokens?: number
+            cache_write_input_tokens?: number
+            output_tokens?: number
+          }
+          model_context_window?: number
+        }
+      }
+    }
+    try { ev = JSON.parse(line) } catch { continue }
+    const ts = ev.timestamp ?? ''
+    const p = ev.payload ?? {}
+
+    if (ev.type === 'event_msg' && p.type === 'task_started' && ts) lastUserTs = ts
+    if (ev.type === 'event_msg' && p.type === 'task_complete' && ts) {
+      lastTurnEndTs = ts
+      assistantTurns += 1
+    }
+    if (ev.type === 'event_msg' && p.type === 'token_count' && p.info) {
+      if (p.info.last_token_usage) lastTokenInfo = p.info.last_token_usage
+      if (typeof p.info.model_context_window === 'number') modelContextWindow = p.info.model_context_window
+    }
+
+    // response_item.message with role user/assistant. content is an array of parts.
+    if (ev.type === 'response_item' && p.type === 'message') {
+      const role = p.role === 'assistant' ? 'assistant' : 'user'
+      const parts = Array.isArray(p.content) ? p.content as Array<{ type?: string; text?: string }> : []
+      const text = parts.map((x) => (typeof x.text === 'string' ? x.text : '')).join('').trim()
+      if (text) {
+        entries.push({ seq: seq++, timestamp: ts, kind: role, content: text })
+        if (role === 'assistant') lastAssistantText = text
+      }
+    }
+    // TODO(probe): codex tool_use / tool_result shapes when real session hits them
+  }
+  const contextStats: RolloutStats | null = lastTokenInfo
+    ? {
+        lastInputTokens: (lastTokenInfo.input_tokens ?? 0) - (lastTokenInfo.cached_input_tokens ?? 0),
+        lastCacheReadTokens: lastTokenInfo.cached_input_tokens ?? 0,
+        lastCacheCreationTokens: lastTokenInfo.cache_write_input_tokens ?? 0,
+        lastOutputTokens: lastTokenInfo.output_tokens ?? 0,
+        lastEffectiveContext: lastTokenInfo.input_tokens ?? 0,
+        assistantTurns,
+        compactionCount: 0,   // TODO(probe): does codex compact? no signal seen yet
+        contextWindow: modelContextWindow,
+      }
+    : null
+  return { entries, lastTurnEndTs, lastUserTs, lastAssistantText, contextStats }
+}
+
 export function sessionsPlugin(
   manager: SessionManager,
   hookRunner: HookRunner,
@@ -219,118 +417,43 @@ export function sessionsPlugin(
         return { entries: [], size: 0 }
       }
 
-      const entries: Array<{
+      type Entry = {
         seq: number
         timestamp: string
         kind: 'user' | 'assistant' | 'tool_use' | 'tool_result'
         toolName?: string
         content: string
-      }> = []
-      // Safety net: reconcile stuck 'running' when fs.watch misses an
-      // append. Only trigger if the LAST turn_duration event comes AFTER
-      // the LAST user prompt — otherwise the turn_duration is from a
-      // previous turn and the current one is still legitimately running.
-      let lastTurnEndTs = ''
-      let lastUserTs = ''
-      let lastAssistantText = ''
-      // Context-usage tracking (Claude only — usage fields are Claude-specific
-      // shape). Codex/OpenCode adapters will get their own parsers later.
-      let assistantTurns = 0
-      let compactionCount = 0
-      let lastCompactedAt: string | undefined
-      let lastUsage: {
-        input_tokens?: number
-        output_tokens?: number
-        cache_read_input_tokens?: number
-        cache_creation_input_tokens?: number
-      } | undefined
-      let seq = 0
-      for (const line of raw.split('\n')) {
-        if (!line.trim()) continue
-        let ev: {
-          type?: string
-          subtype?: string
-          timestamp?: string
-          message?: {
-            content?: string | Array<{ type?: string; text?: string; name?: string; input?: unknown; content?: string | Array<{ text?: string }> }>
-            usage?: {
-              input_tokens?: number
-              output_tokens?: number
-              cache_read_input_tokens?: number
-              cache_creation_input_tokens?: number
-            }
-          }
-        }
-        try { ev = JSON.parse(line) } catch { continue }
-        if (ev.type === 'system' && ev.subtype === 'turn_duration' && ev.timestamp) {
-          lastTurnEndTs = ev.timestamp
-        }
-        if (ev.type === 'system' && ev.subtype === 'compact_boundary') {
-          compactionCount += 1
-          if (ev.timestamp) lastCompactedAt = ev.timestamp
-        }
-        if (ev.type === 'user' && typeof ev.message?.content === 'string' && ev.timestamp) {
-          lastUserTs = ev.timestamp
-        }
-        if (ev.type === 'assistant' && ev.message?.usage) {
-          assistantTurns += 1
-          lastUsage = ev.message.usage
-        }
-        const ts = ev.timestamp ?? ''
-        const t = ev.type
-        const content = ev.message?.content
-        if (t === 'user' && typeof content === 'string') {
-          entries.push({ seq: seq++, timestamp: ts, kind: 'user', content })
-        } else if (t === 'assistant' && Array.isArray(content)) {
-          for (const b of content) {
-            if (b.type === 'text' && b.text) {
-              entries.push({ seq: seq++, timestamp: ts, kind: 'assistant', content: b.text })
-              lastAssistantText = b.text
-            } else if (b.type === 'tool_use') {
-              const inputStr = JSON.stringify(b.input ?? {}, null, 2).slice(0, 4000)
-              entries.push({ seq: seq++, timestamp: ts, kind: 'tool_use', toolName: b.name, content: inputStr })
-            }
-          }
-        } else if (t === 'user' && Array.isArray(content)) {
-          for (const b of content) {
-            if (b.type === 'tool_result') {
-              const c = b.content
-              const text = typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => x.text ?? '').join('') : ''
-              if (text) entries.push({ seq: seq++, timestamp: ts, kind: 'tool_result', content: text.slice(0, 4000) })
-            }
-          }
-        }
+      }
+      type Parsed = {
+        entries: Entry[]
+        lastTurnEndTs: string
+        lastUserTs: string
+        lastAssistantText: string
+        contextStats: {
+          lastInputTokens: number
+          lastCacheReadTokens: number
+          lastCacheCreationTokens: number
+          lastOutputTokens: number
+          lastEffectiveContext: number
+          assistantTurns: number
+          compactionCount: number
+          lastCompactedAt?: string
+          contextWindow?: number   // codex reports this natively; claude fixed 200K client-side
+        } | null
       }
 
-      // Safety net: reconcile stuck status. Only if the latest turn_duration
-      // is AFTER the latest user prompt — otherwise the turn_duration belongs
-      // to a previous turn and the current one is still running.
-      const turnEndedAfterUser = lastTurnEndTs && (!lastUserTs || lastTurnEndTs > lastUserTs)
+      // Adapter-specific rollout parsers. Both produce the same Parsed shape.
+      const parsed = session.agentType === 'codex' ? parseCodexRollout(raw) : parseClaudeRollout(raw)
+
+      // Safety net: reconcile stuck status. Only if the latest turn-end
+      // marker is AFTER the latest user prompt — otherwise the marker is
+      // from a previous turn and the current one is still running.
+      const turnEndedAfterUser = parsed.lastTurnEndTs && (!parsed.lastUserTs || parsed.lastTurnEndTs > parsed.lastUserTs)
       if (turnEndedAfterUser && session.status === 'running') {
-        manager.reconcileTurnEnd(session.id, lastAssistantText).catch(() => {})
+        manager.reconcileTurnEnd(session.id, parsed.lastAssistantText).catch(() => {})
       }
 
-      // Context stats — Claude-only. The formula
-      //   input + cache_creation + cache_read
-      // captures what the last turn actually sent to the model, which is the
-      // best proxy for "current context weight" between compactions.
-      const contextStats = session.agentType === 'claude' && lastUsage
-        ? {
-            lastInputTokens: lastUsage.input_tokens ?? 0,
-            lastCacheReadTokens: lastUsage.cache_read_input_tokens ?? 0,
-            lastCacheCreationTokens: lastUsage.cache_creation_input_tokens ?? 0,
-            lastOutputTokens: lastUsage.output_tokens ?? 0,
-            lastEffectiveContext:
-              (lastUsage.input_tokens ?? 0) +
-              (lastUsage.cache_read_input_tokens ?? 0) +
-              (lastUsage.cache_creation_input_tokens ?? 0),
-            assistantTurns,
-            compactionCount,
-            lastCompactedAt,
-          }
-        : null
-
-      return { entries, size: raw.length, contextStats }
+      return { entries: parsed.entries, size: raw.length, contextStats: parsed.contextStats }
     })
 
     app.post('/api/sessions/:uuid/input', async (req, reply) => {

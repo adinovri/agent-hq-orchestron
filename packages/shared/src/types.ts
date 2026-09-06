@@ -163,6 +163,11 @@ export interface SpawnConfig {
    *  (`--mcp-config <path>` for Claude). Enables auto-inject of the
    *  orchestron MCP server without user setup. */
   mcpConfigPath?: string
+  /** Inline MCP config values for adapters that inject via CLI flags rather
+   *  than a config file (e.g. Codex uses `-c 'mcp_servers.NAME.*=VALUE'`).
+   *  Passed as a pre-serialized list of key=value strings suitable for
+   *  concatenation into argv. Adapter-specific; claude ignores. */
+  mcpConfigInline?: string[]
 }
 
 export interface ResumeConfig {
@@ -171,6 +176,11 @@ export interface ResumeConfig {
   effort?: EffortLevel
   configDir?: string
   mcpConfigPath?: string
+  /** Inline MCP config values for adapters that inject via CLI flags rather
+   *  than a config file (e.g. Codex uses `-c 'mcp_servers.NAME.*=VALUE'`).
+   *  Passed as a pre-serialized list of key=value strings suitable for
+   *  concatenation into argv. Adapter-specific; claude ignores. */
+  mcpConfigInline?: string[]
 }
 
 export interface TmuxHandle {
