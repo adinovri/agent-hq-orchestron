@@ -36,6 +36,10 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
   `ctx N / limit [bar] ⤴compactions` so you know how heavy a session
   is running. Claude uses a fixed 200K ceiling client-side; Codex
   reports the model's native context window per turn.
+- **AskUserQuestion inline** — when Claude asks a structured question,
+  the transcript renders it as a card with the options as clickable
+  pills (plus an `✎ Other` free-text). Pick, hit send, answer goes
+  back to the session — no need to attach to the tmux pane to reply.
 - **Cron-scheduled spawns** — YAML-importable schedules with live-preview
   of the next fires.
 - **Agent-to-agent coordination** — auto-injected MCP server so a running

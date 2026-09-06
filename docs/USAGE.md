@@ -127,6 +127,35 @@ Bottom of the transcript pane. The composer:
   saved to `/tmp/orchestron/uploads/<sid>/` and appended to your prompt
   as `Attached files:` list.
 
+### AskUserQuestion — answer inline in the transcript
+
+When Claude calls its `AskUserQuestion` tool, orchestron detects the
+tool_use entry in the transcript and renders it as a violet card inline
+where it appears (instead of a generic JSON dump):
+
+- Each question shows its header + prompt text
+- Options render as clickable pills — pick one, or hold `multiSelect` and
+  toggle several
+- An `✎ Other` pill reveals a free-text input for a custom answer
+- **Send answer** posts the formatted answer to
+  `POST /api/sessions/:uuid/input` (the same endpoint the composer uses),
+  so it lands in the tmux session as a normal user message and Claude
+  proceeds
+- Multiple questions in one call are collected and joined into
+  `Header: answer` lines before send
+- The card auto-disables once any `tool_result` appears later in the
+  transcript (heuristic — one pending AskUserQuestion is the common
+  case, and entry shape doesn't expose `tool_use_id` linkage)
+
+The card doesn't try to arrow-key-navigate Claude's TUI selector — it
+sends the picked label as text and relies on Claude to dismiss its own
+selector. If you ever see the selector stuck after send, attach to the
+tmux pane read-only (`tmux attach -rt <tmux-name>`) and press `Escape`.
+
+**Not** used for permission approvals (e.g. `Bash rm foo.txt — Approve?`)
+— those are runtime safety gates, not tool calls, and don't appear in
+the transcript. See "Session stuck on `running` status" in DEPLOY.md.
+
 ### Status lifecycle (allowed transitions)
 
 ```
