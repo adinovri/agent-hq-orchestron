@@ -319,22 +319,63 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async sendPrompt(handle: TmuxHandle, prompt: string): Promise<void> {
-    // Same paste-buffer + wait-for-echo + Enter pattern as Claude adapter.
+    // Paste-buffer + wait-for-echo + Enter, then VERIFY submission and retry
+    // Enter if codex TUI swallowed the keystroke.
+    //
+    // Race we fix: on a fresh spawn (or fresh cold-start after wake), the TUI
+    // may print `Ask Codex to do anything` placeholder before it has fully
+    // wired the input handler. Our paste echoes visibly in the input row
+    // (tmux echoes the buffer directly to the pane), but the first Enter
+    // hits the welcome/loading state and gets discarded. Result: prompt sits
+    // in the input row forever, session gets marked `running`, no turn ever
+    // starts. Manual Enter later processes it fine — proving the keystroke
+    // was the swallowed one, not the paste.
+    //
+    // Detection: capture the pane after Enter. Find the last `›` row (the
+    // input line). If it still contains our prompt marker, the Enter didn't
+    // submit — retry. Successful submit moves the text above the input row
+    // (into the transcript) and clears/replaces the input row with either
+    // `Ask Codex to do anything` or a thinking indicator.
     await tmux.setBuffer(handle.tmuxName, prompt)
     await tmux.pasteBuffer(handle.tmuxName)
 
     const marker = prompt.trim().slice(0, 40)
-    const deadline = Date.now() + 3_000
-    while (Date.now() < deadline) {
+    const echoDeadline = Date.now() + 3_000
+    while (Date.now() < echoDeadline) {
       const pane = await tmux.capturePane(handle.tmuxName)
       if (marker && pane.includes(marker)) break
       await new Promise((r) => setTimeout(r, 100))
     }
     await new Promise((r) => setTimeout(r, 250))
-    await tmux.sendKeys(handle.tmuxName, 'Enter')
+
+    const MAX_ENTER_ATTEMPTS = 3
+    for (let attempt = 1; attempt <= MAX_ENTER_ATTEMPTS; attempt++) {
+      await tmux.sendKeys(handle.tmuxName, 'Enter')
+      await new Promise((r) => setTimeout(r, 800))
+      const pane = await tmux.capturePane(handle.tmuxName)
+      if (!promptStillInInputRow(pane, marker)) return
+    }
+    console.warn(`[codex] sendPrompt: prompt still in input row after ${MAX_ENTER_ATTEMPTS} Enter attempts on ${handle.tmuxName}`)
   }
 
   async kill(handle: TmuxHandle): Promise<void> {
     await tmux.killSession(handle.tmuxName)
   }
+}
+
+/** True when the codex TUI still shows the pasted prompt in its input row
+ *  (the last `›`-prefixed line). Used to detect a swallowed Enter after
+ *  sendPrompt — see the retry loop in CodexAdapter.sendPrompt. */
+function promptStillInInputRow(pane: string, marker: string): boolean {
+  if (!marker) return false
+  const lines = pane.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]
+    if (!line) continue
+    const trimmed = line.trimStart()
+    if (trimmed.startsWith('›')) {
+      return trimmed.includes(marker)
+    }
+  }
+  return false
 }
