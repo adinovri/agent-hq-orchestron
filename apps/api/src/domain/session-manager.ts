@@ -98,57 +98,89 @@ const MODAL_SELECT_RE = /Enter\s+to\s+select/
 // Numbered option lines in the modal: "❯ 1. Yes", "  2. No", …
 // Leading char varies (❯ / ● / space). We accept any single non-digit char.
 const OPTION_LINE_RE = /^\s*(?:[❯●▶>▷◈]?\s*)?(\d+)\.\s+(.+?)\s*$/
+// Modal top marker — the checkbox header line above the title.
+const MODAL_HEADER_RE = /^\s*☐\s+(.+?)\s*$/
+const SEPARATOR_RE = /^[─━=—-]{3,}$/
 const PERMISSION_HINT_RE = /(Do\s+you\s+want\s+to\s+proceed\??|Do\s+you\s+want\s+to\s+allow)/i
 
 /** Parse a captured tmux pane into a PendingPrompt when the Claude selector
  *  modal (AskUserQuestion or permission approval) is currently displayed.
- *  Returns null when no modal is present. The parser looks for the modal
- *  footer, then walks up to pick up numbered options and the closest
- *  preceding non-option / non-separator line as `title`. */
+ *  Returns null when no modal is present.
+ *
+ *  Modal structure (both AskUserQuestion and permission approval):
+ *    ☐ <header>          <- top boundary
+ *
+ *    <title (may end with ?)>
+ *    [<detail lines>]    <- e.g. Bash command being approved
+ *
+ *    ❯ 1. <option>
+ *         <description>  <- optional indented continuation
+ *      2. <option>
+ *      ...
+ *      N. Type something.
+ *    ─────               <- Claude splits built-in extras below a separator
+ *      N+1. Chat about this
+ *
+ *    Enter to select · ↑/↓ to navigate · Esc to cancel   <- footer
+ */
 function parseSelectorModal(pane: string): import('@agent-hq-orchestron/shared').PendingPrompt | null {
   if (!MODAL_FOOTER_RE.test(pane) || !MODAL_SELECT_RE.test(pane)) return null
 
   const lines = pane.split(/\r?\n/)
   const footerIdx = lines.findIndex((l) => MODAL_FOOTER_RE.test(l) && MODAL_SELECT_RE.test(l))
-  const searchEnd = footerIdx === -1 ? lines.length : footerIdx
+  if (footerIdx <= 0) return null
 
-  // Walk upward: collect option lines from the bottom of the modal, then
-  // the first non-empty, non-separator line above them becomes the title.
-  const options: string[] = []
-  let cursor = searchEnd - 1
-  while (cursor >= 0) {
-    const line = lines[cursor] ?? ''
-    if (!line.trim()) { cursor--; continue }
+  // Top boundary: nearest ☐ header line above the footer.
+  let topIdx = -1
+  for (let i = footerIdx - 1; i >= 0; i--) {
+    if (MODAL_HEADER_RE.test(lines[i] ?? '')) { topIdx = i; break }
+  }
+  if (topIdx === -1) return null
+
+  // Collect all numbered options between top and footer. Separator lines,
+  // empty lines, and description continuation lines are skipped WITHOUT
+  // stopping the scan — Claude places "Chat about this" below a separator.
+  const optionsByNum = new Map<number, string>()
+  let firstOptionLineIdx = footerIdx
+  for (let i = topIdx + 1; i < footerIdx; i++) {
+    const line = lines[i] ?? ''
     const m = line.match(OPTION_LINE_RE)
     if (m) {
-      options.unshift((m[2] ?? '').trim())
-      cursor--
-      continue
+      const num = Number.parseInt(m[1] ?? '0', 10)
+      const label = (m[2] ?? '').trim()
+      if (num > 0 && label) {
+        optionsByNum.set(num, label)
+        if (i < firstOptionLineIdx) firstOptionLineIdx = i
+      }
     }
-    break
   }
-  if (options.length === 0) return null
+  if (optionsByNum.size === 0) return null
+  const nums = [...optionsByNum.keys()].sort((a, b) => a - b)
+  const options = nums.map((n) => optionsByNum.get(n) ?? '')
 
-  // Title = closest non-empty non-separator line above the option block.
+  // Title + detail live between the ☐ header and the first option line.
+  // Skip empty and separator lines; the LAST non-blank/non-separator line
+  // in that band is the title (often ending with `?`); everything above it
+  // (up to the header) is optional detail (e.g. the Bash command).
+  const titleBandRaw: string[] = []
+  for (let i = topIdx + 1; i < firstOptionLineIdx; i++) {
+    const line = (lines[i] ?? '').trim()
+    if (!line || SEPARATOR_RE.test(line)) continue
+    titleBandRaw.push(line)
+  }
   let title = ''
   let detail: string | undefined
-  while (cursor >= 0) {
-    const line = (lines[cursor] ?? '').trim()
-    if (!line || /^[─━=—-]{3,}$/.test(line)) { cursor--; continue }
-    title = line
-    // Grab up to 3 preceding non-empty lines as detail (e.g. the bash command)
-    const detailLines: string[] = []
-    let d = cursor - 1
-    while (d >= 0 && detailLines.length < 3) {
-      const dl = (lines[d] ?? '').trim()
-      if (!dl || /^[─━=—-]{3,}$/.test(dl)) break
-      detailLines.unshift(dl)
-      d--
+  if (titleBandRaw.length > 0) {
+    title = titleBandRaw[titleBandRaw.length - 1] ?? ''
+    if (titleBandRaw.length > 1) {
+      detail = titleBandRaw.slice(0, -1).join('\n')
     }
-    if (detailLines.length > 0) detail = detailLines.join('\n')
-    break
   }
-  if (!title) title = 'Selector modal'
+  if (!title) {
+    // Fallback to the ☐ header text itself.
+    const headerMatch = (lines[topIdx] ?? '').match(MODAL_HEADER_RE)
+    title = headerMatch?.[1]?.trim() ?? 'Selector modal'
+  }
 
   const kind: 'permission' | 'question' = PERMISSION_HINT_RE.test(pane) ? 'permission' : 'question'
   return { kind, title, detail, options, capturedAt: new Date().toISOString() }
