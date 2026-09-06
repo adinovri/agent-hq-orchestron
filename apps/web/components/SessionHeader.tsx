@@ -7,6 +7,7 @@ import { isActive } from '@/lib/status'
 import { formatRelative, formatDuration } from '@/lib/time'
 import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
+import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 
 interface Props {
   session: SessionMetadata
@@ -28,10 +29,14 @@ interface Props {
 }
 
 export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, onRespawn, killing, archiving, reopening, cloning, respawning, projectName, projectDefaultModel, projectDefaultEffort }: Props) {
-  const effectiveModel = session.model ?? projectDefaultModel
-  const effectiveEffort = session.effort ?? projectDefaultEffort
+  const harnessDefaultModel = implicitDefaultModel(session.agentType)
+  const harnessDefaultEffort = implicitDefaultEffort(session.agentType)
+  const effectiveModel = session.model ?? projectDefaultModel ?? harnessDefaultModel
+  const effectiveEffort = session.effort ?? projectDefaultEffort ?? harnessDefaultEffort
   const modelFromProject = !session.model && !!projectDefaultModel
+  const modelFromHarness = !session.model && !projectDefaultModel && !!harnessDefaultModel
   const effortFromProject = !session.effort && !!projectDefaultEffort
+  const effortFromHarness = !session.effort && !projectDefaultEffort && !!harnessDefaultEffort
   const active = isActive(session.status)
   const canArchive = ['needs_input', 'idle', 'waiting', 'running', 'sleeping'].includes(session.status)
   // Reopen + Fork are for truly-done sessions only.
@@ -78,8 +83,12 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
               </span>
               {effectiveModel && (
                 <span
-                  className={`text-xs font-mono ${modelFromProject ? 'text-zinc-400 dark:text-zinc-500 italic' : 'text-zinc-500 dark:text-zinc-400'}`}
-                  title={modelFromProject ? 'inherited from project default' : undefined}
+                  className={`text-xs font-mono ${modelFromProject || modelFromHarness ? 'text-zinc-400 dark:text-zinc-500 italic' : 'text-zinc-500 dark:text-zinc-400'}`}
+                  title={
+                    modelFromHarness ? `harness default (${session.agentType})`
+                    : modelFromProject ? 'inherited from project default'
+                    : undefined
+                  }
                 >
                   {effectiveModel}
                 </span>
@@ -87,11 +96,15 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
               {effectiveEffort && (
                 <span
                   className={`text-[10px] px-1.5 py-0.5 rounded font-mono uppercase ${
-                    effortFromProject
+                    effortFromProject || effortFromHarness
                       ? 'bg-zinc-50 dark:bg-zinc-900 text-zinc-400 dark:text-zinc-500 italic'
                       : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
                   }`}
-                  title={effortFromProject ? 'inherited from project default' : undefined}
+                  title={
+                    effortFromHarness ? `harness default (${session.agentType})`
+                    : effortFromProject ? 'inherited from project default'
+                    : undefined
+                  }
                 >
                   effort:{effectiveEffort}
                 </span>

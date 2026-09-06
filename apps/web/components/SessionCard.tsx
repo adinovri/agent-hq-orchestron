@@ -7,6 +7,7 @@ import { StatusPill } from '@/components/StatusPill'
 import { formatRelative, formatDuration } from '@/lib/time'
 import { isActive } from '@/lib/status'
 import { Sparkles, Terminal, Bot, X } from 'lucide-react'
+import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 
 interface Props {
   session: SessionMetadata
@@ -24,10 +25,14 @@ const AGENT_ICON: Record<string, React.ReactNode> = {
 }
 
 export function SessionCard({ session, onKill, killing, projectName, projectDefaultModel, projectDefaultEffort }: Props) {
-  const model = session.model ?? projectDefaultModel
-  const effort = session.effort ?? projectDefaultEffort
+  const harnessDefaultModel = implicitDefaultModel(session.agentType)
+  const harnessDefaultEffort = implicitDefaultEffort(session.agentType)
+  const model = session.model ?? projectDefaultModel ?? harnessDefaultModel
+  const effort = session.effort ?? projectDefaultEffort ?? harnessDefaultEffort
   const modelFromProject = !session.model && !!projectDefaultModel
+  const modelFromHarness = !session.model && !projectDefaultModel && !!harnessDefaultModel
   const effortFromProject = !session.effort && !!projectDefaultEffort
+  const effortFromHarness = !session.effort && !projectDefaultEffort && !!harnessDefaultEffort
   const active = isActive(session.status)
   const needsInput = session.status === 'needs_input'
   const icon = AGENT_ICON[session.agentType] ?? <Bot className="w-4 h-4" />
@@ -66,8 +71,12 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
             </span>
             {model && (
               <span
-                className={`text-xs font-mono ${modelFromProject ? 'text-zinc-400 dark:text-zinc-500 italic' : 'text-zinc-500 dark:text-zinc-400'}`}
-                title={modelFromProject ? 'inherited from project default' : undefined}
+                className={`text-xs font-mono ${modelFromProject || modelFromHarness ? 'text-zinc-400 dark:text-zinc-500 italic' : 'text-zinc-500 dark:text-zinc-400'}`}
+                title={
+                  modelFromHarness ? `harness default (${session.agentType})`
+                  : modelFromProject ? 'inherited from project default'
+                  : undefined
+                }
               >
                 {model}
               </span>
@@ -75,11 +84,15 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
             {effort && (
               <span
                 className={`text-[10px] px-1.5 py-0.5 rounded font-mono uppercase ${
-                  effortFromProject
+                  effortFromProject || effortFromHarness
                     ? 'bg-zinc-50 dark:bg-zinc-900 text-zinc-400 dark:text-zinc-500 italic'
                     : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
                 }`}
-                title={effortFromProject ? 'inherited from project default' : undefined}
+                title={
+                  effortFromHarness ? `harness default (${session.agentType})`
+                  : effortFromProject ? 'inherited from project default'
+                  : undefined
+                }
               >
                 effort:{effort}
               </span>

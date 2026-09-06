@@ -68,3 +68,18 @@ export function harnessLabel(agentType: AgentType | undefined): string {
   if (agentType === 'opencode') return 'OpenCode'
   return 'Agent'
 }
+
+/** The implicit default model a harness uses when no --model flag is
+ *  passed. Only fully knowable for codex (documented catalog); claude's
+ *  fallback depends on the user's own settings, so we leave it undefined
+ *  and let the UI display blank rather than guess. */
+export function implicitDefaultModel(agentType: AgentType | undefined): string | undefined {
+  if (agentType === 'codex') return 'gpt-6-astra'
+  return undefined
+}
+
+/** Same idea for effort — codex GPT-6-Astra defaults to medium. */
+export function implicitDefaultEffort(agentType: AgentType | undefined): string | undefined {
+  if (agentType === 'codex') return 'medium'
+  return undefined
+}
