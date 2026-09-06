@@ -277,32 +277,52 @@ Silver lining: `models_cache.json` does carry `context_window` and
 chip is already available; only the numerator (live token count) is
 missing.
 
-**Known limitation — no token / context / cost metric per session** —
-codex intentionally doesn't persist any usage data on disk:
-- `thread_history_1.sqlite` has no `usage` / `input_tokens` /
-  `output_tokens` columns; item_json carries content only.
-- `logs_2.sqlite` records the trace of the `thread/tokenUsage/updated`
-  event, but not the payload (numbers live in-memory, streamed to
-  connected app-server clients only, then gone).
-- `state_5.sqlite` has no usage tables either.
-- The TUI itself shows only `<model> · <cwd>` in the status bar — no
-  context% / token count anywhere on screen. Nothing to scrape.
+**Token / context / rate-limit metric — on-demand scrape works**
+(corrected 2026-09-06 after `/status` slash-command probe):
 
-Consequence for orchestron: `ctx N/N` chip and `costUsd` field stay
-`null` for every codex session. Codex is bundled with ChatGPT
-Plus/Pro/Enterprise so dollar cost is effectively $0/request; the
-missing metric is really just "% context used".
+Persistent surfaces (all empty — nothing to poll passively):
+- `thread_history_1.sqlite` — item_json content only.
+- `logs_2.sqlite` — trace of `thread/tokenUsage/updated` event
+  (name only, payload lives in-memory and is lost).
+- `state_5.sqlite` — migrations + rollout state only.
+- TUI status bar — persistent `<model> · <cwd>` only.
 
-The only accurate paths (both deferred) are:
-1. Rewrite the adapter to drive codex in `app-server` mode over
-   stdio JSON-RPC and tap `thread/tokenUsage/updated` — loses the
-   tmux TUI paradigm.
-2. Side-adapter that drives `codex mcp` mode — opt-in per project.
+**On-demand surface (viable):** typing `/status` in the TUI renders
+a modal with real numbers. Reproducible via
+`tmux send-keys -t <session> C-u "/status" C-m` + short wait +
+`tmux capture-pane -p`. Sample output:
 
-Recommendation: file an upstream issue asking codex to persist
-tokenUsage to SQLite; when it lands the SQLite parser gets one
-extra query, no adapter rewrite. See
-`memory/reference_orchestron_codex_adapter.md` for full analysis.
+```
+Context window:  93% left (29.9K used / 258K)
+Weekly limit:    [█████████████░░░░░░░] 63% left (resets 09:25 on 7 Sep)
+5h limit:        [████████████████████] 100% left (resets 17:06)
+Weekly limit:    [████████████████████] 100% left (resets 12:06 on 13 Sep)
+```
+
+Caveats:
+- Modal appears in user's TUI (visible if they `tmux a`). Interrupts
+  their view of the chat until dismissed.
+- Codex caches the numbers ("limits may be stale — run /status
+  again shortly"), so scrape freshness ≠ instantaneous.
+- Regex-parse fragile to OpenAI formatting changes.
+- Flat-rate bundled sub — no $ per-token, chip is "% context / %
+  weekly quota", not cost.
+
+**Integration options (none implemented yet):**
+1. Poll opportunistically when session enters `idle` (not
+   `running`); debounce ~60s so the modal doesn't spam.
+2. On-demand refresh button in UI — user-triggered only.
+3. Both.
+
+Heavier alternatives (still deferred — rewrite): drive codex in
+`app-server` mode over stdio JSON-RPC and tap the live
+`thread/tokenUsage/updated` event, or side-adapter with `codex mcp`
+mode. Both lose the tmux TUI paradigm.
+
+Recommendation: option 2 first (zero background noise, minimal
+code), add option 1 later if wanted. See
+`memory/reference_orchestron_codex_adapter.md` for the full
+analysis.
 
 **Session id** — codex assigns UUID v7 (timestamp-prefixed) itself;
 adapter captures via `captureNewSessionId()` polling the SQLite for
