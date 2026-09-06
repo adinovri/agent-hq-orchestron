@@ -5,10 +5,9 @@ import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/StatusPill'
 import { isActive } from '@/lib/status'
 import { formatRelative, formatDuration } from '@/lib/time'
-import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw, Gauge } from 'lucide-react'
+import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw } from 'lucide-react'
 import { useState } from 'react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
-import { apiFetch } from '@/lib/fetcher'
 
 interface Props {
   session: SessionMetadata
@@ -19,7 +18,6 @@ interface Props {
   onReopen?: () => void
   onClone?: () => void
   onRespawn?: () => void
-  onMetricsRefreshed?: () => void
   killing: boolean
   archiving?: boolean
   reopening?: boolean
@@ -30,13 +28,7 @@ interface Props {
   projectDefaultEffort?: string
 }
 
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
-  return String(n)
-}
-
-export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, onRespawn, onMetricsRefreshed, killing, archiving, reopening, cloning, respawning, projectName, projectDefaultModel, projectDefaultEffort }: Props) {
+export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, onRespawn, killing, archiving, reopening, cloning, respawning, projectName, projectDefaultModel, projectDefaultEffort }: Props) {
   const harnessDefaultModel = implicitDefaultModel(session.agentType)
   const harnessDefaultEffort = implicitDefaultEffort(session.agentType)
   const effectiveModel = session.model ?? projectDefaultModel ?? harnessDefaultModel
@@ -65,37 +57,6 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
   // Respawn always available on terminal — doesn't need the old JSONL.
   const canRespawn = isTerminal
   const [expanded, setExpanded] = useState(false)
-
-  // Codex-only: refresh metrics via /status scrape. Only for live TUI states
-  // — blocked states (sleeping/terminal/spawning) have no pane to send to.
-  const METRICS_BLOCKED = ['sleeping', 'succeeded', 'killed', 'failed', 'spawning']
-  const canRefreshMetrics = session.agentType === 'codex' && !METRICS_BLOCKED.includes(session.status)
-  const [refreshing, setRefreshing] = useState(false)
-  const [refreshError, setRefreshError] = useState<string | null>(null)
-  async function handleRefreshMetrics() {
-    if (!canRefreshMetrics || refreshing) return
-    setRefreshing(true)
-    setRefreshError(null)
-    try {
-      const res = await apiFetch(`/api/sessions/${session.id}/refresh-metrics`, { method: 'POST' })
-      if (!res.ok) {
-        const body = await res.text()
-        setRefreshError(`HTTP ${res.status}: ${body.slice(0, 120)}`)
-      } else {
-        onMetricsRefreshed?.()
-      }
-    } catch (err) {
-      setRefreshError((err as Error).message)
-    } finally {
-      setRefreshing(false)
-    }
-  }
-  const metrics = session.codexMetrics
-  const ctxUsedPct = metrics ? 100 - metrics.contextLeftPct : null
-  const ctxColorClass = ctxUsedPct == null ? '' :
-    ctxUsedPct >= 80 ? 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300' :
-    ctxUsedPct >= 50 ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300' :
-                       'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
 
   return (
     <div className="bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800">
@@ -146,40 +107,6 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
                   }
                 >
                   effort:{effectiveEffort}
-                </span>
-              )}
-              {metrics && (
-                <>
-                  <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${ctxColorClass}`}
-                    title={`Context: ${metrics.contextLeftPct}% left (${fmtTokens(metrics.contextUsedTokens)} / ${fmtTokens(metrics.contextMaxTokens)}). Snapshot ${new Date(metrics.capturedAt).toLocaleTimeString()}${metrics.stale ? ' — codex reports cached, may be stale' : ''}`}
-                  >
-                    ctx {fmtTokens(metrics.contextUsedTokens)}/{fmtTokens(metrics.contextMaxTokens)}{metrics.stale ? '*' : ''}
-                  </span>
-                  {metrics.fiveHourLeftPct != null && (
-                    <span
-                      className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
-                      title={metrics.fiveHourResetAt ? `5h limit resets ${metrics.fiveHourResetAt}` : '5h rolling limit'}
-                    >
-                      5h {metrics.fiveHourLeftPct}%
-                    </span>
-                  )}
-                  {metrics.weeklyLeftPct != null && (
-                    <span
-                      className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
-                      title={metrics.weeklyResetAt ? `Weekly limit resets ${metrics.weeklyResetAt}` : 'Weekly rolling limit'}
-                    >
-                      7d {metrics.weeklyLeftPct}%
-                    </span>
-                  )}
-                </>
-              )}
-              {refreshError && (
-                <span
-                  className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300"
-                  title={refreshError}
-                >
-                  metrics err
                 </span>
               )}
               {descendantCount != null && descendantCount > 0 && (
@@ -246,18 +173,6 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
                   title="Respawn — fresh Claude session with the same prompt (does NOT continue the previous conversation)"
                 >
                   <RotateCcw className="w-4 h-4" />
-                </Button>
-              )}
-              {canRefreshMetrics && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-zinc-600 hover:text-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800 h-8 w-8 p-0"
-                  disabled={refreshing}
-                  onClick={handleRefreshMetrics}
-                  title={refreshing ? 'Refreshing…' : 'Refresh codex metrics (/status scrape — modal briefly appears in TUI)'}
-                >
-                  <Gauge className={`w-4 h-4 ${refreshing ? 'animate-pulse' : ''}`} />
                 </Button>
               )}
               {canArchive && onArchive && (

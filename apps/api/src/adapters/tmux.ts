@@ -37,13 +37,6 @@ export async function sendKeys(sessionName: string, keys: string): Promise<void>
   await execFile('tmux', ['send-keys', '-t', sessionName, keys, ''])
 }
 
-/** Send a sequence of tmux send-keys tokens verbatim (special keys like
- *  C-u, C-m, Escape, plus literal strings). Each arg is a separate token
- *  to tmux, so it can mix control sequences with plain text. */
-export async function sendKeysSequence(sessionName: string, tokens: string[]): Promise<void> {
-  await execFile('tmux', ['send-keys', '-t', sessionName, ...tokens])
-}
-
 export async function capturePane(sessionName: string): Promise<string> {
   const { stdout } = await execFile('tmux', [
     'capture-pane', '-p', '-t', sessionName,

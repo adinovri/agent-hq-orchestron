@@ -735,35 +735,6 @@ export class SessionManager {
    * session to free resources, then transitions to `succeeded` (terminal,
    * read-only). Session file + transcript stay for review.
    */
-  /** Codex-only: trigger `/status` slash-command in the live TUI, scrape
-   *  the modal, patch codexMetrics onto the session record. Route layer
-   *  gates on agentType + live status; here we just execute. Returns the
-   *  updated record; throws with a message the route maps to HTTP codes.
-   *  See docs/USAGE.md §3 and memory reference_orchestron_codex_adapter. */
-  async refreshCodexMetrics(uuid: string): Promise<SessionMetadata> {
-    const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
-    if (!session) throw new Error(`Session not found: ${uuid}`)
-    if (session.agentType !== 'codex') {
-      throw new Error(`refresh-metrics is codex-only (session is ${session.agentType})`)
-    }
-    const adapter = this.registry.getOrThrow('codex') as unknown as {
-      refreshStatus?: (h: import('@agent-hq-orchestron/shared').TmuxHandle, t?: number) => Promise<import('@agent-hq-orchestron/shared').CodexMetrics | null>
-    }
-    if (typeof adapter.refreshStatus !== 'function') {
-      throw new Error('codex adapter does not implement refreshStatus')
-    }
-    const metrics = await adapter.refreshStatus(
-      { tmuxName: session.tmuxName, claudeUuid: session.claudeSessionUuid, jsonlPath: session.jsonlPath },
-      8_000,
-    )
-    if (!metrics) {
-      throw new Error('timeout waiting for /status modal — codex may be mid-turn')
-    }
-    const updated: SessionMetadata = { ...session, codexMetrics: metrics }
-    await writeJson(this.sessionPath(uuid), updated)
-    return updated
-  }
-
   async archive(uuid: string): Promise<SessionMetadata> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)

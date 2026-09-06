@@ -169,9 +169,6 @@ export default function SessionDetailPage({ params }: PageProps) {
         onReopen={() => setActionDialog('reopen')}
         onClone={() => setActionDialog('fork')}
         onRespawn={() => setActionDialog('respawn')}
-        onMetricsRefreshed={() => {
-          qc.invalidateQueries({ queryKey: ['session', uuid] })
-        }}
         killing={killing}
         archiving={archiving}
         reopening={reopening}
