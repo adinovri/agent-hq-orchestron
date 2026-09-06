@@ -337,6 +337,14 @@ export const claudeAdapter: AgentAdapter = {
 
 **Enforcement:** Adapter contract test verify argv **tidak pernah** mengandung `-p` atau `--print`. Runtime assertion sebelum spawn.
 
+**⚠️ Managed-policy caveat (Claude Team/Enterprise plans):** the `--permission-mode bypassPermissions` flag can be **silently overridden** by a `disableBypassPermissionsMode: "disable"` entry in the config-dir's `remote-settings.json` (org-managed subscription). When overridden the session runs in the default gated mode instead. Real-world consequences observed with Nanovest Team plan config-dir on 2026-09-06:
+
+- Common tool calls still auto-approve via the user's `settings.json` `permissions.allow` list (Bash, Read, Write, Edit, MultiEdit, WebFetch, WebSearch, common MCP servers) so most workflows look identical to bypass.
+- Actions **outside** the allowlist (nested `claude` spawn attempts, `.env` reads, `sudo *`, `chmod *`, `curl * | sh`, `.github/workflows/*` edits, `**/secrets/**`) hit the classifier gate. Orchestron has no dashboard UI to answer a TUI approval prompt today, so such a session appears stuck as `running` with no visible progress.
+- Codex sessions are unaffected — `--dangerously-bypass-approvals-and-sandbox` is a codex-side flag, not gated by Anthropic managed policy.
+
+**Workaround for autonomous long-runs that need real bypass:** point the project at a config-dir belonging to a personal (non-Team-plan) Claude subscription — the absence of `remote-settings.json` lets `bypassPermissions` take effect. Trade-off: separate subscription + login state.
+
 ### Multi-Adapter Registry
 
 Mirror pattern Tycho (`lib/hq/harness_registry.rb`) tapi lebih extensible — Tycho only supports Claude-compatible custom adapter; orchestron support arbitrary adapter via full `AgentAdapter` interface.

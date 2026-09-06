@@ -617,6 +617,18 @@ written AFTER the latest user prompt. If Claude interrupt writes
 `/interrupt` endpoint proactively transitions to `idle`. If it still
 looks stuck, kill from the dashboard.
 
+**Also check for a permission prompt in the tmux pane:**
+`tmux attach -rt <tmux-name>` (read-only). If Claude is waiting on a
+tool-approval prompt that orchestron has no UI to answer, the session
+sits idle mid-turn without emitting `turn_duration`. Root cause is
+usually a Claude Team/Enterprise managed policy overriding
+`--permission-mode bypassPermissions` (via `disableBypassPermissionsMode:
+"disable"` in the config-dir's `remote-settings.json`), so any tool call
+outside the user's `settings.json` `permissions.allow` list hits the
+default gate. Fix: either add the tool to `permissions.allow`, or point
+the project at a non-Team-plan config-dir where bypass actually takes
+effect. See HLD "Managed-policy caveat" section under Adapters.
+
 ### "Cannot find pane" on spawn
 
 Transient auth/quota failure at tmux boot. `completeSpawn` auto-retries
