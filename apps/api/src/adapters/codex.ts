@@ -337,4 +337,89 @@ export class CodexAdapter implements AgentAdapter {
   async kill(handle: TmuxHandle): Promise<void> {
     await tmux.killSession(handle.tmuxName)
   }
+
+  /**
+   * Trigger the codex TUI `/status` slash-command and scrape the resulting
+   * modal for context / rate-limit numbers.
+   *
+   * Codex doesn't persist usage data anywhere on disk (see reference memory
+   * `reference_orchestron_codex_adapter`), so this is the only path to
+   * expose context% + weekly/5h quota in orchestron's UI. Modal appears in
+   * the user's tmux pane for a few seconds — we send Escape after parsing
+   * to dismiss.
+   *
+   * Returns null if the modal doesn't render within timeoutMs (e.g. codex
+   * is mid-thinking on a long turn and hasn't accepted the slash yet, or
+   * the pane died). Caller decides whether to surface as error or leave
+   * `codexMetrics` unchanged.
+   */
+  async refreshStatus(handle: TmuxHandle, timeoutMs = 5_000): Promise<import('@agent-hq-orchestron/shared').CodexMetrics | null> {
+    // Clear any partial input on the prompt line first (C-u), then type
+    // `/status` and press Enter (C-m). Three separate tokens so tmux
+    // treats `C-u`/`C-m` as key names, not literal text.
+    await tmux.sendKeysSequence(handle.tmuxName, ['C-u', '/status', 'C-m'])
+
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const pane = await tmux.capturePane(handle.tmuxName).catch(() => '')
+      const parsed = parseCodexStatus(pane)
+      if (parsed) {
+        // Dismiss the modal so it doesn't linger in the user's view.
+        // Escape is codex's "close overlay" key per the ESC_DISMISS_RE hint.
+        await tmux.sendKeys(handle.tmuxName, 'Escape').catch(() => {})
+        return parsed
+      }
+      await new Promise((r) => setTimeout(r, 300))
+    }
+    return null
+  }
+}
+
+/**
+ * Parse the ASCII modal codex renders after `/status`. Returns null when
+ * the required fields aren't present (modal not yet rendered, or codex
+ * changed the layout — check reference memory if this breaks).
+ *
+ * SEMANTIC NOTE (documented in memory): every `N%` in the modal is
+ * "N% left" (REMAINING budget), NOT used. Preserve that meaning through
+ * the parsed value — the field is named `contextLeftPct` for a reason.
+ */
+export function parseCodexStatus(pane: string): import('@agent-hq-orchestron/shared').CodexMetrics | null {
+  // Context line: "Context window:  93% left (29.9K used / 258K)"
+  //                                   \d+       [\d.]+[KM]?  \d+[KM]?
+  const ctx = /Context window:\s+(\d+)%\s*left\s*\(\s*([\d.]+)\s*([KM]?)\s*used\s*\/\s*([\d.]+)\s*([KM]?)/i.exec(pane)
+  if (!ctx) return null
+  const contextLeftPct = Number(ctx[1])
+  const contextUsedTokens = scaleTokens(ctx[2]!, ctx[3])
+  const contextMaxTokens = scaleTokens(ctx[4]!, ctx[5])
+
+  // Rate-limit lines. Codex prints multiple; the first "5h limit:" and
+  // the first "Weekly limit:" following the Context section are the main
+  // account-level ones (per-model breakdowns come after under their own
+  // headings). Reset time sits on the wrapped next line inside "(resets
+  // ...)" parens — capture across newlines and stop at closing paren.
+  const fiveHour = /5h limit:.*?(\d+)%\s*left(?:.*?\(\s*resets?\s+([^)]+?)\s*\))?/is.exec(pane)
+  const weekly = /Weekly limit:.*?(\d+)%\s*left(?:.*?\(\s*resets?\s+([^)]+?)\s*\))?/is.exec(pane)
+
+  return {
+    contextUsedTokens,
+    contextMaxTokens,
+    contextLeftPct,
+    fiveHourLeftPct: fiveHour ? Number(fiveHour[1]) : null,
+    fiveHourResetAt: fiveHour?.[2]?.trim() ?? null,
+    weeklyLeftPct: weekly ? Number(weekly[1]) : null,
+    weeklyResetAt: weekly?.[2]?.trim() ?? null,
+    capturedAt: new Date().toISOString(),
+    stale: /limits may be stale/i.test(pane),
+  }
+}
+
+function scaleTokens(raw: string, unit?: string): number {
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return 0
+  switch ((unit ?? '').toUpperCase()) {
+    case 'K': return Math.round(n * 1_000)
+    case 'M': return Math.round(n * 1_000_000)
+    default:  return Math.round(n)
+  }
 }

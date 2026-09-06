@@ -18,6 +18,33 @@ export interface TokenUsage {
   cacheCreation?: number
 }
 
+/** On-demand snapshot of codex's `/status` slash-command output —
+ *  populated by POST /api/sessions/:uuid/refresh-metrics. Codex has
+ *  no persistent usage surface (see docs/USAGE.md §3), so this is
+ *  the only way to expose context / rate-limit info in the UI. */
+export interface CodexMetrics {
+  /** Tokens consumed in the current thread (numerator). */
+  contextUsedTokens: number
+  /** Model's context window size (denominator). */
+  contextMaxTokens: number
+  /** Remaining context budget as a percentage — codex reports "N% left"
+   *  verbatim; UI can show as-is or compute `100 - contextLeftPct` for
+   *  "% used". DO NOT invert this field silently. */
+  contextLeftPct: number
+  /** 5-hour rolling rate limit — % remaining (null if not shown). */
+  fiveHourLeftPct: number | null
+  /** Human-formatted reset time for the 5h limit (e.g. "17:06"). */
+  fiveHourResetAt: string | null
+  /** Weekly rolling rate limit — % remaining (null if not shown). */
+  weeklyLeftPct: number | null
+  /** Human-formatted reset time for the weekly limit (e.g. "09:25 on 7 Sep"). */
+  weeklyResetAt: string | null
+  /** ISO timestamp when the scrape was performed. */
+  capturedAt: string
+  /** Codex sometimes appends "limits may be stale" — true when detected. */
+  stale: boolean
+}
+
 export interface SessionMetadata {
   id: string
   projectId: string
@@ -34,6 +61,10 @@ export interface SessionMetadata {
   finalResponse: string | null
   tokenUsage: TokenUsage | null
   costUsd: number | null
+  /** Codex-only: on-demand snapshot from `/status` slash-command. Null
+   *  for claude (uses tokenUsage + costUsd) and for codex sessions the
+   *  user hasn't refreshed yet. */
+  codexMetrics?: CodexMetrics | null
   startedAt: string
   endedAt: string | null
   /** Timestamp when the session most recently entered idle/needs_input. Used

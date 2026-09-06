@@ -761,6 +761,29 @@ export function sessionsPlugin(
       }
     })
 
+    // Codex-only: scrape /status modal for context% + rate-limit numbers.
+    // See docs/USAGE.md §3 and memory reference_orchestron_codex_adapter
+    // for why this is on-demand rather than persistent.
+    app.post('/api/sessions/:uuid/refresh-metrics', async (req, reply) => {
+      const { uuid } = req.params as { uuid: string }
+      const sessions = await manager.list()
+      const existing = sessions.find(s => s.id === uuid)
+      if (!existing) return reply.code(404).send({ error: `Session not found: ${uuid}` })
+      // Sessions without a live tmux pane can't be scraped.
+      const BLOCKED: string[] = ['sleeping', 'succeeded', 'killed', 'failed', 'spawning']
+      if (BLOCKED.includes(existing.status)) {
+        return reply.code(409).send({ error: `Cannot refresh metrics in ${existing.status} state — no live TUI to scrape` })
+      }
+      try {
+        return await manager.refreshCodexMetrics(uuid)
+      } catch (err: unknown) {
+        const msg = (err as Error).message ?? String(err)
+        if (msg.includes('codex-only')) return reply.code(400).send({ error: msg })
+        if (msg.includes('timeout')) return reply.code(504).send({ error: msg })
+        throw err
+      }
+    })
+
     // Mark session as done (tycho-style archive). Kills tmux + transitions
     // through completing → succeeded. Idempotent per allowed-state guard.
     app.post('/api/sessions/:uuid/archive', async (req, reply) => {
