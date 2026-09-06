@@ -146,6 +146,9 @@ export class SessionManager {
   // Safety-net sweep interval — catches sessions whose per-session timer
   // was lost (e.g. server crash, dropped notification).
   private safetyNetSweep: NodeJS.Timeout | null = null
+  // AskUserQuestion pane-scan sweep — catches modals that current Claude
+  // buffers out of JSONL (writes flushed only when the turn ends).
+  private askUserSweep: NodeJS.Timeout | null = null
 
   constructor(config: SessionManagerConfig, registry: AdapterRegistry) {
     this.dataDir = config.dataDir
@@ -965,6 +968,42 @@ export class SessionManager {
         this.sweepOrphans().catch(() => {})
       }, 10 * 60 * 1000)
       if (typeof this.safetyNetSweep.unref === 'function') this.safetyNetSweep.unref()
+    }
+    // AskUserQuestion pane sweep — every 20s scan tmux panes of running
+    // claude sessions for the interactive selector modal and flip to
+    // needs_input when detected. Current Claude buffers tool_use/turn_duration
+    // until the modal is answered, so JSONL-based reconciliation alone can't
+    // see the pending question.
+    if (!this.askUserSweep) {
+      this.askUserSweep = setInterval(() => {
+        this.sweepAskUserPrompts().catch(() => {})
+      }, 20 * 1000)
+      if (typeof this.askUserSweep.unref === 'function') this.askUserSweep.unref()
+    }
+  }
+
+  /**
+   * Scan tmux panes of `running` claude sessions for the AskUserQuestion
+   * selector modal footer (`↑/↓ to navigate` + `Enter to select`) and
+   * transition to `needs_input` when found. Codex uses a different approval
+   * model and is skipped. Best-effort — pane capture failures are silent.
+   */
+  private async sweepAskUserPrompts(): Promise<void> {
+    const sessions = await this.list()
+    const tmux = await import('../adapters/tmux.js')
+    for (const s of sessions) {
+      if (s.status !== 'running') continue
+      if (s.agentType !== 'claude') continue
+      if (!s.tmuxName) continue
+      try {
+        const pane = await tmux.capturePane(s.tmuxName)
+        // Match the modal footer; both bullets present is a strong signal
+        // that the selector is currently displayed. Match either arrow style
+        // (some builds use ▲/▼ instead of ↑/↓).
+        if (/(↑\/↓|▲\/▼)\s+to\s+navigate/.test(pane) && /Enter\s+to\s+select/.test(pane)) {
+          await this.reconcilePendingUserQuestion(s.id).catch(() => {})
+        }
+      } catch { /* pane may be gone if tmux was killed between list & capture */ }
     }
   }
 
