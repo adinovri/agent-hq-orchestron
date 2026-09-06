@@ -263,9 +263,32 @@ writes to `~/.codex/thread_history_1.sqlite` (SQLite), not JSONL.
 Orchestron's `/transcript` endpoint auto-detects: reads JSONL for
 claude, SQLite for codex.
 
-**Known limitation** — context indicator (`ctx N/N` chip) is hidden
-for codex sessions because the SQLite tables don't carry token
-counts. Codex sessions run without a live context-usage display.
+**Known limitation — no token / context / cost metric** —
+codex intentionally doesn't persist any usage data on disk:
+- `thread_history_1.sqlite` has no `usage` / `input_tokens` /
+  `output_tokens` columns; item_json carries content only.
+- `logs_2.sqlite` records the trace of the `thread/tokenUsage/updated`
+  event, but not the payload (numbers live in-memory, streamed to
+  connected app-server clients only, then gone).
+- `state_5.sqlite` has no usage tables either.
+- The TUI itself shows only `<model> · <cwd>` in the status bar — no
+  context% / token count anywhere on screen. Nothing to scrape.
+
+Consequence for orchestron: `ctx N/N` chip and `costUsd` field stay
+`null` for every codex session. Codex is bundled with ChatGPT
+Plus/Pro/Enterprise so dollar cost is effectively $0/request; the
+missing metric is really just "% context used".
+
+The only accurate paths (both deferred) are:
+1. Rewrite the adapter to drive codex in `app-server` mode over
+   stdio JSON-RPC and tap `thread/tokenUsage/updated` — loses the
+   tmux TUI paradigm.
+2. Side-adapter that drives `codex mcp` mode — opt-in per project.
+
+Recommendation: file an upstream issue asking codex to persist
+tokenUsage to SQLite; when it lands the SQLite parser gets one
+extra query, no adapter rewrite. See
+`memory/reference_orchestron_codex_adapter.md` for full analysis.
 
 **Session id** — codex assigns UUID v7 (timestamp-prefixed) itself;
 adapter captures via `captureNewSessionId()` polling the SQLite for
