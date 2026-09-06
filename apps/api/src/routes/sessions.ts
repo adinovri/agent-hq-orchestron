@@ -653,6 +653,9 @@ export function sessionsPlugin(
       try { project = await registry.get(existing.projectId) } catch {
         return reply.code(404).send({ error: `Project not found: ${existing.projectId}` })
       }
+      if (existing.agentType !== project.agentType) {
+        return reply.code(409).send({ error: `Cross-harness session — this session runs as '${existing.agentType}' but project '${project.name}' is '${project.agentType}'. Legacy ghost session (predates 1-project-1-harness enforcement). Archive it and spawn fresh instead.` })
+      }
       const configDir = project.agentType === 'codex'
         ? project.agentConfig?.env?.['CODEX_HOME']
         : project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
@@ -689,6 +692,9 @@ export function sessionsPlugin(
       let project
       try { project = await registry.get(existing.projectId) } catch {
         return reply.code(404).send({ error: `Project not found: ${existing.projectId}` })
+      }
+      if (existing.agentType !== project.agentType) {
+        return reply.code(409).send({ error: `Cross-harness session — this session runs as '${existing.agentType}' but project '${project.name}' is '${project.agentType}'. Legacy ghost session (predates 1-project-1-harness enforcement). Archive it and spawn fresh instead.` })
       }
       const configDir = project.agentType === 'codex'
         ? project.agentConfig?.env?.['CODEX_HOME']
@@ -728,6 +734,9 @@ export function sessionsPlugin(
       let project
       try { project = await registry.get(existing.projectId) } catch {
         return reply.code(404).send({ error: `Project not found: ${existing.projectId}` })
+      }
+      if (existing.agentType !== project.agentType) {
+        return reply.code(409).send({ error: `Cross-harness session — this session runs as '${existing.agentType}' but project '${project.name}' is '${project.agentType}'. Legacy ghost session (predates 1-project-1-harness enforcement). Archive it and spawn fresh instead.` })
       }
       const configDir = project.agentType === 'codex'
         ? project.agentConfig?.env?.['CODEX_HOME']
