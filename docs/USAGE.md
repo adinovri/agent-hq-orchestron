@@ -344,6 +344,23 @@ with a captured thread id (SQLite has the conversation). The
 because interactive TUI writes to SQLite, not JSONL, so jsonlPath
 stays empty. Fixed in `2afa647`.
 
+**Reconcile on-demand only** — codex `running → idle/needs_input`
+transition fires from the `/transcript` endpoint's safety-net, not
+from a background watcher. Claude has `watchForTurnEnd` tailing the
+JSONL file (fs.watch), so `running → idle` happens within ms of
+turn end; codex writes to SQLite (`thread_history_1.sqlite`) which
+isn't tail-friendly, and there's no equivalent watcher yet.
+
+Practical impact: if you spawn a codex session via curl / API but
+never open its page in the UI, the session sits at `running`
+indefinitely after codex finishes — reconcile only fires when
+someone polls `/transcript`. Opening the session page in the UI
+starts the ~2s polling loop → session transitions within seconds.
+Not a bug per se, just an on-demand model. To force reconcile
+without opening the page, `GET /api/sessions/:uuid/transcript`
+once — same effect. Idle chip in the header shows `idle Nm` so you
+can gauge time until auto-sleep (15 min default).
+
 **sendPrompt Enter-swallow race** — fixed in `562f403`. On fresh
 spawn / cold-start wake, codex TUI can print the input placeholder
 before its input handler is wired. Our paste-buffer echoes into the

@@ -109,6 +109,24 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
                   effort:{effectiveEffort}
                 </span>
               )}
+              {session.idleSince && (session.status === 'idle' || session.status === 'needs_input') && (() => {
+                const idleMs = Date.now() - new Date(session.idleSince).getTime()
+                const idleMin = Math.floor(idleMs / 60_000)
+                // Threshold match: idleTimeoutMs default 15 min. Warn at >=10 min.
+                const nearSleep = idleMin >= 10
+                return (
+                  <span
+                    className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                      nearSleep
+                        ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300'
+                        : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
+                    }`}
+                    title={`Idle since ${new Date(session.idleSince).toLocaleTimeString()}. Auto-sleeps at 15 min.`}
+                  >
+                    idle {idleMin}m
+                  </span>
+                )
+              })()}
               {descendantCount != null && descendantCount > 0 && (
                 <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
                   <GitBranch className="w-3 h-3" />

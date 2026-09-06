@@ -97,6 +97,22 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
                 effort:{effort}
               </span>
             )}
+            {session.idleSince && (session.status === 'idle' || session.status === 'needs_input') && (() => {
+              const idleMin = Math.floor((Date.now() - new Date(session.idleSince).getTime()) / 60_000)
+              const nearSleep = idleMin >= 10
+              return (
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                    nearSleep
+                      ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300'
+                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
+                  }`}
+                  title={`Idle since ${new Date(session.idleSince).toLocaleTimeString()}. Auto-sleeps at 15 min.`}
+                >
+                  idle {idleMin}m
+                </span>
+              )
+            })()}
             <span className="text-xs text-zinc-400 dark:text-zinc-500 font-mono">{session.id.slice(0, 8)}</span>
           </div>
 
