@@ -157,7 +157,7 @@ Pattern spawn identik dengan `claude-cli-bridge` dan `nafu-bg-claude` — sudah 
   + `SessionRegistry` — CRUD session metadata via FileStore
   + `TranscriptTailer` — watch JSONL from offset, emit events via EventEmitter
   + `DelegationTracker` — parent-child edges (source-of-truth JSON, in-memory index)
-  + Adapters: `claudeAdapter`, `codexAdapter` (Phase 3), `opencodeAdapter` (Phase 3)
+  + Adapters: `claudeAdapter`, `codexAdapter` (shipped 2026-09-06), `opencodeAdapter` (Phase 3)
 
 #### Component 3: `@agent-hq-orchestron/file-store` (Storage Library)
 
@@ -346,7 +346,7 @@ Mirror pattern Tycho (`lib/hq/harness_registry.rb`) tapi lebih extensible — Ty
 | Adapter | Binary | Session flag | Config env var | Transcript source |
 | --- | --- | --- | --- | --- |
 | `claude` | `claude` | `--session-id <uuid>` / `--resume <uuid>` | `CLAUDE_CONFIG_DIR` (default `~/.claude`) | `$CLAUDE_CONFIG_DIR/projects/<cwd-slug>/<uuid>.jsonl` |
-| `codex` | `codex` | `--session <id>` | `CODEX_HOME` (default `~/.codex`) | `$CODEX_HOME/sessions/<id>.jsonl` |
+| `codex` | `codex` | `codex resume <uuid>` (resume subcommand — UUID assigned by codex on first spawn, cannot pre-assign) | `CODEX_HOME` (default `~/.codex`) | `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<iso-ts>-<uuid>.jsonl` |
 | `opencode` | `opencode` | `--session-id <id>` | `OPENCODE_CONFIG_DIR` | `$OPENCODE_CONFIG_DIR/logs/<id>.jsonl` |
 
 **Pi omitted** di Phase 1 karena Anthropic Pi belum stable public CLI.
@@ -1379,7 +1379,7 @@ Deployment Plan
 | **0. Bootstrap** (Day 1, ~2 jam) | Scaffold monorepo, packages, hello world FE+BE, health endpoint, smoke test | Yes — `git reset --hard <initial>` |
 | **1. MVP CLI Bridge** (Week 1) | `claudeAdapter`, `AgentPool`, `SessionRegistry`, `TranscriptTailer`, SSE endpoint, basic dashboard | Yes — git tag `v0.1` |
 | **2. DAG + Delegation** (Week 2) | `DelegationTracker`, React Flow graph page, `--resume` support | Yes — git tag `v0.2` |
-| **3. Polish + Extensibility** (Week 3) | Codex + OpenCode adapters, session search UI, scheduled runs (cron), README + install script | Yes — git tag `v0.3` |
+| **3. Polish + Extensibility** (Week 3) | ~~Codex~~ (shipped 2026-09-06) + OpenCode adapters, session search UI, scheduled runs (cron), README + install script | Yes — git tag `v0.3` |
 | **4. Public Release** (opsional) | Push ke public GitHub Adi, kredit Tycho, dokumentasi user | N/A |
 
 ### Feature Flags
@@ -1530,7 +1530,7 @@ Open Items
 | OI-02 | Data folder location: `~/.config/agent-hq-orchestron/` — sudah confirmed Adi (XDG) | Adi | 2026-08-15 | Resolved |
 | OI-03 | Repo name: `agent-hq-orchestron` — sudah confirmed Adi | Adi | 2026-08-15 | Resolved |
 | OI-04 | Push ke public GitHub — plan future, credit Tycho di README | Adi | TBD | Open |
-| OI-05 | Codex CLI juga pakai `--session-id` pattern? Perlu spike sebelum Phase 3 | Adi | Phase 3 | Open |
+| OI-05 | Codex CLI juga pakai `--session-id` pattern? Perlu spike sebelum Phase 3 | Adi | 2026-09-06 | Resolved — codex assigns v7 UUID on spawn (cannot pre-assign); resume via `codex resume <uuid>` subcommand; transcript is a JSONL rollout under `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<iso>-<uuid>.jsonl`. Interactive TUI does NOT write rollout — orchestron reconciles session id by scanning rollout dir after ready-marker |
 | OI-06 | Scheduled runs: implement pakai in-Node cron (`node-cron`) atau delegate ke systemd user timer? | Adi | Phase 3 | Open |
 | OI-07 | Fork Tycho Ruby vs full rewrite — decided: **rewrite** (TS full-stack preference) | Adi | 2026-08-15 | Resolved |
 | OI-08 | Windows support scope: WSL only (Phase 1-3) atau native via node-pty di Phase 3? | Adi | Phase 3 | Open |

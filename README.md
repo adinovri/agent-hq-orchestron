@@ -1,8 +1,8 @@
 # agent-hq-orchestron
 
 A web-based supervisor for coding agents (Claude, Codex, OpenCode). Runs
-locally, drives interactive `claude` under tmux — uses your subscription
-quota, not API credit.
+locally, drives interactive `claude` / `codex` under tmux — uses your
+subscription quota (Anthropic Pro/Max, ChatGPT Plus/Pro), not API credit.
 
 Inspired by [Tycho](https://github.com/firewalker06/tycho); this project
 reimplements the core ideas (agent orchestration, delegation lineage,
@@ -10,25 +10,29 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
 
 ## What it does
 
-- **Spawn & supervise** long-running Claude sessions from any device on
-  your tailnet, each running in its own tmux window on the host.
+- **Spawn & supervise** long-running Claude or Codex sessions from any
+  device on your tailnet, each running in its own tmux window on the
+  host.
 - **Multi-project + multi-harness** — one dashboard, sessions scoped per
   project, mix Claude / Codex / OpenCode harnesses (whichever adapters
   are installed).
-- **Full session lifecycle** — reopen a terminal session (resume same
-  Claude conversation), fork one to explore a divergent path, respawn
-  from the same prompt with a fresh conversation, interrupt a running
-  turn, queue prompts while the model is thinking. Each of those three
-  actions opens a dialog with per-call model + effort override.
+- **Full session lifecycle** — reopen a terminal session (resume the
+  same conversation via `claude --resume` or `codex resume <uuid>`),
+  fork one to explore a divergent path, respawn from the same prompt
+  with a fresh conversation, interrupt a running turn, queue prompts
+  while the model is thinking. Each of those three actions opens a
+  dialog with per-call model + effort override.
 - **Sleep on idle** — sessions unused for 15 min go to `sleeping`
   (tmux released, no resources held). Sending input auto-wakes them
-  via `claude --resume` in ~3 s.
-- **Shared memory pool** — every claude session across every workspace
-  automatically points at `~/.claude/shared-memory`, so MEMORY.md and
-  entries are visible fleet-wide.
+  via the harness's native resume flag in ~3 s.
+- **Shared memory pool (Claude only)** — every Claude session across
+  every workspace automatically points at `~/.claude/shared-memory`,
+  so MEMORY.md and entries are visible fleet-wide. Codex sessions
+  keep their own per-workspace memory (`~/.codex/` is not pooled).
 - **Context indicator** — the transcript header shows live
-  `ctx N / 200K [bar] ⤴compactions` so you know how heavy a Claude
-  session is running.
+  `ctx N / limit [bar] ⤴compactions` so you know how heavy a session
+  is running. Claude uses a fixed 200K ceiling client-side; Codex
+  reports the model's native context window per turn.
 - **Cron-scheduled spawns** — YAML-importable schedules with live-preview
   of the next fires.
 - **Agent-to-agent coordination** — auto-injected MCP server so a running
@@ -43,8 +47,9 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
 - **Backend:** Fastify 5 + TypeScript, plain HTTP + REST polling
 - **Storage:** File-based JSON + JSONL (atomic writes with `.bak`
   recovery — Tycho pattern) under `~/.orchestron/`
-- **Subprocess model:** tmux + interactive `claude` CLI. Never
-  `claude -p` / `--print` (those bill against API credit)
+- **Subprocess model:** tmux + interactive `claude` / `codex` CLI.
+  Never `claude -p` / `--print` or `codex exec` (those bill against
+  API credit — orchestron uses your subscription quota instead)
 - **Auth:** Bearer token, QR-code pairing at `/pair`, HTTPS via Tailscale
   Serve
 

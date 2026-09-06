@@ -26,7 +26,8 @@ Optional (fitur akan graceful-degrade kalau absent):
 | `gh` CLI | GitHub PR/issue context di prompt template | `gh auth login` first |
 | `bb` CLI (or `curl` + env `BITBUCKET_APP_PASSWORD`) | Bitbucket PR/issue context | Same idea |
 | `tailscale` | Remote access + QR onboarding host resolver | `curl -fsSL https://tailscale.com/install.sh \| sh` |
-| `codex` / `opencode` | Codex + OpenCode adapters | Adapter disabled kalau binary absent |
+| `codex` CLI | Codex adapter — install: `npm i -g @openai/codex` (or brew). Auth: `codex login` (ChatGPT Plus/Pro/Team subscription; API key opt-in). Config: `~/.codex/config.toml` (trust prompts persist here); override root with `CODEX_HOME` env | Adapter disabled kalau binary absent |
+| `opencode` CLI | OpenCode adapter | Adapter disabled kalau binary absent |
 
 Verify semua at once:
 
@@ -133,13 +134,25 @@ Precedence: env > config file > built-in defaults.
 
 **Idle sweeper (`idleTimeoutMs`)**: default 900000 (15 min). Sessions in
 `idle` or `needs_input` beyond this go to `sleeping` (tmux killed,
-JSONL preserved). Wake up by sending input — cold-start `claude --resume`
-takes ~3-5 s. Set 0 to disable. See [USAGE.md §3](USAGE.md) for details.
+JSONL/rollout preserved). Wake up by sending input — cold-start via the
+harness's native resume path (`claude --resume <uuid>` or
+`codex resume <uuid>`) takes ~3-5 s. Set 0 to disable. See
+[USAGE.md §3](USAGE.md) for details.
 
 **Shared memory (`ORCHESTRON_SHARED_MEMORY_DIR`)**: default
-`~/.claude/shared-memory`. Env-only for now (not in config.json). Every
-Claude spawn/reopen/fork/respawn/wake-up symlinks the per-workspace
-memory dir into this pool so all sessions share one memory pool.
+`~/.claude/shared-memory`. Env-only for now (not in config.json).
+**Claude-only** — every Claude spawn/reopen/fork/respawn/wake-up
+symlinks the per-workspace memory dir into this pool so all Claude
+sessions share one memory pool. Codex sessions are skipped by the
+symlink logic (`~/.codex/` is per-user, not per-workspace, so it is
+already effectively shared — but there is no MEMORY.md convention on
+the codex side to pool).
+
+**Enable Codex adapter**: flip `adapters.codex` to `true` in
+`config.json` above and restart the API. On startup the adapter probes
+for the `codex` binary via `PATH` and disables itself if absent — check
+the API log for `[adapter:codex] disabled: binary not found` if a
+session refuses to spawn with `agentType: 'codex'`.
 
 ---
 
@@ -205,9 +218,9 @@ Kedua mode buka http://localhost:3000 di browser laptop.
 
 - **Akses lokal saja.** Bind `127.0.0.1` — HP/tablet/laptop lain di WiFi yang sama tidak bisa connect (connection refused). Cuma browser/CLI di laptop yang sama.
 - **No auth layer.** Siapapun yang bisa buka terminal/browser di laptop ini akses semua endpoint tanpa login. Trade-off intentional: single-user laptop = trusted zone.
-- **Live subprocess ephemeral saat reboot.** File-based state (session records, transcripts, project registry, metrics) **persist forever**. Yang mati saat reboot / `tmux kill-server` = live `claude` subprocess. Session status yang tadinya `running` / `waiting` auto-transition ke `killed` dgn reason "orphaned" via boot-time orphan scanner. Terminal-state sessions (`completed`, `failed`, `killed`) fully persist — record + transcript readable selamanya.
-- **Resumability.** In-flight session yang mati bisa dilanjut: `orchestron session resume <uuid>` → invoke `claude --resume <uuid>` yang restore context dari transcript. Konversasi lanjut seolah tidak putus.
-- **API call fail saat offline.** Kalau laptop offline (WiFi off) atau sleep, API call `claude` ke Anthropic timeout — session yang lagi thinking transisi ke `failed`. Tapi transcript sampai poin timeout tetap persist.
+- **Live subprocess ephemeral saat reboot.** File-based state (session records, transcripts, project registry, metrics) **persist forever**. Yang mati saat reboot / `tmux kill-server` = live `claude` / `codex` subprocess. Session status yang tadinya `running` / `waiting` auto-transition ke `killed` dgn reason "orphaned" via boot-time orphan scanner. Terminal-state sessions (`completed`, `failed`, `killed`) fully persist — record + transcript readable selamanya.
+- **Resumability.** In-flight session yang mati bisa dilanjut: `orchestron session resume <uuid>` → invoke the harness's native resume path (`claude --resume <uuid>` for Claude, `codex resume <uuid>` for Codex) yang restore context dari transcript/rollout. Konversasi lanjut seolah tidak putus.
+- **API call fail saat offline.** Kalau laptop offline (WiFi off) atau sleep, API call ke Anthropic / OpenAI timeout — session yang lagi thinking transisi ke `failed`. Tapi transcript/rollout sampai poin timeout tetap persist.
 
 ---
 
@@ -329,7 +342,7 @@ Use case: lu kerja di kafe → laptop only (server unreachable). Balik ke rumah 
 
 - **State terpisah total.** Sessions yang spawn di laptop **tidak muncul** di server UI, dan sebaliknya. Setiap instance punya `~/.config/agent-hq-orchestron/` sendiri di host masing-masing.
 - **Tidak ada auto-sync.** Kalau lu spawn session A di laptop, session A cuma ada di laptop. Server tidak tahu.
-- **No cross-host resume.** Session yang started di laptop tidak bisa di-resume dari server (transcript file di `~/.claude/projects/` juga host-specific).
+- **No cross-host resume.** Session yang started di laptop tidak bisa di-resume dari server — transcript/rollout file host-specific: Claude di `~/.claude/projects/<mangled-cwd>/<uuid>.jsonl`, Codex di `~/.codex/sessions/YYYY/MM/DD/rollout-<iso>-<uuid>.jsonl`.
 - **Federation view = pending feature.** HLD Multi-Instance Topology Option 2 (peer registry + read-only cross-instance view) belum di-implement — laptop UI hanya show local sessions, tidak show server sessions.
 
 ### Setup
@@ -412,14 +425,24 @@ Expected `/api/health` response:
 
 Via CLI:
 ```bash
+# Claude-backed project
 orchestron project add \
   --name nanovest-backend \
   --path ~/Works/nanovest-backend \
   --agent claude \
   --config-dir ~/ClaudeConfigs/adi.novriansyah
+
+# Codex-backed project — --config-dir maps to CODEX_HOME, so a custom
+# path lets you isolate model/trust/auth from your personal ~/.codex.
+orchestron project add \
+  --name research-scratch \
+  --path ~/Works/research-scratch \
+  --agent codex \
+  --config-dir ~/.codex
 ```
 
-Or via Web UI: Dashboard → "Register Project" button.
+Or via Web UI: Dashboard → "Register Project" button (agent dropdown
+lists whichever adapters are enabled + have their binary on `PATH`).
 
 ---
 
@@ -522,7 +545,9 @@ Data schema is additive (Zod schema evolution) — old JSON files always readabl
 | `EADDRINUSE :8080` | Port already used | `lsof -i:8080` → kill or change `ORCHESTRON_PORT` |
 | Boot guard error `refusing to bind` | Non-loopback + no token | Set `ORCHESTRON_REMOTE_TOKEN` env |
 | `401 Unauthorized` | Missing/wrong Bearer header | Verify token, check WS uses `?token=` param |
-| Sessions stuck `spawning` | tmux marker not detected | Check `claude` CLI authenticated; run `claude` manually to verify |
+| Sessions stuck `spawning` (Claude) | tmux marker not detected | Check `claude` CLI authenticated; run `claude` manually to verify |
+| Sessions stuck `spawning` (Codex) | Ready marker (`>_ OpenAI Codex` banner) not detected, or trust prompt blocking | Run `codex` manually in the workspace dir once to accept the trust prompt (persists in `~/.codex/config.toml`); check `codex login` status; confirm `CODEX_HOME` (if set) points to the same dir orchestron passes via `--config-dir` |
+| Codex session shows `agentType: codex` but never captures a session id | Interactive TUI mode does NOT write rollout JSONL — orchestron scans `$CODEX_HOME/sessions/YYYY/MM/DD/` for a NEW rollout newer than spawn time | Check the rollout dir date subfolders exist and are writable; watch API log for `[adapter:codex] rollout scan` warnings |
 | Empty metrics | No completed sessions yet | Spawn session → wait for `on-session-end` → refresh `/metrics` |
 | Web UI blank | Service worker stale | Ctrl+Shift+R hard reload; or clear site data |
 | Orphan tmux sessions | Server killed mid-session | Restart server → orphan-scanner cleans automatically |
@@ -579,11 +604,22 @@ looks stuck, kill from the dashboard.
 
 ### "Cannot find pane" on spawn
 
-Transient Claude auth/quota failure at tmux boot. `completeSpawn` auto-
-retries once with a fresh Claude session UUID; if it fails again, check:
+Transient auth/quota failure at tmux boot. `completeSpawn` auto-retries
+once with a fresh session UUID; if it fails again, check per harness:
 
+**Claude:**
 - `claude` CLI can start interactively (`claude` in a plain terminal)
-- Claude subscription is not exhausted
+- Anthropic subscription is not exhausted
+- tmux version (`tmux -V` must be ≥ 3.2)
+
+**Codex:**
+- `codex` CLI can start interactively (`codex` in a plain terminal —
+  should show the `>_ OpenAI Codex` banner within ~2 s)
+- `codex login` still valid (ChatGPT subscription active, or `OPENAI_API_KEY` set if you opted into API-key mode)
+- Workspace trust prompt already accepted — check `~/.codex/config.toml`
+  for `[projects."<abs-workspace-path>"] trust_level = "trusted"`; if
+  missing, run `codex` once inside the workspace dir manually and press
+  Enter on the trust prompt
 - tmux version (`tmux -V` must be ≥ 3.2)
 
 ---
