@@ -337,6 +337,24 @@ attempt-and-abandon analysis.
 adapter captures via `captureNewSessionId()` polling the SQLite for
 newest thread after `sendPrompt`.
 
+**Reopen / Fork buttons** — visible for terminal codex sessions
+with a captured thread id (SQLite has the conversation). The
+`hasTranscript` list-hydration hint is harness-aware: claude uses
+`existsSync(jsonlPath)`; codex uses `claudeSessionUuid !== ''`
+because interactive TUI writes to SQLite, not JSONL, so jsonlPath
+stays empty. Fixed in `2afa647`.
+
+**sendPrompt Enter-swallow race** — fixed in `562f403`. On fresh
+spawn / cold-start wake, codex TUI can print the input placeholder
+before its input handler is wired. Our paste-buffer echoes into the
+input row (tmux echoes bytes directly), but the first Enter can hit
+the welcome/loading state and be discarded — prompt then sits in
+the input row forever, session marked `running` but codex never
+runs the turn. Detection: after Enter, capture pane, check the last
+`›` input row for the prompt marker. If still there, retry Enter
+(max 3, 800ms interval). Affects all sendPrompt callers: fresh
+spawn, wake-from-sleeping, fork with prompt.
+
 Prerequisites:
 - `npm install -g @openai/codex` (or brew)
 - `codex login --device-auth` (browser device code, one-time)
