@@ -8,6 +8,7 @@ import { formatRelative, formatDuration } from '@/lib/time'
 import { isActive } from '@/lib/status'
 import { Sparkles, Terminal, Bot, X } from 'lucide-react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
+import { fmtTokens } from '@/lib/format'
 
 interface Props {
   session: SessionMetadata
@@ -36,6 +37,12 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
   const active = isActive(session.status)
   const needsInput = session.status === 'needs_input'
   const icon = AGENT_ICON[session.agentType] ?? <Bot className="w-4 h-4" />
+  const metrics = session.codexMetrics
+  const ctxUsedPct = metrics ? 100 - metrics.contextLeftPct : null
+  const ctxColorClass = ctxUsedPct == null ? '' :
+    ctxUsedPct >= 80 ? 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300' :
+    ctxUsedPct >= 50 ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300' :
+                       'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400'
 
   return (
     <Link
@@ -96,6 +103,32 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
               >
                 effort:{effort}
               </span>
+            )}
+            {metrics && (
+              <>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${ctxColorClass}`}
+                  title={`Context: ${metrics.contextLeftPct}% left (${fmtTokens(metrics.contextUsedTokens)} / ${fmtTokens(metrics.contextMaxTokens)}). Snapshot ${new Date(metrics.capturedAt).toLocaleTimeString()}${metrics.stale ? ' — codex reports cached, may be stale' : ''}`}
+                >
+                  ctx {fmtTokens(metrics.contextUsedTokens)}/{fmtTokens(metrics.contextMaxTokens)}{metrics.stale ? '*' : ''}
+                </span>
+                {metrics.fiveHourLeftPct != null && (
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
+                    title={metrics.fiveHourResetAt ? `5h limit resets ${metrics.fiveHourResetAt}` : '5h rolling limit'}
+                  >
+                    5h {metrics.fiveHourLeftPct}%
+                  </span>
+                )}
+                {metrics.weeklyLeftPct != null && (
+                  <span
+                    className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
+                    title={metrics.weeklyResetAt ? `Weekly limit resets ${metrics.weeklyResetAt}` : 'Weekly rolling limit'}
+                  >
+                    7d {metrics.weeklyLeftPct}%
+                  </span>
+                )}
+              </>
             )}
             <span className="text-xs text-zinc-400 dark:text-zinc-500 font-mono">{session.id.slice(0, 8)}</span>
           </div>
