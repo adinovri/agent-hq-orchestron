@@ -168,9 +168,12 @@ export class SessionManager {
 
   /** Write a per-session MCP config that exposes the orchestron server to
    *  the child agent. Returns the file path, or undefined if auto-inject
-   *  is not configured. */
-  private async ensureSessionMcpConfig(sessionId: string): Promise<string | undefined> {
+   *  is not configured. Currently CLAUDE-only — Codex uses a different
+   *  MCP config surface (inline `-c mcp_servers.*` overrides at spawn),
+   *  wiring for that lives in the codex adapter directly. */
+  private async ensureSessionMcpConfig(sessionId: string, agentType?: import('@agent-hq-orchestron/shared').AgentType): Promise<string | undefined> {
     if (!this.mcpAutoInject) return undefined
+    if (agentType && agentType !== 'claude') return undefined
     const cfg = {
       mcpServers: {
         orchestron: {
@@ -237,16 +240,37 @@ export class SessionManager {
 
     const uuid = crypto.randomUUID()
     const adapter = this.registry.getOrThrow(spawnConfig.agentType)
-    const mcpConfigPath = await this.ensureSessionMcpConfig(uuid)
-    // Capture the effective CLAUDE_CONFIG_DIR that this spawn will run
-    // under, so wake-up / reopen / clone in the future use the SAME dir
-    // regardless of what the API process's env looks like then.
+    const mcpConfigPath = await this.ensureSessionMcpConfig(uuid, spawnConfig.agentType)
+    // Capture the effective config dir for this spawn — helper is claude-
+    // specific (reads CLAUDE_CONFIG_DIR), but the pattern applies to any
+    // harness that keeps a per-user config directory. For codex the adapter
+    // reads CODEX_HOME internally; we just pass through spawnConfig.configDir.
     const { effectiveClaudeConfigDir } = await import('../adapters/claude.js')
     const effectiveConfigDir = spawnConfig.agentType === 'claude'
       ? effectiveClaudeConfigDir(spawnConfig.configDir)
       : spawnConfig.configDir
     await this.ensureMemorySymlink(spawnConfig.agentType, effectiveConfigDir, spawnConfig.workspace)
-    const handle = await adapter.spawn({ ...spawnConfig, configDir: effectiveConfigDir, mcpConfigPath })
+    let handle = await adapter.spawn({ ...spawnConfig, configDir: effectiveConfigDir, mcpConfigPath })
+
+    // Codex path: adapter returns handle with empty claudeUuid + jsonlPath
+    // because codex assigns its own session UUID (UUID v7) — capture happens
+    // after TUI is ready by scanning the rollout dir. Wait for TUI first,
+    // then invoke the adapter's captureNewSessionId() method.
+    if (spawnConfig.agentType === 'codex' && handle.claudeUuid === '') {
+      try {
+        await adapter.waitTuiReady(handle, 30_000)
+        const maybeCodex = adapter as unknown as {
+          captureNewSessionId?: (h: typeof handle, cd?: string, t?: number) => Promise<{ sessionId: string; jsonlPath: string }>
+        }
+        if (typeof maybeCodex.captureNewSessionId === 'function') {
+          const captured = await maybeCodex.captureNewSessionId(handle, effectiveConfigDir, 10_000)
+          handle = { ...handle, claudeUuid: captured.sessionId, jsonlPath: captured.jsonlPath }
+        }
+      } catch (err) {
+        console.warn(`[session-manager] codex session-id capture failed for ${uuid}: ${(err as Error).message}`)
+        // Persist with empty ids — session unusable but at least record exists for cleanup
+      }
+    }
 
     const now = new Date().toISOString()
     const session: SessionMetadata = {
