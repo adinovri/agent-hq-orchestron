@@ -29,7 +29,8 @@ export function NavBar() {
   return (
     <nav className="sticky top-0 z-40 h-14 border-b border-zinc-200 dark:border-zinc-800 bg-white/85 dark:bg-zinc-950/85 backdrop-blur flex items-center px-3 sm:px-4 gap-4 sm:gap-6">
       <Link href="/dashboard" className="font-semibold text-sm shrink-0 flex items-center gap-1.5">
-        <span className="inline-block w-6 h-6 rounded-md bg-gradient-to-br from-blue-500 to-blue-700 text-white text-xs flex items-center justify-center font-bold">O</span>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/icons/source.svg" alt="Orchestron" className="w-6 h-6 rounded-md" />
         <span className="hidden sm:inline">Orchestron</span>
       </Link>
 
