@@ -50,6 +50,19 @@ const QUESTION_PHRASES = [
   /shall i/i,
   /could you (tell|specify|clarify|share)/i,
 ]
+/** Drop a model when it looks like it belongs to a different harness — e.g.
+ *  a project's defaultModel `claude-sonnet-5` accidentally passed to a codex
+ *  spawn. Adapter's own default is safer than a rejection at spawn time. */
+function filterModelForHarness(model: string | undefined, agentType: import('@agent-hq-orchestron/shared').AgentType): string | undefined {
+  if (!model) return undefined
+  const isClaudeModel = /^claude[-_]/i.test(model)
+  const isGptModel = /^gpt[-_]/i.test(model)
+  const isCodexAstra = /^(codex|astra)/i.test(model)
+  if (agentType === 'claude' && (isGptModel || isCodexAstra)) return undefined
+  if (agentType === 'codex' && isClaudeModel) return undefined
+  return model
+}
+
 function textAsksQuestion(text: string): boolean {
   const t = text.trim()
   if (!t) return false
@@ -259,16 +272,22 @@ export class SessionManager {
     const mcpConfigInline = spawnConfig.agentType === 'codex'
       ? this.buildCodexMcpArgs(uuid)
       : undefined
-    // Capture the effective config dir for this spawn — helper is claude-
-    // specific (reads CLAUDE_CONFIG_DIR), but the pattern applies to any
-    // harness that keeps a per-user config directory. For codex the adapter
-    // reads CODEX_HOME internally; we just pass through spawnConfig.configDir.
+    // Effective config dir: harness-specific. For claude, resolve the Claude
+    // configDir cascade (arg → CLAUDE_CONFIG_DIR env → ~/.claude). For codex,
+    // spawnConfig.configDir is usually a Claude project's configDir which is
+    // WRONG for codex (codex uses CODEX_HOME). Drop it — codex adapter falls
+    // back to CODEX_HOME env or ~/.codex.
     const { effectiveClaudeConfigDir } = await import('../adapters/claude.js')
     const effectiveConfigDir = spawnConfig.agentType === 'claude'
       ? effectiveClaudeConfigDir(spawnConfig.configDir)
-      : spawnConfig.configDir
+      : undefined
+    // Same-harness model check: project defaults might carry a Claude model
+    // that Codex would reject at spawn. Drop the model if it looks like the
+    // wrong family; adapter will fall back to its own default (gpt-6-astra
+    // for codex, sonnet for claude).
+    const effectiveModel = filterModelForHarness(spawnConfig.model, spawnConfig.agentType)
     await this.ensureMemorySymlink(spawnConfig.agentType, effectiveConfigDir, spawnConfig.workspace)
-    let handle = await adapter.spawn({ ...spawnConfig, configDir: effectiveConfigDir, mcpConfigPath, mcpConfigInline })
+    let handle = await adapter.spawn({ ...spawnConfig, model: effectiveModel, configDir: effectiveConfigDir, mcpConfigPath, mcpConfigInline })
 
     // Codex path: adapter returns handle with empty claudeUuid + jsonlPath
     // because codex assigns its own session UUID (UUID v7) — capture happens

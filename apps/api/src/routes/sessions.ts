@@ -332,9 +332,20 @@ export function sessionsPlugin(
 
       const configDir = project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
 
+      // Enforce 1-project-1-harness rule: a project's agentType is
+      // authoritative. Body agentType (if any) must match, else reject —
+      // avoids cross-harness mismatches like spawning codex against a
+      // project whose defaults are Claude-flavored.
+      if (body.data.agentType && body.data.agentType !== project.agentType) {
+        return reply.code(409).send({
+          error: `Project agentType is '${project.agentType}' — cannot spawn '${body.data.agentType}' session against it. One project = one harness.`,
+        })
+      }
+      const agentType = project.agentType
+
       const session = await manager.spawn({
         projectId,
-        agentType: body.data.agentType ?? project.agentType,
+        agentType,
         initialPrompt,
         parentSessionId,
         workspace: project.path,
