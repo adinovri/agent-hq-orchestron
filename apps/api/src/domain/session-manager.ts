@@ -93,6 +93,67 @@ function textAsksQuestion(text: string): boolean {
   return QUESTION_PHRASES.some((re) => re.test(t))
 }
 
+const MODAL_FOOTER_RE = /(↑\/↓|▲\/▼)\s+to\s+navigate/
+const MODAL_SELECT_RE = /Enter\s+to\s+select/
+// Numbered option lines in the modal: "❯ 1. Yes", "  2. No", …
+// Leading char varies (❯ / ● / space). We accept any single non-digit char.
+const OPTION_LINE_RE = /^\s*(?:[❯●▶>▷◈]?\s*)?(\d+)\.\s+(.+?)\s*$/
+const PERMISSION_HINT_RE = /(Do\s+you\s+want\s+to\s+proceed\??|Do\s+you\s+want\s+to\s+allow)/i
+
+/** Parse a captured tmux pane into a PendingPrompt when the Claude selector
+ *  modal (AskUserQuestion or permission approval) is currently displayed.
+ *  Returns null when no modal is present. The parser looks for the modal
+ *  footer, then walks up to pick up numbered options and the closest
+ *  preceding non-option / non-separator line as `title`. */
+function parseSelectorModal(pane: string): import('@agent-hq-orchestron/shared').PendingPrompt | null {
+  if (!MODAL_FOOTER_RE.test(pane) || !MODAL_SELECT_RE.test(pane)) return null
+
+  const lines = pane.split(/\r?\n/)
+  const footerIdx = lines.findIndex((l) => MODAL_FOOTER_RE.test(l) && MODAL_SELECT_RE.test(l))
+  const searchEnd = footerIdx === -1 ? lines.length : footerIdx
+
+  // Walk upward: collect option lines from the bottom of the modal, then
+  // the first non-empty, non-separator line above them becomes the title.
+  const options: string[] = []
+  let cursor = searchEnd - 1
+  while (cursor >= 0) {
+    const line = lines[cursor] ?? ''
+    if (!line.trim()) { cursor--; continue }
+    const m = line.match(OPTION_LINE_RE)
+    if (m) {
+      options.unshift((m[2] ?? '').trim())
+      cursor--
+      continue
+    }
+    break
+  }
+  if (options.length === 0) return null
+
+  // Title = closest non-empty non-separator line above the option block.
+  let title = ''
+  let detail: string | undefined
+  while (cursor >= 0) {
+    const line = (lines[cursor] ?? '').trim()
+    if (!line || /^[─━=—-]{3,}$/.test(line)) { cursor--; continue }
+    title = line
+    // Grab up to 3 preceding non-empty lines as detail (e.g. the bash command)
+    const detailLines: string[] = []
+    let d = cursor - 1
+    while (d >= 0 && detailLines.length < 3) {
+      const dl = (lines[d] ?? '').trim()
+      if (!dl || /^[─━=—-]{3,}$/.test(dl)) break
+      detailLines.unshift(dl)
+      d--
+    }
+    if (detailLines.length > 0) detail = detailLines.join('\n')
+    break
+  }
+  if (!title) title = 'Selector modal'
+
+  const kind: 'permission' | 'question' = PERMISSION_HINT_RE.test(pane) ? 'permission' : 'question'
+  return { kind, title, detail, options, capturedAt: new Date().toISOString() }
+}
+
 export interface SessionManagerConfig {
   dataDir: string
   maxConcurrent: number
@@ -983,28 +1044,80 @@ export class SessionManager {
   }
 
   /**
-   * Scan tmux panes of `running` claude sessions for the AskUserQuestion
-   * selector modal footer (`↑/↓ to navigate` + `Enter to select`) and
-   * transition to `needs_input` when found. Codex uses a different approval
-   * model and is skipped. Best-effort — pane capture failures are silent.
+   * Scan tmux panes of `running` / `needs_input` claude sessions for an
+   * interactive selector modal — AskUserQuestion, permission approval, etc.
+   * When found: transition to `needs_input` AND capture the prompt into
+   * session.pendingPrompt so the dashboard can render an approval banner.
+   * Codex uses a different approval model and is skipped. Best-effort —
+   * pane capture failures are silent.
    */
   private async sweepAskUserPrompts(): Promise<void> {
     const sessions = await this.list()
     const tmux = await import('../adapters/tmux.js')
     for (const s of sessions) {
-      if (s.status !== 'running') continue
+      // Also scan needs_input so we can clear pendingPrompt when the modal
+      // is dismissed externally (user hit Escape in tmux, another agent
+      // answered, etc.).
+      if (s.status !== 'running' && s.status !== 'needs_input') continue
       if (s.agentType !== 'claude') continue
       if (!s.tmuxName) continue
       try {
         const pane = await tmux.capturePane(s.tmuxName)
-        // Match the modal footer; both bullets present is a strong signal
-        // that the selector is currently displayed. Match either arrow style
-        // (some builds use ▲/▼ instead of ↑/↓).
-        if (/(↑\/↓|▲\/▼)\s+to\s+navigate/.test(pane) && /Enter\s+to\s+select/.test(pane)) {
-          await this.reconcilePendingUserQuestion(s.id).catch(() => {})
+        const prompt = parseSelectorModal(pane)
+        if (prompt) {
+          if (s.status === 'running') {
+            await this.reconcilePendingUserQuestion(s.id).catch(() => {})
+          }
+          await this.setPendingPrompt(s.id, prompt).catch(() => {})
+        } else if (s.pendingPrompt) {
+          // Modal gone but stale prompt on record — clear it
+          await this.setPendingPrompt(s.id, null).catch(() => {})
         }
       } catch { /* pane may be gone if tmux was killed between list & capture */ }
     }
+  }
+
+  /** Merge (or clear) the pendingPrompt field on a session record. Only
+   *  writes when the payload actually differs — avoids rewriting the file
+   *  on every 20s sweep tick when nothing changed. */
+  async setPendingPrompt(uuid: string, prompt: import('@agent-hq-orchestron/shared').PendingPrompt | null): Promise<void> {
+    const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!session) return
+    const cur = session.pendingPrompt
+    // Compare by shape ignoring capturedAt so a re-scan of the same modal
+    // doesn't churn the record.
+    const same =
+      (cur == null && prompt == null) ||
+      (!!cur && !!prompt &&
+        cur.kind === prompt.kind &&
+        cur.title === prompt.title &&
+        (cur.detail ?? '') === (prompt.detail ?? '') &&
+        cur.options.length === prompt.options.length &&
+        cur.options.every((o, i) => o === prompt.options[i]))
+    if (same) return
+    await writeJson(this.sessionPath(uuid), { ...session, pendingPrompt: prompt })
+  }
+
+  /** Answer a pending selector modal by index (1-based, matching how the
+   *  options are numbered in the TUI). Sends `Down`×(index-1) + `Enter` to
+   *  the tmux pane. Also clears `pendingPrompt` optimistically so the UI
+   *  banner disappears before the next sweep tick. */
+  async answerPendingPrompt(uuid: string, index: number): Promise<SessionMetadata> {
+    const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!session) throw new Error(`Session not found: ${uuid}`)
+    if (!session.pendingPrompt) throw new Error(`No pending prompt for session ${uuid}`)
+    const total = session.pendingPrompt.options.length
+    if (!Number.isInteger(index) || index < 1 || index > total) {
+      throw new Error(`Invalid choice ${index} — must be 1..${total}`)
+    }
+    const tmux = await import('../adapters/tmux.js')
+    const keys: string[] = []
+    for (let i = 1; i < index; i++) keys.push('Down')
+    keys.push('Enter')
+    await tmux.sendKeySequence(session.tmuxName, keys)
+    await this.setPendingPrompt(uuid, null)
+    const after = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    return after ?? session
   }
 
   private async sweepOrphans(): Promise<void> {

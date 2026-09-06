@@ -58,6 +58,23 @@ export interface SessionMetadata {
    *  to decide whether reopen/fork will succeed — false means resume will
    *  fail and the only recovery is respawn. */
   hasTranscript?: boolean
+  /** Set when the pane-scan sweep sees an interactive selector modal in the
+   *  Claude TUI (permission approval, AskUserQuestion fallback, etc). Populated
+   *  by SessionManager.sweepAskUserPrompts and cleared when the modal is
+   *  answered. Frontend renders it as an approval banner in session detail. */
+  pendingPrompt?: PendingPrompt | null
+}
+
+/** Snapshot of an interactive selector modal captured from the tmux pane.
+ *  `options` is the numbered choices as displayed (1-indexed labels). `title`
+ *  and `detail` are the free-text lines above the options, if any (e.g. the
+ *  Bash command being approved). */
+export interface PendingPrompt {
+  kind: 'permission' | 'question'
+  title: string
+  detail?: string
+  options: string[]
+  capturedAt: string
 }
 
 export interface AgentConfig {

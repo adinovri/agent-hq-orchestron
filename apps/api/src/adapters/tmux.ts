@@ -37,6 +37,14 @@ export async function sendKeys(sessionName: string, keys: string): Promise<void>
   await execFile('tmux', ['send-keys', '-t', sessionName, keys, ''])
 }
 
+/** Send a sequence of named keys (Down, Up, Enter, Escape, y, n, …) in one
+ *  `tmux send-keys` invocation. Each item becomes a separate argument so
+ *  tmux interprets it as a distinct key. */
+export async function sendKeySequence(sessionName: string, keys: string[]): Promise<void> {
+  if (keys.length === 0) return
+  await execFile('tmux', ['send-keys', '-t', sessionName, ...keys])
+}
+
 export async function capturePane(sessionName: string): Promise<string> {
   const { stdout } = await execFile('tmux', [
     'capture-pane', '-p', '-t', sessionName,

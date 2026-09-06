@@ -591,6 +591,25 @@ export function sessionsPlugin(
       }
     })
 
+    // Answer a pending TUI selector modal (permission approval, AskUserQuestion
+    // fallback) by option index. Sends Down×(index-1) + Enter into the tmux
+    // pane and clears session.pendingPrompt so the UI banner disappears.
+    app.post('/api/sessions/:uuid/answer-prompt', async (req, reply) => {
+      const { uuid } = req.params as { uuid: string }
+      const body = z.object({ index: z.number().int().min(1) }).safeParse(req.body)
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+      try {
+        const session = await manager.answerPendingPrompt(uuid, body.data.index)
+        return session
+      } catch (err: unknown) {
+        const msg = (err as Error).message ?? ''
+        if (msg.includes('not found')) return reply.code(404).send({ error: msg })
+        if (msg.includes('No pending prompt')) return reply.code(409).send({ error: msg })
+        if (msg.includes('Invalid choice')) return reply.code(400).send({ error: msg })
+        throw err
+      }
+    })
+
     // Upload files (images, code, PDFs) to a session's temp dir. Returns
     // the saved paths so the caller can reference them in a follow-up prompt
     // (Claude's Read/vision tools consume by absolute path).

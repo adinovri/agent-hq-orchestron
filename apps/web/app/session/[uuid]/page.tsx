@@ -9,6 +9,7 @@ import { SessionActionDialog, type SessionActionKind } from '@/components/Sessio
 import type { EffortLevel } from '@agent-hq-orchestron/shared'
 import { InputBox } from '@/components/InputBox'
 import { KillConfirmDialog } from '@/components/KillConfirmDialog'
+import { PendingPromptBanner } from '@/components/PendingPromptBanner'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
 import type { SessionMetadata, DelegationEdges, ProjectMetadata } from '@agent-hq-orchestron/shared'
 
@@ -178,6 +179,10 @@ export default function SessionDetailPage({ params }: PageProps) {
         projectDefaultModel={currentProject?.defaultModel}
         projectDefaultEffort={currentProject?.defaultEffort}
       />
+
+      {session.pendingPrompt && !readOnly && (
+        <PendingPromptBanner uuid={uuid} prompt={session.pendingPrompt} />
+      )}
 
       <div className="flex-1 overflow-hidden">
         <TranscriptPanePoll uuid={uuid} status={session.status} agentType={session.agentType} />
