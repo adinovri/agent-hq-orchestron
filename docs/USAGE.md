@@ -242,29 +242,40 @@ If orchestron finds a real file/dir already at the expected path, it
 renames to `<name>.bak-<timestamp>` before creating the symlink —
 nothing is deleted, safe to merge manually.
 
-### Codex adapter (WIP)
+### Codex adapter
 
-Codex support is scaffolded but has an outstanding limitation:
-interactive TUI mode (`codex --no-alt-screen`) does not write JSONL
-rollout files — only `codex exec` mode does. Orchestron's transcript
-polling reads from JSONL, so codex interactive sessions currently
-show no transcript entries. Fix in progress: SQLite reader that
-queries `thread_history_1.sqlite` directly.
+Codex sessions behave the same as claude sessions across the full
+orchestron lifecycle — spawn / reopen / fork / respawn / archive,
+harness-aware model picker (GPT-6-Astra, GPT-5.6-Sol/Terra/Luna,
+GPT-5.5, GPT-5.4-Mini, GPT-5.3-Codex-Spark), effort picker adding
+`ultra` (max + auto delegation), MCP auto-inject via inline `-c`
+overrides, shared memory pool via SQLite symlink, terminal report to
+parent on archive, guardrails on `spawn_session`.
 
-Once wired end-to-end, codex sessions behave like claude sessions in
-orchestron — same spawn/reopen/fork/respawn flow, harness-aware model
-picker (GPT-6-Astra, GPT-5.6-Sol/Terra/Luna, etc), effort picker
-adding `ultra` (max + auto delegation). 1-project-1-harness rule
-means you register a codex-specific project (`agentType: codex`),
-sessions spawned under it use codex CLI; you cannot mix harnesses in
-one project.
+**1-project-1-harness rule** — a project's `agentType` is
+authoritative. Register a codex-specific project (via ProjectDialog
+UI or `POST /api/projects { agentType: "codex" }`); sessions spawned
+under it always use codex CLI. Trying to spawn a codex session in a
+claude project (or vice-versa) is rejected with HTTP 409.
+
+**Transcript source** — codex interactive TUI (`--no-alt-screen`)
+writes to `~/.codex/thread_history_1.sqlite` (SQLite), not JSONL.
+Orchestron's `/transcript` endpoint auto-detects: reads JSONL for
+claude, SQLite for codex.
+
+**Known limitation** — context indicator (`ctx N/N` chip) is hidden
+for codex sessions because the SQLite tables don't carry token
+counts. Codex sessions run without a live context-usage display.
+
+**Session id** — codex assigns UUID v7 (timestamp-prefixed) itself;
+adapter captures via `captureNewSessionId()` polling the SQLite for
+newest thread after `sendPrompt`.
 
 Prerequisites:
 - `npm install -g @openai/codex` (or brew)
 - `codex login --device-auth` (browser device code, one-time)
 - Set `config.adapters.codex = true` in `~/.orchestron/config.json`
-- Register a codex-only project via `POST /api/projects` with
-  `agentType: "codex"` or via ProjectDialog UI
+- Register a codex-only project (path + `agentType: "codex"`)
 
 ---
 
