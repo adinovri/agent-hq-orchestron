@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { fetchJson } from '@/lib/fetcher'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
+import { modelsFor, effortsFor } from '@/lib/models'
 
 interface Props {
   open: boolean
@@ -212,14 +213,10 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
                 onChange={(e) => set('defaultModel', e.target.value)}
                 className={inputCls}
               >
-                <option value="">— Claude default</option>
-                <option value="claude-opus-5">Opus 5</option>
-                <option value="claude-sonnet-5">Sonnet 5</option>
-                <option value="claude-fable-5-1">Fable 5.1</option>
-                <option value="claude-fable-5">Fable 5</option>
-                <option value="claude-opus-4-8">Opus 4.8</option>
-                <option value="claude-sonnet-4-6">Sonnet 4.6</option>
-                <option value="claude-haiku-4-5">Haiku 4.5</option>
+                <option value="">— Harness default</option>
+                {modelsFor(form.agentType).map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
               </select>
             </div>
             <div>
@@ -229,12 +226,10 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
                 onChange={(e) => set('defaultEffort', e.target.value)}
                 className={inputCls}
               >
-                <option value="">— Claude default</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="xhigh">Extra high</option>
-                <option value="max">Max</option>
+                <option value="">— Harness default</option>
+                {effortsFor(form.agentType).map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
               </select>
             </div>
           </div>

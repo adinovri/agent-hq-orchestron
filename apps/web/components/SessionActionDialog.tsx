@@ -3,27 +3,9 @@
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import type { AgentType, EffortLevel } from '@agent-hq-orchestron/shared'
+import { modelsFor, effortsFor } from '@/lib/models'
 
-// Per-harness model options. Codex/OpenCode fall back to free-text.
-const CLAUDE_MODELS = [
-  { value: '', label: '— Default / keep' },
-  { value: 'claude-opus-5', label: 'Opus 5 (most capable)' },
-  { value: 'claude-sonnet-5', label: 'Sonnet 5' },
-  { value: 'claude-fable-5-1', label: 'Fable 5.1 (fast experimental)' },
-  { value: 'claude-fable-5', label: 'Fable 5' },
-  { value: 'claude-opus-4-8', label: 'Opus 4.8' },
-  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6 (balanced)' },
-  { value: 'claude-haiku-4-5', label: 'Haiku 4.5 (fast + cheap)' },
-]
-
-const EFFORTS = [
-  { value: '', label: '— Default / keep' },
-  { value: 'low', label: 'Low (quick answers)' },
-  { value: 'medium', label: 'Medium (balanced)' },
-  { value: 'high', label: 'High (thorough)' },
-  { value: 'xhigh', label: 'Extra high (deep reasoning)' },
-  { value: 'max', label: 'Max (exhaustive)' },
-]
+const KEEP: { value: ''; label: string } = { value: '', label: '— Default / keep' }
 
 export type SessionActionKind = 'reopen' | 'fork' | 'respawn'
 
@@ -80,7 +62,9 @@ export function SessionActionDialog({
   if (!open) return null
 
   const meta = ACTION_META[kind]
-  const isClaude = agentType === 'claude'
+  const models = [KEEP, ...modelsFor(agentType)]
+  const efforts = [KEEP, ...effortsFor(agentType)]
+  const hasCuratedModels = models.length > 1
   const inputCls = 'w-full px-3 py-2 text-sm bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded focus:outline-none focus:ring-2 focus:ring-blue-500'
 
   const inheritedModel = currentModel ?? defaultModel
@@ -102,9 +86,9 @@ export function SessionActionDialog({
             <label className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">
               Model {inheritedModel && <span className="text-zinc-400 font-normal">(current: {inheritedModel})</span>}
             </label>
-            {isClaude ? (
+            {hasCuratedModels ? (
               <select className={inputCls} value={model} onChange={(e) => setModel(e.target.value)} disabled={pending}>
-                {CLAUDE_MODELS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+                {models.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
               </select>
             ) : (
               <input
@@ -123,7 +107,7 @@ export function SessionActionDialog({
               Effort {inheritedEffort && <span className="text-zinc-400 font-normal">(current: {inheritedEffort})</span>}
             </label>
             <select className={inputCls} value={effort} onChange={(e) => setEffort(e.target.value)} disabled={pending}>
-              {EFFORTS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+              {efforts.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
             </select>
           </div>
 

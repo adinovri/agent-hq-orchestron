@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, DragEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { apiFetch, fetchJson } from '@/lib/fetcher'
 import { X, Paperclip, FileText, Image as ImageIcon, FileCode, File as FileIcon } from 'lucide-react'
+import { modelsFor, effortsFor } from '@/lib/models'
 
 interface AttachedFile {
   id: string
@@ -35,35 +36,18 @@ interface TemplateInfo {
 interface Props {
   open: boolean
   onClose: () => void
-  projects: Array<{ id: string; name: string }>
+  projects: Array<{ id: string; name: string; agentType?: import('@agent-hq-orchestron/shared').AgentType }>
   templates: TemplateInfo[]
   onSpawned: () => void
 }
 
-const MODEL_OPTIONS = [
-  { value: '', label: 'Default (project setting)' },
-  // Latest tier — Claude 5 family
-  { value: 'claude-opus-5', label: 'Opus 5 (most capable)' },
-  { value: 'claude-sonnet-5', label: 'Sonnet 5' },
-  { value: 'claude-fable-5-1', label: 'Fable 5.1 (fast experimental)' },
-  { value: 'claude-fable-5', label: 'Fable 5' },
-  // Prior generation
-  { value: 'claude-opus-4-8', label: 'Opus 4.8' },
-  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6 (balanced)' },
-  { value: 'claude-haiku-4-5', label: 'Haiku 4.5 (fast + cheap)' },
-]
-
-const EFFORT_OPTIONS = [
-  { value: '', label: 'Default' },
-  { value: 'low', label: 'Low (quick answers)' },
-  { value: 'medium', label: 'Medium (balanced)' },
-  { value: 'high', label: 'High (thorough)' },
-  { value: 'xhigh', label: 'Extra high (deep reasoning)' },
-  { value: 'max', label: 'Max (heaviest)' },
-]
+// Model + effort options are harness-aware — computed inside the component
+// once the user picks a project. See lib/models.ts for the curated catalogs.
+const DEFAULT_ROW = { value: '', label: 'Default (project setting)' }
 
 export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: Props) {
   const [projectId, setProjectId] = useState('')
+  const selectedAgentType = projects.find((p) => p.id === projectId)?.agentType
   const [template, setTemplate] = useState('')
   const [prompt, setPrompt] = useState('')
   const [model, setModel] = useState('')
@@ -297,7 +281,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
                 onChange={(e) => setModel(e.target.value)}
                 className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"
               >
-                {MODEL_OPTIONS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+                {[DEFAULT_ROW, ...modelsFor(selectedAgentType)].map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
               </select>
             </div>
             <div>
@@ -307,7 +291,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
                 onChange={(e) => setEffort(e.target.value)}
                 className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"
               >
-                {EFFORT_OPTIONS.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+                {[DEFAULT_ROW, ...effortsFor(selectedAgentType)].map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
               </select>
             </div>
           </div>

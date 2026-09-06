@@ -233,7 +233,7 @@ export default function DashboardPage() {
       <SpawnDialog
         open={spawnOpen}
         onClose={() => setSpawnOpen(false)}
-        projects={projects.map((p) => ({ id: p.id, name: p.name }))}
+        projects={projects.map((p) => ({ id: p.id, name: p.name, agentType: p.agentType }))}
         templates={templates}
         onSpawned={() => qc.invalidateQueries({ queryKey: ['sessions'] })}
       />

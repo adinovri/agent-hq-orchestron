@@ -5,7 +5,7 @@ import { z } from 'zod'
 // ============================================================================
 
 export const AgentTypeSchema = z.enum(['claude', 'codex', 'opencode'])
-export const EffortLevelSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
+export const EffortLevelSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
 
 // ============================================================================
 // Session lifecycle — 7 states per HLD state diagram

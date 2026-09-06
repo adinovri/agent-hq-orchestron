@@ -146,7 +146,7 @@ export interface SessionEvent {
   data: unknown
 }
 
-export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 
 export interface SpawnConfig {
   projectId: string
