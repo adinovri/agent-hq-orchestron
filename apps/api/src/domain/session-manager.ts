@@ -1383,11 +1383,17 @@ export class SessionManager {
           const uuid = f.replace(/\.json$/, '')
           const record = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
           if (!record) return
-          // Runtime hint: does the Claude JSONL still exist on disk? Consumed
+          // Runtime hint: does the transcript still exist on disk? Consumed
           // by the UI to decide if Reopen/Fork are viable (they need the
-          // conversation to resume from). Cheap stat, batched here so callers
-          // don't have to check per-session.
-          record.hasTranscript = existsSync(record.jsonlPath)
+          // conversation to resume from).
+          // - Claude: JSONL file at record.jsonlPath must exist.
+          // - Codex interactive: writes to SQLite (~/.codex/thread_history_1.sqlite),
+          //   jsonlPath is empty. Use claudeSessionUuid (thread_id) presence as
+          //   the indicator — the capture step only populates it after codex
+          //   has written to SQLite, so a non-empty thread id == transcript exists.
+          record.hasTranscript = record.agentType === 'codex'
+            ? record.claudeSessionUuid !== ''
+            : existsSync(record.jsonlPath)
           sessions.push(record)
         }),
     )
