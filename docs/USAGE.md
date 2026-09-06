@@ -299,6 +299,12 @@ Weekly limit:    [█████████████░░░░░░░] 
 Weekly limit:    [████████████████████] 100% left (resets 12:06 on 13 Sep)
 ```
 
+**⚠️ Semantic of `N%`:** every percentage in the `/status` modal is
+`N% left` (REMAINING budget), NOT used. `93% left` = plenty of room,
+only 12% consumed (29.9K/258K). Parsers must compute
+`used = 100 − left` or display verbatim as "N% left" — inverting
+would make the chip alarm on fresh sessions.
+
 Caveats:
 - Modal appears in user's TUI (visible if they `tmux a`). Interrupts
   their view of the chat until dismissed.
