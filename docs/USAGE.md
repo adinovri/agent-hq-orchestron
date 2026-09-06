@@ -277,8 +277,8 @@ Silver lining: `models_cache.json` does carry `context_window` and
 chip is already available; only the numerator (live token count) is
 missing.
 
-**Token / context / rate-limit metric — on-demand scrape works**
-(corrected 2026-09-06 after `/status` slash-command probe):
+**Token / context / rate-limit metric — deferred, no viable in-band
+path** (revised 2026-09-06 after attempted `/status` scrape):
 
 Persistent surfaces (all empty — nothing to poll passively):
 - `thread_history_1.sqlite` — item_json content only.
@@ -287,48 +287,51 @@ Persistent surfaces (all empty — nothing to poll passively):
 - `state_5.sqlite` — migrations + rollout state only.
 - TUI status bar — persistent `<model> · <cwd>` only.
 
-**On-demand surface (viable):** typing `/status` in the TUI renders
-a modal with real numbers. Reproducible via
-`tmux send-keys -t <session> C-u "/status" C-m` + short wait +
-`tmux capture-pane -p`. Sample output:
+**Attempted approach: `/status` slash-command scrape** — commits
+`0213cca` (refresh button + endpoint), `7200955` (SessionCard chips),
+`4f3d434` (auto-refresh on idle). **All reverted** in `d4b95ce` /
+`bad673a` / `e3caf7a`. The modal DOES carry real numbers:
 
 ```
 Context window:  93% left (29.9K used / 258K)
 Weekly limit:    [█████████████░░░░░░░] 63% left (resets 09:25 on 7 Sep)
 5h limit:        [████████████████████] 100% left (resets 17:06)
-Weekly limit:    [████████████████████] 100% left (resets 12:06 on 13 Sep)
 ```
+(⚠️ semantic: `N% left` = REMAINING, not used — 93% left = fresh.)
 
-**⚠️ Semantic of `N%`:** every percentage in the `/status` modal is
-`N% left` (REMAINING budget), NOT used. `93% left` = plenty of room,
-only 12% consumed (29.9K/258K). Parsers must compute
-`used = 100 − left` or display verbatim as "N% left" — inverting
-would make the chip alarm on fresh sessions.
+But injecting `/status` into the tmux pane is fundamentally unsafe:
+- **Collides with mid-turn state.** If codex is running or between
+  paste-and-send, the slash-command lands in the wrong place — either
+  gets appended to the user's prompt as literal text, or interrupts a
+  paste sequence mid-flight.
+- **Modal is visible to the user.** Anyone `tmux a`-attached sees
+  the modal pop up unexpectedly on every idle transition (auto path)
+  or refresh click.
+- **Reset-on-restart wasn't reliable.** E2E testing found spawns
+  stuck `running` after the refresh code was in place — auto-refresh
+  and initial-paste race conditions were suspected, never fully
+  diagnosed.
 
-Caveats:
-- Modal appears in user's TUI (visible if they `tmux a`). Interrupts
-  their view of the chat until dismissed.
-- Codex caches the numbers ("limits may be stale — run /status
-  again shortly"), so scrape freshness ≠ instantaneous.
-- Regex-parse fragile to OpenAI formatting changes.
-- Flat-rate bundled sub — no $ per-token, chip is "% context / %
-  weekly quota", not cost.
+**Only viable accurate paths (all still deferred, heavy)**:
+1. Rewrite adapter to drive codex in `app-server` mode over stdio
+   JSON-RPC → tap live `thread/tokenUsage/updated` event. Loses tmux
+   TUI paradigm; user can no longer manually `tmux a`.
+2. Side-adapter driving `codex mcp` mode — opt-in per project. Same
+   rewrite cost, branches codebase.
+3. Upstream fix: file an issue at github.com/openai/codex asking to
+   persist `thread/tokenUsage/updated` payload into
+   `thread_history_1.sqlite` (or expose `--metrics-log <file>`
+   flag). If accepted, the existing SQLite parser gets one extra
+   query — zero adapter rewrite. Recommended first move.
 
-**Integration options (none implemented yet):**
-1. Poll opportunistically when session enters `idle` (not
-   `running`); debounce ~60s so the modal doesn't spam.
-2. On-demand refresh button in UI — user-triggered only.
-3. Both.
+Until one of those lands, orchestron shows **no** context/quota data
+for codex sessions. Codex is flat-rate bundled so $ cost = N/A
+anyway; the missing metric is really just "% context used" and
+weekly/5h quota — visible in the TUI itself if the user types
+`/status` manually.
 
-Heavier alternatives (still deferred — rewrite): drive codex in
-`app-server` mode over stdio JSON-RPC and tap the live
-`thread/tokenUsage/updated` event, or side-adapter with `codex mcp`
-mode. Both lose the tmux TUI paradigm.
-
-Recommendation: option 2 first (zero background noise, minimal
-code), add option 1 later if wanted. See
-`memory/reference_orchestron_codex_adapter.md` for the full
-analysis.
+See `memory/reference_orchestron_codex_adapter.md` for the full
+attempt-and-abandon analysis.
 
 **Session id** — codex assigns UUID v7 (timestamp-prefixed) itself;
 adapter captures via `captureNewSessionId()` polling the SQLite for
