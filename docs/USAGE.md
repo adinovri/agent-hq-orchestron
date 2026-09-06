@@ -263,7 +263,21 @@ writes to `~/.codex/thread_history_1.sqlite` (SQLite), not JSONL.
 Orchestron's `/transcript` endpoint auto-detects: reads JSONL for
 claude, SQLite for codex.
 
-**Known limitation — no token / context / cost metric** —
+**No harness-level pricing catalog for codex either** — orchestron's
+`apps/api/src/domain/pricing-table.ts` carries Claude tier rates
+(Sonnet $3/$15, Opus $15/$75, Haiku $0.80/$4 per MTok + cache
+read/create) but zero codex entries. Adding them wouldn't be
+meaningful: ChatGPT Plus/Pro/Enterprise is flat-rate bundled — no
+per-token dollar rate to enumerate. Codex's own
+`~/.codex/models_cache.json` also carries no pricing key (grepped).
+Treat codex sessions as N/A for cost aggregations, not $0.
+
+Silver lining: `models_cache.json` does carry `context_window` and
+`max_context_window` per model — the denominator for a future ctx%
+chip is already available; only the numerator (live token count) is
+missing.
+
+**Known limitation — no token / context / cost metric per session** —
 codex intentionally doesn't persist any usage data on disk:
 - `thread_history_1.sqlite` has no `usage` / `input_tokens` /
   `output_tokens` columns; item_json carries content only.
