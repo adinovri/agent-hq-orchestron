@@ -10,6 +10,7 @@ import type { SessionStatus, AgentType } from '@agent-hq-orchestron/shared'
 import { harnessLabel } from '@/lib/models'
 import { Wrench, User, MessageSquare, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
+import { AskUserQuestionCard } from './AskUserQuestionCard'
 
 interface Entry {
   seq: number
@@ -50,8 +51,12 @@ interface Props {
   agentType?: AgentType
 }
 
-function EntryView({ entry }: { entry: Entry }) {
+function EntryView({ entry, uuid, answered }: { entry: Entry; uuid: string; answered: boolean }) {
   const [expanded, setExpanded] = useState(entry.kind !== 'tool_result')
+
+  if (entry.kind === 'tool_use' && entry.toolName === 'AskUserQuestion') {
+    return <AskUserQuestionCard uuid={uuid} contentJson={entry.content} answered={answered} />
+  }
 
   if (entry.kind === 'user') {
     return (
@@ -259,9 +264,17 @@ export function TranscriptPanePoll({ uuid, status, agentType }: Props) {
         {isLoading && entries.length === 0 && (
           <div className="text-center py-12 text-sm text-zinc-400">Loading transcript…</div>
         )}
-        {entries.map((e) => (
-          <EntryView key={e.seq} entry={e} />
-        ))}
+        {entries.map((e, idx) => {
+          // For AskUserQuestion, treat as "answered" once any tool_result appears
+          // after this entry in the transcript — orchestron's entries don't expose
+          // tool_use_id linkage so we use position as a good-enough heuristic
+          // (a single pending AskUserQuestion is the common case).
+          const answered =
+            e.kind === 'tool_use' && e.toolName === 'AskUserQuestion'
+              ? entries.slice(idx + 1).some((later) => later.kind === 'tool_result')
+              : false
+          return <EntryView key={e.seq} entry={e} uuid={uuid} answered={answered} />
+        })}
         {isThinking && entries.length > 0 && (
           <div className="flex items-center gap-2.5 pl-9 py-2 text-xs text-zinc-500 dark:text-zinc-400">
             <span className="inline-flex gap-1">
