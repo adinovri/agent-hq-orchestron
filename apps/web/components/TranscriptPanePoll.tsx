@@ -6,7 +6,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { fetchJson } from '@/lib/fetcher'
-import type { SessionStatus } from '@agent-hq-orchestron/shared'
+import type { SessionStatus, AgentType } from '@agent-hq-orchestron/shared'
+import { harnessLabel } from '@/lib/models'
 import { Wrench, User, MessageSquare, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 
@@ -46,6 +47,7 @@ function formatTokens(n: number): string {
 interface Props {
   uuid: string
   status?: SessionStatus
+  agentType?: AgentType
 }
 
 function EntryView({ entry }: { entry: Entry }) {
@@ -201,7 +203,8 @@ function ContextIndicator({ stats }: { stats: ContextStats }) {
   )
 }
 
-export function TranscriptPanePoll({ uuid, status }: Props) {
+export function TranscriptPanePoll({ uuid, status, agentType }: Props) {
+  const label = harnessLabel(agentType)
   const bottomRef = useRef<HTMLDivElement>(null)
   const prevCountRef = useRef(0)
 
@@ -266,7 +269,7 @@ export function TranscriptPanePoll({ uuid, status }: Props) {
               <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce" style={{ animationDelay: '150ms' }} />
               <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce" style={{ animationDelay: '300ms' }} />
             </span>
-            <span>{status === 'spawning' ? 'Starting Claude…' : 'Claude is thinking…'}</span>
+            <span>{status === 'spawning' ? `Starting ${label}…` : `${label} is thinking…`}</span>
           </div>
         )}
         <div ref={bottomRef} />

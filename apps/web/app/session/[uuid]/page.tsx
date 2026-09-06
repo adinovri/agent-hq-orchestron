@@ -180,10 +180,10 @@ export default function SessionDetailPage({ params }: PageProps) {
       />
 
       <div className="flex-1 overflow-hidden">
-        <TranscriptPanePoll uuid={uuid} status={session.status} />
+        <TranscriptPanePoll uuid={uuid} status={session.status} agentType={session.agentType} />
       </div>
 
-      {!readOnly && <InputBox uuid={uuid} status={session.status} />}
+      {!readOnly && <InputBox uuid={uuid} status={session.status} agentType={session.agentType} />}
 
       <KillConfirmDialog
         open={killOpen}

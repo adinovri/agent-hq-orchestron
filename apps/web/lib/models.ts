@@ -59,3 +59,12 @@ export function effortsFor(agentType: AgentType | undefined): ModelOption[] {
   if (agentType === 'codex') return CODEX_EFFORTS
   return CLAUDE_EFFORTS
 }
+
+/** Human display label per harness — used in status text ("Codex is
+ *  thinking…"), input hints, etc. Unknown / undefined → "Agent". */
+export function harnessLabel(agentType: AgentType | undefined): string {
+  if (agentType === 'claude') return 'Claude'
+  if (agentType === 'codex') return 'Codex'
+  if (agentType === 'opencode') return 'OpenCode'
+  return 'Agent'
+}

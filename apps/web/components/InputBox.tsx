@@ -3,12 +3,14 @@
 import { useState, KeyboardEvent, useEffect, useRef, ClipboardEvent, DragEvent } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '@/lib/fetcher'
-import type { SessionStatus } from '@agent-hq-orchestron/shared'
+import type { SessionStatus, AgentType } from '@agent-hq-orchestron/shared'
+import { harnessLabel } from '@/lib/models'
 import { Paperclip, X, FileText, Image as ImageIcon, FileCode, File as FileIcon, Square } from 'lucide-react'
 
 interface Props {
   uuid: string
   status: SessionStatus
+  agentType?: AgentType
 }
 
 interface AttachedFile {
@@ -24,19 +26,24 @@ interface UploadedFile {
   mime: string
 }
 
-// Queue-during-run: allow sending while Claude is still thinking; the TUI
-// buffers the paste and processes it as the next turn.
+// Queue-during-run: allow sending while the agent is still thinking; the
+// TUI buffers the paste and processes it as the next turn.
 const ENABLED: SessionStatus[] = ['needs_input', 'idle', 'waiting', 'running', 'sleeping']
-const HINT: Partial<Record<SessionStatus, string>> = {
-  spawning: 'Session is spawning…',
-  waiting: 'Session ready — type your first message',
-  running: 'Queue next turn (Claude is still thinking)',
-  needs_input: 'Type your reply',
-  idle: 'Send a follow-up',
-  sleeping: 'Session is sleeping — send to wake it up (~3s cold start)',
-  succeeded: 'Session succeeded (archived)',
-  failed: 'Session failed',
-  killed: 'Session killed',
+
+/** Hint text per status, harness-labelled. */
+function hintFor(status: SessionStatus, label: string): string {
+  switch (status) {
+    case 'spawning':    return `Session is spawning…`
+    case 'waiting':     return `Session ready — type your first message`
+    case 'running':     return `Queue next turn (${label} is still thinking)`
+    case 'needs_input': return `Type your reply`
+    case 'idle':        return `Send a follow-up`
+    case 'sleeping':    return `Session is sleeping — send to wake it up (~3s cold start)`
+    case 'succeeded':   return `Session succeeded (archived)`
+    case 'failed':      return `Session failed`
+    case 'killed':      return `Session killed`
+    default:            return ''
+  }
 }
 
 function fileIcon(mime: string, name: string) {
@@ -54,7 +61,8 @@ function formatSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`
 }
 
-export function InputBox({ uuid, status }: Props) {
+export function InputBox({ uuid, status, agentType }: Props) {
+  const label = harnessLabel(agentType)
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<AttachedFile[]>([])
   const [lastSent, setLastSent] = useState<string | null>(null)
@@ -144,7 +152,7 @@ export function InputBox({ uuid, status }: Props) {
   })
 
   const enabled = ENABLED.includes(status) && !sendMutation.isPending
-  const hint = HINT[status] ?? ''
+  const hint = hintFor(status, label)
 
   const submit = () => {
     const trimmed = text.trim()
@@ -197,7 +205,7 @@ export function InputBox({ uuid, status }: Props) {
         <div className="flex items-center justify-between gap-2 mb-2 text-xs">
           <div className="flex items-center gap-2 text-zinc-500">
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-            <span>{status === 'spawning' ? 'Starting Claude…' : 'Claude is thinking…'}</span>
+            <span>{status === 'spawning' ? `Starting ${label}…` : `${label} is thinking…`}</span>
           </div>
           {status === 'running' && (
             <button
