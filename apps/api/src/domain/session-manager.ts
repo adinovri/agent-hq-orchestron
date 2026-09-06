@@ -637,6 +637,24 @@ export class SessionManager {
   }
 
   /**
+   * Mid-turn reconciliation: transitions running→needs_input when Claude's
+   * TUI is showing an AskUserQuestion selector that requires an answer.
+   * Claude does NOT emit `turn_duration` until the user answers the modal,
+   * so `reconcileTurnEnd` above never fires — the session would otherwise
+   * appear stuck at `running` in the dashboard list until someone opens the
+   * session detail and picks an answer. Called by the transcript polling
+   * endpoint when it sees a pending AskUserQuestion (tool_use without a
+   * matching later tool_result).
+   */
+  async reconcilePendingUserQuestion(uuid: string): Promise<void> {
+    const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!session || session.status !== 'running') return
+    if (ALLOWED_TRANSITIONS[session.status].includes('needs_input')) {
+      await this.transition(uuid, 'needs_input').catch(() => {})
+    }
+  }
+
+  /**
    * Interrupt the current turn — send Escape to the Claude TUI which aborts
    * the API call in progress without killing the session. Session transitions
    * back to `idle` once tailer sees `turn_duration` or timeout.

@@ -555,6 +555,21 @@ export function sessionsPlugin(
       const turnEndedAfterUser = parsed.lastTurnEndTs && (!parsed.lastUserTs || parsed.lastTurnEndTs > parsed.lastUserTs)
       if (turnEndedAfterUser && session.status === 'running') {
         manager.reconcileTurnEnd(session.id, parsed.lastAssistantText).catch(() => {})
+      } else if (session.status === 'running') {
+        // AskUserQuestion special-case: Claude shows an interactive selector
+        // modal in the TUI and does NOT emit `turn_duration` until the user
+        // answers. Without this the session sits at `running` in the list
+        // view even though it's actually blocked on input. Detect a pending
+        // AskUserQuestion (tool_use with no matching later tool_result) and
+        // flip to `needs_input` so the dashboard surfaces it.
+        const hasPendingAskUser = parsed.entries.some((e, i) =>
+          e.kind === 'tool_use' &&
+          e.toolName === 'AskUserQuestion' &&
+          !parsed.entries.slice(i + 1).some(later => later.kind === 'tool_result'),
+        )
+        if (hasPendingAskUser) {
+          manager.reconcilePendingUserQuestion(session.id).catch(() => {})
+        }
       }
 
       return { entries: parsed.entries, size: raw.length, contextStats: parsed.contextStats }
