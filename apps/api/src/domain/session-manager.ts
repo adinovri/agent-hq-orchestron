@@ -153,7 +153,8 @@ export class SessionManager {
     this.maxConcurrent = config.maxConcurrent
     this.registry = registry
     this.mcpAutoInject = config.mcpAutoInject
-    this.idleTimeoutMs = config.idleTimeoutMs ?? 0
+    // Default 15min. Explicit 0 in config disables the sweeper (opt-out).
+    this.idleTimeoutMs = config.idleTimeoutMs ?? 15 * 60 * 1000
     this.sharedMemoryDir = config.sharedMemoryDir ?? ''
     this.sharedCodexMemoryDir = config.sharedCodexMemoryDir ?? ''
   }
