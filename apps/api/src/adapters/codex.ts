@@ -31,6 +31,7 @@
 import crypto from 'node:crypto'
 import path from 'node:path'
 import os from 'node:os'
+import Database from 'better-sqlite3'
 import type { AgentAdapter, SpawnConfig, ResumeConfig, TmuxHandle } from '@agent-hq-orchestron/shared'
 import * as tmux from './tmux.js'
 
@@ -195,13 +196,36 @@ export class CodexAdapter implements AgentAdapter {
       if (jsonlPath) return { sessionId: sid, jsonlPath }
     }
 
-    // Fallback: watch rollout dir for a NEW file that appeared after this spawn.
+    // Fallback A: SQLite thread_history — interactive TUI writes here on every turn.
+    // Poll until a thread_id appears with created_at_ms > spawnedAfter, or timeout.
+    const baseDir = effectiveCodexHome(codexHome)
+    const dbPath = path.join(baseDir, 'thread_history_1.sqlite')
+    const sqliteDeadline = Date.now() + timeoutMs
+    while (Date.now() < sqliteDeadline) {
+      try {
+        const db = new Database(dbPath, { readonly: true, fileMustExist: true })
+        db.pragma('journal_mode = WAL')
+        const row = spawnedAfter !== undefined
+          ? db.prepare(
+              'SELECT thread_id FROM thread_items WHERE created_at_ms > ? ORDER BY created_at_ms DESC LIMIT 1'
+            ).get(spawnedAfter) as { thread_id: string } | undefined
+          : db.prepare(
+              'SELECT thread_id FROM thread_items ORDER BY created_at_ms DESC LIMIT 1'
+            ).get() as { thread_id: string } | undefined
+        db.close()
+        if (row?.thread_id) return { sessionId: row.thread_id, jsonlPath: '' }
+      } catch {
+        // DB not yet created — keep polling
+      }
+      await new Promise((r) => setTimeout(r, 300))
+    }
+
+    // Fallback B: watch rollout dir for a NEW file (codex exec mode only).
     // Interactive TUI (codex --no-alt-screen) does NOT write JSONL rollout files —
     // those are only created by `codex exec`. When spawnedAfter is set we filter out
     // pre-existing files so a stale exec-mode rollout is not mistaken for this session.
     // If no matching file appears within timeoutMs, return empty (caller keeps empty
     // ids and relies on idle-timeout for session lifecycle management).
-    const baseDir = effectiveCodexHome(codexHome)
     const sessionsDir = path.join(baseDir, 'sessions')
     const { readdir } = await import('node:fs/promises')
 
@@ -234,8 +258,7 @@ export class CodexAdapter implements AgentAdapter {
       }
       await new Promise((r) => setTimeout(r, 200))
     }
-    // No rollout found within timeout. Interactive TUI sessions don't create rollout
-    // JSONL — return empty so caller can manage lifecycle via idle-timeout instead.
+    // No session found within timeout.
     return { sessionId: '', jsonlPath: '' }
   }
 

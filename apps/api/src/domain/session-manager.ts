@@ -1,10 +1,34 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
+import Database from 'better-sqlite3'
 import { writeJson, readJson, listDir } from '@agent-hq-orchestron/file-store'
 import type { SessionMetadata, SessionStatus, SpawnConfig } from '@agent-hq-orchestron/shared'
 import type { AdapterRegistry } from '../adapters/registry.js'
 import { TranscriptTailer } from '../streaming/transcript-tailer.js'
+
+/** Poll SQLite thread_history for a new thread_id written after afterMs. */
+async function captureCodexThreadId(codexHome: string | undefined, afterMs: number, timeoutMs = 20_000): Promise<string> {
+  const base = codexHome && codexHome !== '~'
+    ? (codexHome.startsWith('~/') ? path.join(os.homedir(), codexHome.slice(2)) : codexHome)
+    : path.join(os.homedir(), '.codex')
+  const dbPath = path.join(base, 'thread_history_1.sqlite')
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const db = new Database(dbPath, { readonly: true, fileMustExist: true })
+      db.pragma('journal_mode = WAL')
+      const row = db.prepare(
+        'SELECT thread_id FROM thread_items WHERE created_at_ms > ? ORDER BY created_at_ms DESC LIMIT 1'
+      ).get(afterMs) as { thread_id: string } | undefined
+      db.close()
+      if (row?.thread_id) return row.thread_id
+    } catch { /* DB not yet created — keep polling */ }
+    await new Promise((r) => setTimeout(r, 400))
+  }
+  return ''
+}
 
 export class PoolFullError extends Error {
   constructor(max: number) {
@@ -417,7 +441,7 @@ export class SessionManager {
     // Fire-and-forget: complete the spawn lifecycle async so the HTTP response is fast.
     // Dismisses trust folder / theme picker, waits for TUI ready, pastes prompt, then transitions.
     // Passes spawnConfig so completeSpawn can re-spawn on transient tmux/claude-boot failure.
-    this.completeSpawn(uuid, adapter, handle, spawnConfig.initialPrompt, spawnConfig).catch(async (err: unknown) => {
+    this.completeSpawn(uuid, adapter, handle, spawnConfig.initialPrompt, spawnConfig, spawnedAt).catch(async (err: unknown) => {
       const msg = (err as Error).message ?? String(err)
       console.error(`[session-manager] completeSpawn failed for ${uuid}: ${msg}`)
       try {
@@ -442,6 +466,7 @@ export class SessionManager {
     handle: import('@agent-hq-orchestron/shared').TmuxHandle,
     prompt: string,
     spawnConfig?: SpawnConfig,
+    spawnedAt?: number,
   ): Promise<void> {
     let currentHandle = handle
     let attempt = 0
@@ -482,8 +507,24 @@ export class SessionManager {
     await this.transition(uuid, 'waiting')
 
     // Paste initial prompt + Enter
+    const pasteTs = Date.now()
     await adapter.sendPrompt(currentHandle, prompt)
     await this.transition(uuid, 'running')
+
+    // Codex interactive TUI: capture thread_id from SQLite after prompt paste.
+    // SQLite is only written once codex starts processing, so we poll here
+    // (post-paste) rather than pre-paste where the DB would be empty.
+    if (spawnConfig?.agentType === 'codex' && currentHandle.claudeUuid === '') {
+      captureCodexThreadId(spawnConfig.configDir, spawnedAt ?? pasteTs, 30_000).then(async (threadId) => {
+        if (!threadId) return
+        const rec = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+        if (rec && !rec.claudeSessionUuid) {
+          rec.claudeSessionUuid = threadId
+          await writeJson(this.sessionPath(uuid), rec)
+        }
+      }).catch(() => {})
+    }
+
     if (currentHandle.jsonlPath) {
       this.watchForTurnEnd(uuid, currentHandle.jsonlPath)
     }
@@ -1052,15 +1093,42 @@ export class SessionManager {
       throw new Error(`Cannot reopen session in ${session.status} state`)
     }
 
-    // Refuse when the underlying Claude JSONL doesn't exist — happens when
-    // the original spawn failed before Claude wrote its first turn. `claude
-    // --resume <uuid>` would just say "No conversation found" and die.
-    const { existsSync } = await import('node:fs')
-    if (!existsSync(session.jsonlPath)) {
-      throw new Error(
-        `Cannot reopen: original Claude conversation has no transcript on disk (${session.claudeSessionUuid}). ` +
-        `The initial spawn likely failed before writing any turn. Start a fresh session with the same prompt instead.`,
-      )
+    // Refuse when the underlying transcript doesn't exist — happens when the
+    // original spawn failed before the agent wrote its first turn.
+    // For codex interactive TUI sessions, transcript lives in SQLite (no jsonlPath);
+    // skip the file check and verify SQLite has a thread entry instead.
+    if (session.agentType === 'codex' && !session.jsonlPath) {
+      if (!session.claudeSessionUuid) {
+        throw new Error(
+          `Cannot reopen: codex session has no thread id — initial spawn failed before processing. Start a fresh session instead.`,
+        )
+      }
+      // Verify thread exists in SQLite
+      const base = session.configDir && session.configDir !== '~'
+        ? (session.configDir.startsWith('~/') ? path.join(os.homedir(), session.configDir.slice(2)) : session.configDir)
+        : path.join(os.homedir(), '.codex')
+      const dbPath = path.join(base, 'thread_history_1.sqlite')
+      let hasThread = false
+      try {
+        const db = new Database(dbPath, { readonly: true, fileMustExist: true })
+        const row = db.prepare('SELECT 1 FROM thread_items WHERE thread_id = ? LIMIT 1').get(session.claudeSessionUuid) as { '1': number } | undefined
+        db.close()
+        hasThread = !!row
+      } catch { /* SQLite not accessible */ }
+      if (!hasThread) {
+        throw new Error(
+          `Cannot reopen: codex thread ${session.claudeSessionUuid} not found in SQLite. Start a fresh session instead.`,
+        )
+      }
+    } else {
+      // Claude / codex-exec path: check JSONL rollout file exists.
+      const { existsSync } = await import('node:fs')
+      if (!existsSync(session.jsonlPath)) {
+        throw new Error(
+          `Cannot reopen: original conversation has no transcript on disk (${session.claudeSessionUuid}). ` +
+          `The initial spawn likely failed before writing any turn. Start a fresh session with the same prompt instead.`,
+        )
+      }
     }
 
     // Precedence for model/effort: caller override > session's own value >

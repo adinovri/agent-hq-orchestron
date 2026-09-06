@@ -3,8 +3,10 @@ import fp from 'fastify-plugin'
 import multipart from '@fastify/multipart'
 import { z } from 'zod'
 import path from 'node:path'
+import os from 'node:os'
 import { mkdir, writeFile, chmod } from 'node:fs/promises'
 import crypto from 'node:crypto'
+import Database from 'better-sqlite3'
 import { SpawnSessionBodySchema } from '@agent-hq-orchestron/shared'
 import { SessionManager } from '../domain/session-manager.js'
 
@@ -220,6 +222,82 @@ function parseCodexRollout(raw: string): RolloutParsed {
   return { entries, lastTurnEndTs, lastUserTs, lastAssistantText, contextStats }
 }
 
+function expandCodexHome(p: string): string {
+  if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2))
+  if (p === '~') return os.homedir()
+  return p
+}
+
+/**
+ * Parse codex interactive TUI sessions from SQLite (thread_history_1.sqlite).
+ * Used when jsonlPath is empty (interactive TUI never writes rollout JSONL).
+ */
+function parseCodexSqlite(codexHome: string, threadId: string): RolloutParsed {
+  const entries: RolloutEntry[] = []
+  let lastTurnEndTs = ''
+  let lastUserTs = ''
+  let lastAssistantText = ''
+  let assistantTurns = 0
+
+  if (!threadId) return { entries, lastTurnEndTs, lastUserTs, lastAssistantText, contextStats: null }
+
+  const dbPath = path.join(expandCodexHome(codexHome), 'thread_history_1.sqlite')
+  let db: Database.Database | undefined
+  try {
+    db = new Database(dbPath, { readonly: true, fileMustExist: true })
+    db.pragma('journal_mode = WAL')
+
+    const itemRows = db.prepare(
+      'SELECT item_type, item_json, created_at_ms FROM thread_items WHERE thread_id = ? ORDER BY updated_at_ordinal ASC'
+    ).all(threadId) as Array<{ item_type: string; item_json: string; created_at_ms: number }>
+
+    let seq = 0
+    for (const row of itemRows) {
+      let parsed: {
+        type?: string
+        text?: string
+        content?: Array<{ type?: string; text?: string }>
+      }
+      try { parsed = JSON.parse(row.item_json) } catch { continue }
+
+      const ts = new Date(row.created_at_ms).toISOString()
+
+      if (row.item_type === 'userMessage') {
+        const parts = Array.isArray(parsed.content) ? parsed.content : []
+        const text = parts.map(p => (typeof p.text === 'string' ? p.text : '')).join('').trim()
+          || (typeof parsed.text === 'string' ? parsed.text : '')
+        if (text) {
+          entries.push({ seq: seq++, timestamp: ts, kind: 'user', content: text })
+          if (!lastUserTs || ts > lastUserTs) lastUserTs = ts
+        }
+      } else if (row.item_type === 'agentMessage') {
+        const text = typeof parsed.text === 'string' ? parsed.text.trim() : ''
+        if (text) {
+          entries.push({ seq: seq++, timestamp: ts, kind: 'assistant', content: text })
+          lastAssistantText = text
+        }
+      }
+    }
+
+    const turnRows = db.prepare(
+      'SELECT completed_at, started_at FROM thread_turns WHERE thread_id = ? AND status = ? AND completed_at IS NOT NULL'
+    ).all(threadId, 'completed') as Array<{ completed_at: number; started_at: number }>
+
+    assistantTurns = turnRows.length
+    for (const t of turnRows) {
+      // thread_turns.completed_at is in SECONDS (not ms); thread_items.created_at_ms is in ms
+      const ts = new Date(t.completed_at * 1000).toISOString()
+      if (!lastTurnEndTs || ts > lastTurnEndTs) lastTurnEndTs = ts
+    }
+  } catch {
+    // DB not yet written or schema mismatch — return empty gracefully
+  } finally {
+    db?.close()
+  }
+
+  return { entries, lastTurnEndTs, lastUserTs, lastAssistantText, contextStats: null }
+}
+
 export function sessionsPlugin(
   manager: SessionManager,
   hookRunner: HookRunner,
@@ -421,6 +499,19 @@ export function sessionsPlugin(
       const sessions = await manager.list()
       const session = sessions.find(s => s.id === uuid)
       if (!session) return reply.code(404).send({ error: `Session not found: ${uuid}` })
+
+      // Codex interactive TUI: no JSONL rollout — read from SQLite instead.
+      if (session.agentType === 'codex' && !session.jsonlPath) {
+        const codexHome = session.configDir
+          ?? process.env['CODEX_HOME']
+          ?? path.join(os.homedir(), '.codex')
+        const parsed = parseCodexSqlite(codexHome, session.claudeSessionUuid)
+        const turnEndedAfterUser = parsed.lastTurnEndTs && (!parsed.lastUserTs || parsed.lastTurnEndTs > parsed.lastUserTs)
+        if (turnEndedAfterUser && session.status === 'running') {
+          manager.reconcileTurnEnd(session.id, parsed.lastAssistantText).catch(() => {})
+        }
+        return { entries: parsed.entries, size: 0, contextStats: parsed.contextStats }
+      }
 
       const { readFile } = await import('node:fs/promises')
       let raw = ''
