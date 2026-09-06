@@ -625,6 +625,27 @@ export class SessionManager {
       w.close()
       this.turnWatchers.delete(uuid)
     }
+    // Fire-and-forget: codex on-demand /status scrape. Only path we have
+    // to surface context% / rate-limit chips (see docs/USAGE.md §3).
+    this.maybeAutoRefreshCodexMetrics(uuid)
+  }
+
+  /** Fire refreshCodexMetrics() if the session is codex + live-idle and the
+   *  last snapshot is older than the debounce window (60s). Silently drops
+   *  errors — the user still has the manual refresh button as a fallback. */
+  private maybeAutoRefreshCodexMetrics(uuid: string): void {
+    const DEBOUNCE_MS = 60_000
+    void (async () => {
+      const s = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+      if (!s || s.agentType !== 'codex') return
+      // Only when the pane is live and codex is between turns.
+      if (s.status !== 'idle' && s.status !== 'needs_input') return
+      if (s.codexMetrics && Date.now() - Date.parse(s.codexMetrics.capturedAt) < DEBOUNCE_MS) return
+      try { await this.refreshCodexMetrics(uuid) }
+      catch (err) {
+        console.warn(`[session-manager] auto-refresh codex metrics failed for ${uuid}: ${(err as Error).message}`)
+      }
+    })()
   }
 
   /**
@@ -660,6 +681,7 @@ export class SessionManager {
         this.turnWatchers.delete(uuid)
       }
       const updated = await this.transition(uuid, 'idle').catch(() => session)
+      this.maybeAutoRefreshCodexMetrics(uuid)
       return updated
     }
     return session
@@ -1247,6 +1269,7 @@ export class SessionManager {
     await this.transition(uuid, 'waiting')
     await this.transition(uuid, 'running')
     await this.transition(uuid, 'idle')
+    this.maybeAutoRefreshCodexMetrics(uuid)
   }
 
   /**
