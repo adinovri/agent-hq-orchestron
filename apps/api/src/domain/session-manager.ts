@@ -382,36 +382,15 @@ export class SessionManager {
     const effectiveModel = filterModelForHarness(spawnConfig.model, spawnConfig.agentType)
     await this.ensureMemorySymlink(spawnConfig.agentType, effectiveConfigDir, spawnConfig.workspace)
     const spawnedAt = Date.now()
-    let handle = await adapter.spawn({ ...spawnConfig, model: effectiveModel, configDir: effectiveConfigDir, mcpConfigPath, mcpConfigInline })
+    const handle = await adapter.spawn({ ...spawnConfig, model: effectiveModel, configDir: effectiveConfigDir, mcpConfigPath, mcpConfigInline })
 
-    // Codex path: adapter returns handle with empty claudeUuid + jsonlPath
-    // because codex assigns its own session UUID (UUID v7) — capture happens
-    // after TUI is ready by scanning the rollout dir. Wait for TUI first,
-    // then invoke the adapter's captureNewSessionId() method.
-    //
-    // spawnedAt is passed so captureNewSessionId ignores pre-existing rollout
-    // files (e.g. a stale `codex exec` rollout from an earlier session). If no
-    // rollout appears (interactive TUI doesn't write JSONL), it returns empty ids
-    // and we rely on the idle-timeout sweeper for session lifecycle management.
-    if (spawnConfig.agentType === 'codex' && handle.claudeUuid === '') {
-      try {
-        await adapter.waitTuiReady(handle, 30_000)
-        const maybeCodex = adapter as unknown as {
-          captureNewSessionId?: (h: typeof handle, cd?: string, t?: number, spawnedAfter?: number) => Promise<{ sessionId: string; jsonlPath: string }>
-        }
-        if (typeof maybeCodex.captureNewSessionId === 'function') {
-          const captured = await maybeCodex.captureNewSessionId(handle, effectiveConfigDir, 10_000, spawnedAt)
-          // Only update handle when a real session was captured — empty means interactive
-          // TUI (no JSONL rollout); leave handle ids empty and fall through.
-          if (captured.sessionId) {
-            handle = { ...handle, claudeUuid: captured.sessionId, jsonlPath: captured.jsonlPath }
-          }
-        }
-      } catch (err) {
-        console.warn(`[session-manager] codex session-id capture failed for ${uuid}: ${(err as Error).message}`)
-        // Persist with empty ids — session unusable but at least record exists for cleanup
-      }
-    }
+    // Codex thread_id capture happens async in completeSpawn() via SQLite
+    // (see captureCodexThreadId call after sendPrompt). We used to block here
+    // waiting up to 40s for waitTuiReady + captureNewSessionId, but that
+    // scanned the rollout dir which interactive TUI never writes — always
+    // returned empty ids and just froze the HTTP response, causing the
+    // client's spawn modal to hang. Session record is written with empty
+    // claudeSessionUuid; completeSpawn patches it once SQLite has the row.
 
     const now = new Date().toISOString()
     const session: SessionMetadata = {
