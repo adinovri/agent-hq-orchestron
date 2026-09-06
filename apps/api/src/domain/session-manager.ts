@@ -413,6 +413,7 @@ export class SessionManager {
       costUsd: null,
       startedAt: now,
       endedAt: null,
+      lastActivityAt: now,
       metadata: {},
     }
 
@@ -600,7 +601,14 @@ export class SessionManager {
     if (session.status === 'running') {
       // Just re-arm watcher (safe: idempotent — old watcher closed on next fire)
       this.watchForTurnEnd(uuid, session.jsonlPath)
-      return session
+      // Bump activity manually — no transition fires, so the record would
+      // otherwise stay at whatever lastActivityAt it had, and the dashboard
+      // wouldn't reflect the queued input.
+      const refreshed = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+      if (refreshed) {
+        await writeJson(this.sessionPath(uuid), { ...refreshed, lastActivityAt: new Date().toISOString() })
+      }
+      return refreshed ?? session
     }
     const updated = await this.transition(uuid, 'running')
     this.watchForTurnEnd(uuid, session.jsonlPath)
@@ -846,6 +854,7 @@ export class SessionManager {
       status: newStatus,
       endedAt: terminal.includes(newStatus) ? now : session.endedAt,
       idleSince: nextIdleSince,
+      lastActivityAt: now,
     }
 
     await writeJson(this.sessionPath(uuid), updated)
@@ -1284,6 +1293,7 @@ export class SessionManager {
       costUsd: null,
       startedAt: now,
       endedAt: null,
+      lastActivityAt: now,
       metadata: { forkedFrom: original.id },
     }
 
@@ -1407,13 +1417,13 @@ export class SessionManager {
       return true
     })
 
-    // Order by "last activity" — endedAt when the session has one, else
-    // startedAt (matches Tycho: `finished_at || started_at || created_at`,
-    // desc). Keeps the "loudest right now" session at the top and reflects
-    // recent input/interrupt/archive events naturally.
+    // Order by lastActivityAt desc — reflects the last meaningful event
+    // (state transition, user input received, turn ended, wake-up). Falls
+    // back to endedAt ?? startedAt for records written before the field
+    // existed (pre-2026-09-06 sessions) so old sessions still sort sensibly.
     return filtered.sort((a, b) => {
-      const at = a.endedAt ?? a.startedAt
-      const bt = b.endedAt ?? b.startedAt
+      const at = a.lastActivityAt ?? a.endedAt ?? a.startedAt
+      const bt = b.lastActivityAt ?? b.endedAt ?? b.startedAt
       return at < bt ? 1 : at > bt ? -1 : 0
     })
   }

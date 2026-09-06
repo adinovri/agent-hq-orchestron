@@ -36,6 +36,12 @@ export interface SessionMetadata {
   costUsd: number | null
   startedAt: string
   endedAt: string | null
+  /** ISO timestamp of the last meaningful activity — state transition,
+   *  user input received, turn ended, wake-up. Used as the primary sort
+   *  key on the dashboard so live sessions bubble up on real events, not
+   *  just spawn time. Falls back to `endedAt ?? startedAt` for records
+   *  written before this field existed. */
+  lastActivityAt?: string
   /** Timestamp when the session most recently entered idle/needs_input. Used
    *  by the idle-sweeper to schedule warm-shutdown at (idleSince + threshold).
    *  Cleared when the session transitions back to an active state. */
