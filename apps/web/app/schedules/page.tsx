@@ -8,7 +8,7 @@ import { ScheduleDialog } from '@/components/ScheduleDialog'
 import { Skeleton } from '@/components/Skeleton'
 import { formatRelative } from '@/lib/time'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
-import { Plus, Clock, Play, Pencil, Trash2, Pause, Download, Upload, Zap } from 'lucide-react'
+import { Plus, Clock, Play, PlayCircle, Pencil, Trash2, Pause, Download, Upload } from 'lucide-react'
 
 interface Schedule {
   id: string
@@ -220,16 +220,17 @@ export default function SchedulesPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  {/* Run now = lightning bolt (fire once, no state change).
-                   *  Pause/Resume = play/pause triangle (toggle enabled).
-                   *  Split icons so they don't read as two Play buttons. */}
+                  {/* Run now = circled play (one-off trigger, common in
+                   *  scheduler UIs). Pause/Resume = bare play/pause
+                   *  triangle. Split icons so they don't read as two
+                   *  identical Play buttons on mobile. */}
                   <button
                     onClick={() => runMutation.mutate(s.id)}
                     disabled={runMutation.isPending}
                     className="p-1.5 rounded hover:bg-amber-50 dark:hover:bg-amber-950 text-zinc-500 hover:text-amber-600 dark:hover:text-amber-400"
                     title="Run now (one-off — doesn't change enabled state)"
                   >
-                    <Zap className="w-3.5 h-3.5" />
+                    <PlayCircle className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => toggleMutation.mutate({ id: s.id, enabled: !s.enabled })}
