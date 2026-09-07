@@ -85,9 +85,18 @@ active sessions the dialog also shows an amber warning.
 Dashboard → **Spawn** button (top-right). The dialog:
 
 - **Project** — dropdown, shows registered projects by name (not uuid).
+  On select, a compact info panel below the dropdown surfaces what the
+  session will actually spawn against: agent type, workspace path,
+  config dir (with `(harness default)` marker when the project has no
+  override), and the effective default model + effort with a
+  `(project)` / `(harness)` source tag so it's clear where each
+  default came from.
 - **Template** — optional prompt template.
 - **Model + effort** — per-session override; blank falls back to
-  project default.
+  project default. The "Default" row in each dropdown labels the exact
+  value it will resolve to (e.g. `Default — claude-sonnet-4-6
+  (project)`), not a generic "project setting", so picking Default
+  isn't a leap of faith.
 - **Initial prompt** — the first user turn Claude receives.
 - **Attachments** — drag/drop files (or paperclip button, or paste
   images). Saved to `/tmp/orchestron/uploads/pending/<hex>/` with
