@@ -663,6 +663,13 @@ export function sessionsPlugin(
         return { ok: false, error: `Already adopted by orchestron session ${dup.id.slice(0, 8)} (status: ${dup.status}). Archive/kill it first.` }
       }
 
+      // Cross-process check: a bg agent or terminal session may already hold
+      // this UUID open. Reading /proc/*/cmdline is cheap.
+      const liveProc = await manager.findLiveHarnessProcessPublic(body.data.harnessSessionId)
+      if (liveProc) {
+        return { ok: false, error: `PID ${liveProc.pid} is currently running this session (cmd: ${liveProc.cmd.slice(0, 100)}…). Stop it before adopting to avoid transcript corruption.` }
+      }
+
       const configDir = (project.agentType === 'codex'
         ? project.agentConfig?.env?.['CODEX_HOME']
         : project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']) ?? undefined

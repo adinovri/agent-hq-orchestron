@@ -93,6 +93,44 @@ function textAsksQuestion(text: string): boolean {
   return QUESTION_PHRASES.some((re) => re.test(t))
 }
 
+/** Scan /proc for a running claude / codex process that has the given
+ *  harness session id somewhere in its argv (i.e. an active `--resume <uuid>`,
+ *  `--session-id <uuid>`, or `codex resume <uuid>` invocation). Returns the
+ *  first match found so adopt() can refuse to spawn a second tmux against
+ *  the same JSONL/rollout — a second writer races the first and corrupts
+ *  the transcript.
+ *
+ *  Linux-only via /proc (matches the rest of the orchestron deploy target).
+ *  Errors reading individual /proc/<pid>/cmdline entries are swallowed so a
+ *  short-lived process disappearing mid-scan doesn't abort the whole check.
+ */
+async function findLiveHarnessProcess(harnessSessionId: string): Promise<{ pid: number; cmd: string } | null> {
+  const { readdir, readFile } = await import('node:fs/promises')
+  let pids: string[]
+  try {
+    pids = (await readdir('/proc')).filter((n) => /^\d+$/.test(n))
+  } catch { return null }
+  for (const pid of pids) {
+    let raw: string
+    try {
+      raw = await readFile(`/proc/${pid}/cmdline`, 'utf8')
+    } catch { continue }
+    if (!raw.includes(harnessSessionId)) continue
+    // cmdline is NUL-separated. First arg is executable path (or basename).
+    const argv = raw.split('\0').filter(Boolean)
+    if (argv.length === 0) continue
+    const bin = (argv[0] ?? '').split('/').pop() ?? ''
+    // Match direct `claude`/`codex` invocations AND node-launched wrappers
+    // (Claude CLI is a Node script — appears as `node .../claude.mjs`).
+    const looksHarness =
+      bin === 'claude' || bin === 'codex' ||
+      argv.some((a) => /(?:^|\/)(claude|codex)(?:\.mjs|\.js)?$/i.test(a))
+    if (!looksHarness) continue
+    return { pid: Number.parseInt(pid, 10), cmd: argv.join(' ') }
+  }
+  return null
+}
+
 /** Read the first user-role message content from a JSONL transcript file.
  *  Used by adopt() to populate initialPrompt so the dashboard has a
  *  meaningful title for an imported session. Returns null when the file
@@ -1304,6 +1342,12 @@ export class SessionManager {
     return updated
   }
 
+  /** Public wrapper around findLiveHarnessProcess so routes can reuse the
+   *  cross-process check without importing the internal helper. */
+  async findLiveHarnessProcessPublic(harnessSessionId: string): Promise<{ pid: number; cmd: string } | null> {
+    return findLiveHarnessProcess(harnessSessionId)
+  }
+
   /**
    * Adopt an existing harness session (started outside orchestron — e.g. via
    * `claude --resume` in a terminal, or a nafu-bg-claude/claw-bg-claude
@@ -1352,6 +1396,15 @@ export class SessionManager {
     const dup = all.find((s) => s.claudeSessionUuid === config.harnessSessionId && ACTIVE.includes(s.status))
     if (dup) {
       throw new Error(`Harness session ${config.harnessSessionId.slice(0, 8)} is already adopted by orchestron session ${dup.id.slice(0, 8)} (status: ${dup.status}). Archive or kill it first, or reopen that record instead.`)
+    }
+
+    // Cross-process check: even if orchestron has no record, some other
+    // supervisor (nafu-bg-claude, a manual `claude --resume` in a terminal,
+    // another orchestron instance) may already be resuming this UUID. Two
+    // writers on the same JSONL/rollout corrupt the transcript.
+    const liveProc = await findLiveHarnessProcess(config.harnessSessionId)
+    if (liveProc) {
+      throw new Error(`Harness session ${config.harnessSessionId.slice(0, 8)} is currently held by PID ${liveProc.pid} (cmd: ${liveProc.cmd.slice(0, 120)}…). Stop that process first — a second tmux --resume against the same transcript would race the writer and corrupt it.`)
     }
 
     // Verify the harness has a record of this session on disk / in SQLite.
