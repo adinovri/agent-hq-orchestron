@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/StatusPill'
 import { isActive } from '@/lib/status'
 import { formatRelative, formatDuration } from '@/lib/time'
-import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw, Copy, ClipboardCheck, Trash2, Download, Loader2 } from 'lucide-react'
+import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw, Copy, ClipboardCheck, Trash2, Download, Loader2, Pencil } from 'lucide-react'
 import { useState } from 'react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 import { apiFetch } from '@/lib/fetcher'
@@ -30,6 +30,7 @@ interface Props {
   projectDefaultEffort?: string
   onDeleteRecord?: () => void
   deletingRecord?: boolean
+  onEditMetadata?: () => void
 }
 
 /** Tiny copy-to-clipboard button. Renders as a low-contrast icon that
@@ -113,7 +114,7 @@ function ExportButton({ sessionId }: { sessionId: string }) {
   )
 }
 
-export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, onRespawn, onDeleteRecord, killing, archiving, reopening, cloning, respawning, deletingRecord, projectName, projectPath, projectDefaultModel, projectDefaultEffort }: Props) {
+export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, onRespawn, onDeleteRecord, onEditMetadata, killing, archiving, reopening, cloning, respawning, deletingRecord, projectName, projectPath, projectDefaultModel, projectDefaultEffort }: Props) {
   const harnessDefaultModel = implicitDefaultModel(session.agentType)
   const harnessDefaultEffort = implicitDefaultEffort(session.agentType)
   const effectiveModel = session.model ?? projectDefaultModel ?? harnessDefaultModel
@@ -193,6 +194,18 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
                 >
                   effort:{effectiveEffort}
                 </span>
+              )}
+              {/* Pencil to patch model+effort — only when tmux is dead
+               *  (terminal or sleeping). Server also enforces this, but
+               *  hiding here keeps the UX clean. */}
+              {onEditMetadata && !readOnly && ['succeeded', 'killed', 'failed', 'sleeping'].includes(session.status) && (
+                <button
+                  onClick={onEditMetadata}
+                  className="inline-flex items-center justify-center w-5 h-5 rounded text-zinc-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950 transition"
+                  title="Edit model / effort — applies on next spawn"
+                >
+                  <Pencil className="w-3 h-3" />
+                </button>
               )}
               {session.idleSince && (session.status === 'idle' || session.status === 'needs_input') && (() => {
                 const idleMs = Date.now() - new Date(session.idleSince).getTime()

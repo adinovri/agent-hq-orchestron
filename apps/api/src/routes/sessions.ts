@@ -735,6 +735,32 @@ export function sessionsPlugin(
       }
     })
 
+    // Patch model / effort on a session record. Restricted server-side to
+    // terminal + sleeping states — active sessions have claude already
+    // bound to a specific model, so metadata edits alone wouldn't take
+    // effect until the next spawn. UI hides the button in those states,
+    // this is the enforcement layer.
+    app.patch('/api/sessions/:uuid', async (req, reply) => {
+      const { uuid } = req.params as { uuid: string }
+      const body = z.object({
+        model: z.string().optional(),
+        effort: z.union([z.enum(['low', 'medium', 'high', 'xhigh', 'max']), z.literal('')]).optional(),
+      }).safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+      try {
+        const updated = await manager.updateMetadata(uuid, {
+          model: body.data.model,
+          effort: body.data.effort as import('@agent-hq-orchestron/shared').EffortLevel | '' | undefined,
+        })
+        return updated
+      } catch (err: unknown) {
+        const msg = (err as Error).message ?? ''
+        if (msg.includes('not found')) return reply.code(404).send({ error: msg })
+        if (msg.includes('Cannot edit')) return reply.code(409).send({ error: msg })
+        throw err
+      }
+    })
+
     // Answer a pending TUI selector modal (permission approval, AskUserQuestion
     // fallback) by option index. Sends Down×(index-1) + Enter into the tmux
     // pane and clears session.pendingPrompt so the UI banner disappears.

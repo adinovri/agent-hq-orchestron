@@ -1289,6 +1289,36 @@ export class SessionManager {
     return after ?? session
   }
 
+  /** Patch the model/effort fields on a session record. Restricted to
+   *  states where the tmux is NOT live (terminal or sleeping) — active
+   *  sessions have claude already bound to a specific model, so metadata
+   *  edits alone wouldn't take effect until a Respawn/wake anyway.
+   *  Empty string clears the override so the session falls back to the
+   *  project default; `undefined` leaves the field untouched. */
+  async updateMetadata(
+    uuid: string,
+    patch: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel | '' },
+  ): Promise<SessionMetadata> {
+    const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!session) throw new Error(`Session not found: ${uuid}`)
+    const EDITABLE: SessionStatus[] = ['succeeded', 'killed', 'failed', 'sleeping']
+    if (!EDITABLE.includes(session.status)) {
+      throw new Error(
+        `Cannot edit metadata on active session (status: ${session.status}). ` +
+        `Kill it or let it sleep first — metadata edits only apply on next spawn.`,
+      )
+    }
+    const next: SessionMetadata = { ...session }
+    if (patch.model !== undefined) {
+      next.model = patch.model === '' ? undefined : patch.model
+    }
+    if (patch.effort !== undefined) {
+      next.effort = patch.effort === '' ? undefined : patch.effort
+    }
+    await writeJson(this.sessionPath(uuid), next)
+    return next
+  }
+
   private async sweepOrphans(): Promise<void> {
     if (this.idleTimeoutMs <= 0) return
     const sessions = await this.list()

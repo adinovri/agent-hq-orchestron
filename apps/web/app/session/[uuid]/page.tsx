@@ -11,6 +11,7 @@ import { InputBox } from '@/components/InputBox'
 import { KillConfirmDialog } from '@/components/KillConfirmDialog'
 import { PendingPromptBanner } from '@/components/PendingPromptBanner'
 import { DeleteRecordDialog } from '@/components/DeleteRecordDialog'
+import { SessionMetadataEditDialog } from '@/components/SessionMetadataEditDialog'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
 import type { SessionMetadata, DelegationEdges, ProjectMetadata } from '@agent-hq-orchestron/shared'
 
@@ -29,6 +30,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   const [cloning, setCloning] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deletingRecord, setDeletingRecord] = useState(false)
+  const [editMetaOpen, setEditMetaOpen] = useState(false)
 
   const { data: session, isLoading } = useQuery<SessionMetadata>({
     queryKey: ['session', uuid],
@@ -127,6 +129,23 @@ export default function SessionDetailPage({ params }: PageProps) {
     onSettled: () => setCloning(false),
   })
 
+  const editMetadataMutation = useMutation({
+    mutationFn: async (opts: { model?: string; effort?: EffortLevel | '' }) => {
+      const res = await apiFetch(`/api/sessions/${uuid}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(opts),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      return res.json() as Promise<SessionMetadata>
+    },
+    onSuccess: () => {
+      setEditMetaOpen(false)
+      qc.invalidateQueries({ queryKey: ['session', uuid] })
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+    },
+  })
+
   const [respawning, setRespawning] = useState(false)
   const respawnMutation = useMutation({
     mutationFn: async (opts: { model?: string; effort?: EffortLevel } = {}) => {
@@ -200,6 +219,7 @@ export default function SessionDetailPage({ params }: PageProps) {
         projectDefaultEffort={currentProject?.defaultEffort}
         onDeleteRecord={() => setDeleteOpen(true)}
         deletingRecord={deletingRecord}
+        onEditMetadata={() => setEditMetaOpen(true)}
       />
 
       {session.pendingPrompt && !readOnly && (
@@ -227,6 +247,18 @@ export default function SessionDetailPage({ params }: PageProps) {
         onClose={() => setDeleteOpen(false)}
         onConfirm={() => deleteRecordMutation.mutate()}
         deleting={deletingRecord}
+      />
+
+      <SessionMetadataEditDialog
+        open={editMetaOpen}
+        agentType={session.agentType}
+        currentModel={session.model}
+        currentEffort={session.effort}
+        defaultModel={currentProject?.defaultModel}
+        defaultEffort={currentProject?.defaultEffort}
+        pending={editMetadataMutation.isPending}
+        onClose={() => setEditMetaOpen(false)}
+        onConfirm={(opts) => editMetadataMutation.mutate(opts)}
       />
 
       <SessionActionDialog
