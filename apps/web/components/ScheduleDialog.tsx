@@ -17,6 +17,7 @@ interface Props {
     projectId: string
     prompt?: string
     template?: string
+    enabled?: boolean
   }
 }
 
@@ -95,11 +96,27 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
   const [projectId, setProjectId] = useState(initial?.projectId ?? '')
   const [cron, setCron] = useState(initial?.cron ?? '0 9 * * 1')
   const [prompt, setPrompt] = useState(initial?.prompt ?? '')
-  const [enabled, setEnabled] = useState(true)
+  const [enabled, setEnabled] = useState(initial?.enabled ?? true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const isEdit = !!initial?.id
+
+  // Rehydrate local state each time the dialog reopens with a different
+  // `initial`. useState only captures its argument on first mount, and this
+  // component stays mounted (parent renders it with open={!!editing}), so
+  // without this effect the Edit dialog kept showing whatever state was
+  // there at first mount (empty for the create case).
+  useEffect(() => {
+    if (!open) return
+    setProjectId(initial?.projectId ?? '')
+    setCron(initial?.cron ?? '0 9 * * 1')
+    setPrompt(initial?.prompt ?? '')
+    setEnabled(initial?.enabled ?? true)
+    setError(null)
+    // Track by identity so switching between Edit rows also rehydrates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initial?.id])
 
   // Human-readable cron description + next-3-fire preview.
   const cronPreview = useMemo(() => {

@@ -8,7 +8,7 @@ import { ScheduleDialog } from '@/components/ScheduleDialog'
 import { Skeleton } from '@/components/Skeleton'
 import { formatRelative } from '@/lib/time'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
-import { Plus, Clock, Play, Pencil, Trash2, Pause, Download, Upload } from 'lucide-react'
+import { Plus, Clock, Play, Pencil, Trash2, Pause, Download, Upload, Zap } from 'lucide-react'
 
 interface Schedule {
   id: string
@@ -220,19 +220,24 @@ export default function SchedulesPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  {/* Run now = lightning bolt (fire once, no state change).
+                   *  Pause/Resume = play/pause triangle (toggle enabled).
+                   *  Split icons so they don't read as two Play buttons. */}
                   <button
                     onClick={() => runMutation.mutate(s.id)}
                     disabled={runMutation.isPending}
-                    className="p-1.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 hover:text-emerald-600"
-                    title="Run now"
+                    className="p-1.5 rounded hover:bg-amber-50 dark:hover:bg-amber-950 text-zinc-500 hover:text-amber-600 dark:hover:text-amber-400"
+                    title="Run now (one-off — doesn't change enabled state)"
                   >
-                    <Play className="w-3.5 h-3.5" />
+                    <Zap className="w-3.5 h-3.5" />
                   </button>
                   <button
                     onClick={() => toggleMutation.mutate({ id: s.id, enabled: !s.enabled })}
                     disabled={toggleMutation.isPending}
-                    className="p-1.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 hover:text-zinc-700"
-                    title={s.enabled ? 'Pause' : 'Resume'}
+                    className={`p-1.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 ${
+                      s.enabled ? 'hover:text-zinc-700' : 'hover:text-emerald-600 dark:hover:text-emerald-400'
+                    }`}
+                    title={s.enabled ? 'Pause schedule' : 'Resume schedule'}
                   >
                     {s.enabled ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
                   </button>
@@ -277,6 +282,7 @@ export default function SchedulesPage() {
           projectId: editing.projectId,
           prompt: editing.prompt,
           template: editing.template,
+          enabled: editing.enabled,
         } : undefined}
       />
     </div>
