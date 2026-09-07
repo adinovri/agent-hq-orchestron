@@ -1765,13 +1765,41 @@ export class SessionManager {
     const original = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!original) throw new Error(`Session not found: ${uuid}`)
 
-    // Refuse when the source has no Claude transcript to fork from.
-    const { existsSync } = await import('node:fs')
-    if (!existsSync(original.jsonlPath)) {
-      throw new Error(
-        `Cannot fork: original Claude conversation has no transcript on disk (${original.claudeSessionUuid}). ` +
-        `Nothing to inherit. Start a fresh session instead.`,
-      )
+    // Refuse when the source has no transcript to fork from — harness-aware
+    // (mirrors the reopen check).
+    if (original.agentType === 'codex' && !original.jsonlPath) {
+      // Codex interactive TUI writes to SQLite (thread_history_1.sqlite), not
+      // a rollout JSONL. Verify the thread row exists.
+      if (!original.claudeSessionUuid) {
+        throw new Error(
+          `Cannot fork: codex session has no thread id — initial spawn failed before processing. Start a fresh session instead.`,
+        )
+      }
+      const codexHome = original.configDir && original.configDir !== '~'
+        ? (original.configDir.startsWith('~/') ? path.join(os.homedir(), original.configDir.slice(2)) : original.configDir)
+        : path.join(os.homedir(), '.codex')
+      const dbPath = path.join(codexHome, 'thread_history_1.sqlite')
+      let hasThread = false
+      try {
+        const db = new Database(dbPath, { readonly: true, fileMustExist: true })
+        const row = db.prepare('SELECT 1 FROM thread_items WHERE thread_id = ? LIMIT 1').get(original.claudeSessionUuid) as { '1': number } | undefined
+        db.close()
+        hasThread = !!row
+      } catch { /* SQLite not accessible */ }
+      if (!hasThread) {
+        throw new Error(
+          `Cannot fork: codex thread ${original.claudeSessionUuid} not found in SQLite (${dbPath}). Start a fresh session instead.`,
+        )
+      }
+    } else {
+      // Claude / codex-exec path: JSONL rollout file must exist on disk.
+      const { existsSync } = await import('node:fs')
+      if (!existsSync(original.jsonlPath)) {
+        throw new Error(
+          `Cannot fork: original conversation has no transcript on disk (${original.claudeSessionUuid}). ` +
+          `Nothing to inherit. Start a fresh session instead.`,
+        )
+      }
     }
 
     // Overrides let the user pick different model/effort for the fork
