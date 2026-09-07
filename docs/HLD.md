@@ -1398,15 +1398,15 @@ Tidak pakai runtime feature flag — semua config via `~/.orchestron/config/hq.y
 | --- | --- | --- |
 | `pool.maxConcurrent` | Max concurrent CLI subprocess | `20` |
 | `api.host` | Bind address | `127.0.0.1` (localhost only) |
-| `api.port` | Fastify port | `8080` |
-| `web.port` | Next.js port | `3000` |
+| `api.port` | Fastify port | `8080` (systemd template in DEPLOY §6b uses `8090` to avoid clash with common dev tools) |
+| `web.port` | Next.js port | `3000` (systemd template in DEPLOY §6b uses `3010` to avoid clash with common Next dev servers) |
 | `retention.sessionsMaxCount` | Cap total sessions before archive | `10000` |
 | `adapters.enabled` | Enabled adapter list | `['claude']` |
 
 ### Local Distribution
 
 * `npm install && npm run build` → build FE + BE
-* `npm run start` → run production build (localhost:3000 + localhost:8080)
+* `npm run start` → run production build against defaults (Next.js `localhost:3000` + Fastify `localhost:8080`; DEPLOY §6b systemd unit overrides to `3010` / `8090` respectively)
 * `scripts/init.sh` → bootstrap `~/.orchestron/{sessions,projects,delegation,logs}`
 * Optional: systemd user unit template untuk auto-start
 * Optional (Phase 4): Electron shell untuk desktop app packaging

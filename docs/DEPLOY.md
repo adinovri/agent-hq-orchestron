@@ -92,6 +92,20 @@ orchestron --version
 
 ## 4. Configure
 
+**Ports at a glance:**
+
+| Service | Code default | Systemd template (§6b) | Adi's setup |
+|---|---|---|---|
+| API (Fastify) | `8080` | `8090` | `8090` (via `config.json.port`) |
+| Web (Next.js) | `3000` | `3010` | `3010` (via unit `PORT=3010` + `-p 3010`) |
+
+The two dropped from `3000`/`8080` (Next / Fastify defaults) to
+`3010`/`8090` in the systemd templates so orchestron doesn't clash
+with a `next dev` on a sibling project (very common) or a random
+tool on `:8080` (also very common — auth-status shows a Python
+listener there on this host, unrelated to orchestron). Override
+either via `ORCHESTRON_PORT` / `PORT` env or `config.json.port`.
+
 Two ways — pick one:
 
 ### Option A: Env vars
@@ -248,7 +262,7 @@ npm run build --workspaces --if-present
 
 ### Open UI
 
-Kedua mode buka http://localhost:3000 di browser laptop.
+Kedua mode buka http://localhost:3010 di browser laptop.
 
 **Constraint:**
 
@@ -580,7 +594,7 @@ Use case: lu kerja di kafe → laptop only (server unreachable). Balik ke rumah 
 
 ### Cara akses
 
-- **Sessions di laptop**: buka `http://localhost:3000` di browser laptop
+- **Sessions di laptop**: buka `http://localhost:3010` di browser laptop
 - **Sessions di server**: buka `https://100.71.6.23:8080` (Tailscale HTTPS) di browser mana aja — laptop, HP via PWA, tablet
 - **Pilih mana yang jalankan session**: sadar sebelum spawn. Rule of thumb:
   - **Short interactive session** yang lu supervise langsung → laptop
@@ -620,8 +634,10 @@ orchestron doctor
 curl -H "Authorization: Bearer $ORCHESTRON_REMOTE_TOKEN" \
   http://100.71.6.23:8080/api/health
 
-# Web UI
-open http://100.71.6.23:8080  # atau http://localhost:3000 kalau dev
+# Web UI — via Tailscale Serve (recommended, HTTPS + PWA-ready):
+open https://<hostname>.<tailnet>.ts.net/
+# Or, if you exposed web directly on a tailnet IP + firewalled off public:
+open http://100.71.6.23:3010
 
 # Verify test suite passes
 npm test
