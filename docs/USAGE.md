@@ -292,6 +292,15 @@ count. Buttons (based on state):
 | ✕ X (red) | **Kill** — SIGKILL tmux + mark killed | active states |
 | 🗑 Trash (red) | **Delete record** — remove orchestron record, keep transcript | terminal / sleeping |
 
+Inline edit: a small **pencil** icon renders next to the effort chip in
+the header when the session has no live tmux (`succeeded` / `killed` /
+`failed` / `sleeping`). It opens a metadata-only dialog with Model +
+Effort selects (plus a *Reset to project default* option). The change
+is written to the session record via `PATCH /api/sessions/:uuid` and
+takes effect on the next spawn — Reopen, Respawn, or wake from sleep.
+Active sessions have claude already bound to a specific model, so the
+server refuses the patch (409) and the UI hides the button.
+
 Expand the header (chevron under the timestamps) for id/project/agent/
 started/ended/cost detail.
 
