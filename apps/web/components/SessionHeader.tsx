@@ -145,10 +145,20 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
               {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
             {expanded && (
-              <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 space-y-0.5 font-mono">
+              <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 space-y-0.5 font-mono break-all">
                 <div>id: {session.id}</div>
                 <div>project: {projectName ?? session.projectId}</div>
                 <div>agent: {session.agentType}</div>
+                {session.claudeSessionUuid && (
+                  <div title={session.agentType === 'codex' ? 'Resume: codex resume <uuid>' : 'Resume: claude --resume <uuid>'}>
+                    {session.agentType} session: {session.claudeSessionUuid}
+                  </div>
+                )}
+                {session.tmuxName && (
+                  <div title="Attach read-only: tmux attach -rt <name>">
+                    tmux: {session.tmuxName}
+                  </div>
+                )}
                 <div>started: {new Date(session.startedAt).toLocaleString()}</div>
                 {session.endedAt && <div>ended: {new Date(session.endedAt).toLocaleString()}</div>}
                 {session.costUsd != null && <div>cost: ${session.costUsd.toFixed(4)}</div>}
