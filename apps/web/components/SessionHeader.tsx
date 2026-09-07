@@ -5,9 +5,10 @@ import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/StatusPill'
 import { isActive } from '@/lib/status'
 import { formatRelative, formatDuration } from '@/lib/time'
-import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw, Copy, ClipboardCheck, Trash2, Download } from 'lucide-react'
+import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw, Copy, ClipboardCheck, Trash2, Download, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
+import { apiFetch } from '@/lib/fetcher'
 
 interface Props {
   session: SessionMetadata
@@ -52,6 +53,62 @@ function CopyButton({ value, label }: { value: string; label: string }) {
       className="inline-flex items-center justify-center w-4 h-4 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition align-middle ml-1"
     >
       {copied ? <ClipboardCheck className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+    </button>
+  )
+}
+
+/** Auth-aware download for the session export endpoint. A plain <a href>
+ *  triggers browser navigation without the Bearer token → API 401 page.
+ *  We fetch as a blob, then trigger a synthetic anchor click so the
+ *  browser's save-file UI still runs. */
+function ExportButton({ sessionId }: { sessionId: string }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const onClick = async () => {
+    if (busy) return
+    setBusy(true)
+    setErr(null)
+    try {
+      const res = await apiFetch(`/api/sessions/${sessionId}/export`)
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new Error(text || `HTTP ${res.status}`)
+      }
+      // Filename from Content-Disposition (RFC 6266 form: attachment; filename="...").
+      const cd = res.headers.get('content-disposition') ?? ''
+      const m = cd.match(/filename\s*=\s*"?([^";]+)"?/i)
+      const fallbackExt = (res.headers.get('content-type') ?? '').includes('gzip') ? '.tar.gz' : '.jsonl'
+      const name = m?.[1] ?? `orchestron-session-${sessionId}${fallbackExt}`
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = name
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 4000)
+    } catch (e) {
+      setErr((e as Error).message ?? 'download failed')
+      setTimeout(() => setErr(null), 4000)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <button
+      onClick={onClick}
+      disabled={busy}
+      title={err ?? 'Export session bundle (jsonl or tar.gz) — import into another orchestron host with the Import button'}
+      className={`inline-flex items-center justify-center h-8 w-8 rounded transition ${
+        err
+          ? 'text-red-600 hover:bg-red-50 dark:hover:bg-red-950'
+          : 'text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950'
+      } disabled:opacity-50`}
+    >
+      {busy
+        ? <Loader2 className="w-4 h-4 animate-spin" />
+        : <Download className="w-4 h-4" />}
     </button>
   )
 }
@@ -274,18 +331,13 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
                   <Check className="w-4 h-4" />
                 </Button>
               )}
-              {/* Export harness transcript — plain download link so the
-               *  browser handles the file save. Server picks .jsonl vs
-               *  .tar.gz based on the harness + whether a rollout jsonl
-               *  exists on disk. */}
+              {/* Export harness transcript. Auth-aware: fetch as blob so
+               *  the Bearer token gets injected — a plain <a href> would
+               *  navigate without auth and hit the API's 401 page. Filename
+               *  parsed from Content-Disposition, falls back to session id
+               *  with the correct extension. */}
               {session.claudeSessionUuid && (
-                <a
-                  href={`/api/sessions/${session.id}/export`}
-                  className="inline-flex items-center justify-center h-8 w-8 rounded text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950 transition"
-                  title="Export session bundle (jsonl or tar.gz) — import into another orchestron host with the Import button"
-                >
-                  <Download className="w-4 h-4" />
-                </a>
+                <ExportButton sessionId={session.id} />
               )}
               {active && (
                 <Button
