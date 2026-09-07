@@ -1977,6 +1977,38 @@ export class SessionManager {
         this.watchForTurnEnd(s.id, s.jsonlPath, { fromStart: true })
       }
     }
+    // Orphan cleanup: sessions marked `spawning` or `waiting` at API boot
+    // time got orphaned by the previous process. Their in-flight
+    // completeSpawn promise died with the old node process; no watcher
+    // resumes them. If we leave them alone they stay stuck forever
+    // (pane in tmux may be alive OR gone — either way orchestron doesn't
+    // own the completion path any more). Best action: mark them `failed`
+    // with a clear reason so the dashboard shows them as recoverable
+    // (kill / delete-record / reopen with a fresh spawn), and best-
+    // effort kill the tmux to release resources.
+    for (const s of fresh) {
+      if (s.status === 'spawning' || s.status === 'waiting') {
+        console.warn(`[session-manager] boot orphan-scan: session ${s.id.slice(0, 8)} was ${s.status} at prior shutdown, marking failed`)
+        try {
+          if (s.tmuxName) {
+            const adapter = this.registry.get(s.agentType)
+            if (adapter) {
+              await adapter.kill({
+                tmuxName: s.tmuxName,
+                claudeUuid: s.claudeSessionUuid,
+                jsonlPath: s.jsonlPath,
+              }).catch(() => {})
+            }
+          }
+          await this.transition(s.id, 'failed').catch(() => {})
+          const failed = await readJson<SessionMetadata | null>(this.sessionPath(s.id), null)
+          if (failed) {
+            failed.failureReason = `orchestron API restarted while session was still ${s.status}; tmux orphaned. Delete this record and spawn a fresh one.`
+            await writeJson(this.sessionPath(s.id), failed)
+          }
+        } catch { /* best-effort */ }
+      }
+    }
   }
 
   async list(filter?: { status?: string; projectId?: string; from?: string; to?: string }): Promise<SessionMetadata[]> {
