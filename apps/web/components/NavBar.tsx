@@ -32,6 +32,16 @@ export function NavBar() {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/icons/source.svg" alt="Orchestron" className="w-6 h-6 rounded-md" />
         <span className="hidden sm:inline">Orchestron</span>
+        {/* Mobile-only mini SHA chip — 4 chars fits ~35px, well within
+         *  what the space that used to hold the full chip would allow, and
+         *  keeps a version indicator visible even at 375px viewports where
+         *  the desktop-only chip on the far right gets hidden. */}
+        <span
+          title={`Build ${process.env.NEXT_PUBLIC_BUILD_STAMP ?? 'unknown'}`}
+          className="sm:hidden text-[10px] font-mono leading-none px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400"
+        >
+          {process.env.NEXT_PUBLIC_BUILD_STAMP?.slice(0, 4) ?? '?'}
+        </span>
       </Link>
 
       {/* Nav strip. `flex-1 overflow-x-auto` lets it scroll when links don't
