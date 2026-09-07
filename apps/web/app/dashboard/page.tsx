@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { FilterBar, FilterState } from '@/components/FilterBar'
 import { SessionList } from '@/components/SessionList'
 import { SpawnDialog } from '@/components/SpawnDialog'
+import { AdoptSessionDialog } from '@/components/AdoptSessionDialog'
 import { SessionListSkeleton } from '@/components/Skeleton'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
 import type { SessionMetadata, ProjectMetadata } from '@agent-hq-orchestron/shared'
@@ -33,6 +34,7 @@ export default function DashboardPage() {
   const qc = useQueryClient()
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
   const [spawnOpen, setSpawnOpen] = useState(false)
+  const [adoptOpen, setAdoptOpen] = useState(false)
   const [killingIds, setKillingIds] = useState<Set<string>>(new Set())
   const [groupBy, setGroupBy] = useState<'project' | 'none'>('none')
 
@@ -159,6 +161,9 @@ export default function DashboardPage() {
               <FolderTree className="w-4 h-4" />
             </button>
           </div>
+          <Button variant="outline" onClick={() => setAdoptOpen(true)} title="Adopt an existing claude/codex session started outside orchestron">
+            Adopt
+          </Button>
           <Button onClick={() => setSpawnOpen(true)}>
             <Plus className="w-4 h-4 mr-1" /> Spawn
           </Button>
@@ -236,6 +241,13 @@ export default function DashboardPage() {
         projects={projects.map((p) => ({ id: p.id, name: p.name, agentType: p.agentType }))}
         templates={templates}
         onSpawned={() => qc.invalidateQueries({ queryKey: ['sessions'] })}
+      />
+
+      {/* Adopt existing harness session dialog */}
+      <AdoptSessionDialog
+        open={adoptOpen}
+        onClose={() => setAdoptOpen(false)}
+        projects={projects.map((p) => ({ id: p.id, name: p.name, agentType: p.agentType, path: p.path }))}
       />
     </div>
   )

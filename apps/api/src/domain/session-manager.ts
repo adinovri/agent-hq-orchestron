@@ -93,6 +93,35 @@ function textAsksQuestion(text: string): boolean {
   return QUESTION_PHRASES.some((re) => re.test(t))
 }
 
+/** Read the first user-role message content from a JSONL transcript file.
+ *  Used by adopt() to populate initialPrompt so the dashboard has a
+ *  meaningful title for an imported session. Returns null when the file
+ *  has no user event yet (rare — usually the file exists only after the
+ *  very first prompt is written). */
+function readFirstUserPromptFromJsonl(jsonlPath: string): string | null {
+  try {
+    const raw = fs.readFileSync(jsonlPath, 'utf8')
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line.trim()) continue
+      try {
+        const d = JSON.parse(line) as { type?: string; message?: { role?: string; content?: unknown } }
+        if (d.type !== 'user' && d.message?.role !== 'user') continue
+        const content = d.message?.content
+        if (typeof content === 'string') return content.slice(0, 500)
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block && typeof block === 'object' && 'type' in block && (block as { type?: string }).type === 'text') {
+              const text = (block as { text?: string }).text
+              if (typeof text === 'string' && text.trim()) return text.slice(0, 500)
+            }
+          }
+        }
+      } catch { /* skip malformed line */ }
+    }
+  } catch { /* file unreadable */ }
+  return null
+}
+
 const MODAL_FOOTER_RE = /(↑\/↓|▲\/▼)\s+to\s+navigate/
 const MODAL_SELECT_RE = /Enter\s+to\s+select/
 // Numbered option lines in the modal: "❯ 1. Yes", "  2. No", …
@@ -1273,6 +1302,166 @@ export class SessionManager {
     })
 
     return updated
+  }
+
+  /**
+   * Adopt an existing harness session (started outside orchestron — e.g. via
+   * `claude --resume` in a terminal, or a nafu-bg-claude/claw-bg-claude
+   * background job) into a new orchestron session record. Spawns a fresh
+   * tmux window with the harness's native resume flag so the session becomes
+   * live-manageable via the dashboard (interrupt, send input, kill, reopen).
+   *
+   * Validation blocks creation when:
+   * - The harness transcript doesn't exist at the expected path for the
+   *   given project's workspace + configDir (usually means the UUID was
+   *   started in a different cwd, or was typed wrong).
+   * - An active orchestron session already tracks this harness UUID —
+   *   spawning a second tmux `--resume` against the same JSONL would race
+   *   the writer and corrupt the transcript.
+   *
+   * `initialPrompt` is populated from the first user event in the transcript
+   * so the dashboard shows something meaningful; the prompt is NOT re-sent
+   * to the resumed session (the conversation already has its history).
+   */
+  async adopt(config: {
+    projectId: string
+    agentType: import('@agent-hq-orchestron/shared').AgentType
+    workspace: string
+    configDir?: string
+    model?: string
+    effort?: import('@agent-hq-orchestron/shared').EffortLevel
+    /** The UUID the harness assigned to the existing conversation the user
+     *  wants to bring into orchestron. Matches claudeSessionUuid on the new
+     *  record — same field for both harnesses. */
+    harnessSessionId: string
+  }): Promise<SessionMetadata> {
+    const active = await this.countActiveSessions()
+    if (active >= this.maxConcurrent) throw new PoolFullError(this.maxConcurrent)
+
+    if (config.agentType !== 'claude' && config.agentType !== 'codex') {
+      throw new Error(`Adopt is not supported for agent type '${config.agentType}'`)
+    }
+    if (!config.harnessSessionId || !/^[0-9a-fA-F-]{8,}$/.test(config.harnessSessionId)) {
+      throw new Error(`Invalid harness session id: '${config.harnessSessionId}'`)
+    }
+
+    // Uniqueness — active session with this claudeSessionUuid means a
+    // resume from a second tmux would race the JSONL writer.
+    const all = await this.list()
+    const ACTIVE: SessionStatus[] = ['spawning', 'waiting', 'running', 'idle', 'needs_input', 'sleeping']
+    const dup = all.find((s) => s.claudeSessionUuid === config.harnessSessionId && ACTIVE.includes(s.status))
+    if (dup) {
+      throw new Error(`Harness session ${config.harnessSessionId.slice(0, 8)} is already adopted by orchestron session ${dup.id.slice(0, 8)} (status: ${dup.status}). Archive or kill it first, or reopen that record instead.`)
+    }
+
+    // Verify the harness has a record of this session on disk / in SQLite.
+    // Also read the first user prompt so the dashboard has a title.
+    let initialPrompt = ''
+    let expectedJsonlPath = ''
+    if (config.agentType === 'claude') {
+      const { claudeTranscriptPath, effectiveClaudeConfigDir } = await import('../adapters/claude.js')
+      const effCfg = effectiveClaudeConfigDir(config.configDir)
+      expectedJsonlPath = claudeTranscriptPath(config.workspace, effCfg, config.harnessSessionId)
+      const { existsSync } = await import('node:fs')
+      if (!existsSync(expectedJsonlPath)) {
+        throw new Error(`Claude transcript not found at ${expectedJsonlPath}. Confirm the UUID and that the session was started in this project's workspace (${config.workspace}).`)
+      }
+      initialPrompt = readFirstUserPromptFromJsonl(expectedJsonlPath) ?? '(adopted claude session — first prompt unknown)'
+    } else {
+      // codex — check rollout dir first, fall back to thread_history SQLite
+      // (interactive TUI sessions don't write rollout files).
+      const { findCodexRolloutPath, effectiveCodexHome } = await import('../adapters/codex.js')
+      const rolloutPath = await findCodexRolloutPath(config.configDir, config.harnessSessionId)
+      if (rolloutPath) {
+        expectedJsonlPath = rolloutPath
+        initialPrompt = readFirstUserPromptFromJsonl(rolloutPath) ?? '(adopted codex session — first prompt unknown)'
+      } else {
+        const codexHome = effectiveCodexHome(config.configDir)
+        const dbPath = path.join(codexHome, 'thread_history_1.sqlite')
+        let promptRow: { text?: string } | undefined
+        try {
+          const db = new Database(dbPath, { readonly: true, fileMustExist: true })
+          promptRow = db.prepare(
+            `SELECT payload FROM thread_items WHERE thread_id = ? AND type = 'user_input' ORDER BY rowid ASC LIMIT 1`,
+          ).get(config.harnessSessionId) as { text?: string } | undefined
+          db.close()
+        } catch (err) {
+          throw new Error(`Codex session ${config.harnessSessionId} not found in rollout dir (${codexHome}/sessions/...) nor SQLite (${dbPath}): ${(err as Error).message}`)
+        }
+        if (!promptRow) {
+          throw new Error(`Codex session ${config.harnessSessionId} not found in rollout dir nor SQLite thread_items. Confirm the UUID.`)
+        }
+        // Best-effort prompt text — payload column shape varies by codex version.
+        initialPrompt = '(adopted codex session — first prompt from SQLite)'
+      }
+    }
+
+    const effectiveConfigDir = config.agentType === 'claude'
+      ? (await import('../adapters/claude.js')).effectiveClaudeConfigDir(config.configDir)
+      : config.configDir
+    const effectiveModel = filterModelForHarness(config.model, config.agentType)
+
+    await this.ensureMemorySymlink(config.agentType, effectiveConfigDir, config.workspace)
+
+    const adapter = this.registry.getOrThrow(config.agentType)
+    const uuid = crypto.randomUUID()
+    const mcpConfigPath = await this.ensureSessionMcpConfig(uuid, config.agentType)
+    const handle = await adapter.resume(config.harnessSessionId, {
+      workspace: config.workspace,
+      configDir: config.configDir,
+      model: effectiveModel,
+      effort: config.effort,
+      mcpConfigPath,
+    })
+
+    const now = new Date().toISOString()
+    const session: SessionMetadata = {
+      id: uuid,
+      projectId: config.projectId,
+      agentType: config.agentType,
+      model: config.model,
+      effort: config.effort,
+      status: 'spawning',
+      parentSessionId: null,
+      detached: false,
+      claudeSessionUuid: config.harnessSessionId,
+      tmuxName: handle.tmuxName,
+      jsonlPath: handle.jsonlPath || expectedJsonlPath,
+      configDir: effectiveConfigDir,
+      initialPrompt,
+      finalResponse: null,
+      tokenUsage: null,
+      costUsd: null,
+      startedAt: now,
+      endedAt: null,
+      lastActivityAt: now,
+      metadata: { adopted: true, adoptedAt: now, adoptedFromUuid: config.harnessSessionId },
+    }
+    await writeJson(this.sessionPath(uuid), session)
+
+    // Same completion path reopen uses — wait TUI ready → transition to idle.
+    // We don't re-send the prompt; the resumed conversation has its own
+    // history and paste would be interpreted as a new user turn.
+    this.completeReopen(uuid, adapter, handle, {
+      claudeSessionUuid: config.harnessSessionId,
+      workspace: config.workspace,
+      configDir: config.configDir,
+      model: effectiveModel,
+      effort: config.effort,
+    }).catch(async (err: unknown) => {
+      const msg = (err as Error).message ?? String(err)
+      console.error(`[session-manager] adopt completeReopen failed for ${uuid}: ${msg}`)
+      try {
+        await this.transition(uuid, 'failed').catch(() => {})
+        const failed = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+        if (failed) {
+          failed.failureReason = msg
+          await writeJson(this.sessionPath(uuid), failed)
+        }
+      } catch { /* ignore */ }
+    })
+
+    return session
   }
 
   async reopen(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {

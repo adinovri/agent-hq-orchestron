@@ -79,7 +79,7 @@ function expandHome(p: string): string {
  * helper GLOBS by suffix (session uuid). Returns null if not found yet —
  * caller should retry or wait after spawn.
  */
-async function findCodexRolloutPath(codexHome: string | undefined, sessionId: string): Promise<string | null> {
+export async function findCodexRolloutPath(codexHome: string | undefined, sessionId: string): Promise<string | null> {
   const baseDir = effectiveCodexHome(codexHome)
   const sessionsDir = path.join(baseDir, 'sessions')
   const { readdir, stat } = await import('node:fs/promises')

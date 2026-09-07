@@ -591,6 +591,103 @@ export function sessionsPlugin(
       }
     })
 
+    // Adopt an existing harness session (started outside orchestron) into a
+    // new orchestron session record. Body: { projectId, harnessSessionId }.
+    // See SessionManager.adopt() for validation rules.
+    app.post('/api/sessions/adopt', async (req, reply) => {
+      const body = z.object({
+        projectId: z.string().min(1),
+        harnessSessionId: z.string().min(8),
+        model: z.string().optional(),
+        effort: z.enum(['low', 'medium', 'high', 'ultra']).optional(),
+      }).safeParse(req.body)
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      let project
+      try {
+        project = await registry.get(body.data.projectId)
+      } catch (err) {
+        if (err instanceof ProjectNotFoundError) return reply.code(404).send({ error: err.message })
+        throw err
+      }
+
+      try {
+        const session = await manager.adopt({
+          projectId: project.id,
+          agentType: project.agentType,
+          workspace: project.path,
+          configDir: (project.agentType === 'codex' ? project.agentConfig?.env?.['CODEX_HOME'] : project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']) ?? undefined,
+          model: body.data.model ?? project.defaultModel,
+          effort: body.data.effort ?? project.defaultEffort,
+          harnessSessionId: body.data.harnessSessionId,
+        })
+        return reply.code(201).send(session)
+      } catch (err: unknown) {
+        const msg = (err as Error).message ?? 'adopt failed'
+        if (msg.includes('not supported')) return reply.code(400).send({ error: msg })
+        if (msg.includes('Invalid harness')) return reply.code(400).send({ error: msg })
+        if (msg.includes('already adopted')) return reply.code(409).send({ error: msg })
+        if (msg.includes('not found')) return reply.code(404).send({ error: msg })
+        if ((err as Error).name === 'PoolFullError') return reply.code(503).send({ error: msg })
+        throw err
+      }
+    })
+
+    // Dry-run adopt: run the same validations without spawning anything.
+    // Frontend calls this on UUID input blur to give live feedback before
+    // the user hits Create.
+    app.post('/api/sessions/adopt/validate', async (req, reply) => {
+      const body = z.object({
+        projectId: z.string().min(1),
+        harnessSessionId: z.string().min(1),
+      }).safeParse(req.body)
+      if (!body.success) return { ok: false, error: 'Invalid input' }
+
+      let project
+      try {
+        project = await registry.get(body.data.projectId)
+      } catch {
+        return { ok: false, error: `Project not found: ${body.data.projectId}` }
+      }
+      if (project.agentType !== 'claude' && project.agentType !== 'codex') {
+        return { ok: false, error: `Adopt not supported for agent type '${project.agentType}'` }
+      }
+      if (!/^[0-9a-fA-F-]{8,}$/.test(body.data.harnessSessionId)) {
+        return { ok: false, error: `Invalid harness session id format` }
+      }
+
+      const all = await manager.list()
+      const ACTIVE = ['spawning', 'waiting', 'running', 'idle', 'needs_input', 'sleeping']
+      const dup = all.find((s) => s.claudeSessionUuid === body.data.harnessSessionId && ACTIVE.includes(s.status))
+      if (dup) {
+        return { ok: false, error: `Already adopted by orchestron session ${dup.id.slice(0, 8)} (status: ${dup.status}). Archive/kill it first.` }
+      }
+
+      const configDir = (project.agentType === 'codex'
+        ? project.agentConfig?.env?.['CODEX_HOME']
+        : project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']) ?? undefined
+      if (project.agentType === 'claude') {
+        const { claudeTranscriptPath, effectiveClaudeConfigDir } = await import('../adapters/claude.js')
+        const effCfg = effectiveClaudeConfigDir(configDir)
+        const jsonlPath = claudeTranscriptPath(project.path, effCfg, body.data.harnessSessionId)
+        const { existsSync } = await import('node:fs')
+        if (!existsSync(jsonlPath)) {
+          return { ok: false, error: `Transcript not found at ${jsonlPath}. Check the UUID + that the session was started in this workspace.` }
+        }
+        return { ok: true, agent: project.agentType, workspace: project.path, jsonlPath }
+      } else {
+        const { findCodexRolloutPath, effectiveCodexHome } = await import('../adapters/codex.js')
+        const rolloutPath = await findCodexRolloutPath(configDir, body.data.harnessSessionId)
+        const codexHome = effectiveCodexHome(configDir)
+        if (!rolloutPath) {
+          // Could still be a TUI-only session with a thread_history record;
+          // let the adopt call verify SQLite. For dry-run, warn but don't block.
+          return { ok: true, agent: project.agentType, workspace: project.path, jsonlPath: `(TUI-only — will verify via ${codexHome}/thread_history_1.sqlite at adopt)`, warning: 'No rollout file found; adopt will check SQLite thread_history as fallback.' }
+        }
+        return { ok: true, agent: project.agentType, workspace: project.path, jsonlPath: rolloutPath }
+      }
+    })
+
     // Answer a pending TUI selector modal (permission approval, AskUserQuestion
     // fallback) by option index. Sends Down×(index-1) + Enter into the tmux
     // pane and clears session.pendingPrompt so the UI banner disappears.

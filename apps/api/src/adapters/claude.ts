@@ -43,7 +43,7 @@ export function effectiveClaudeConfigDir(explicit?: string): string {
   return expandHome(explicit ?? process.env['CLAUDE_CONFIG_DIR'] ?? path.join(os.homedir(), '.claude'))
 }
 
-function claudeTranscriptPath(workspace: string, configDir: string | undefined, uuid: string): string {
+export function claudeTranscriptPath(workspace: string, configDir: string | undefined, uuid: string): string {
   const baseDir = effectiveClaudeConfigDir(configDir)
   const mangled = expandHome(workspace).replace(/\//g, '-')
   return path.join(baseDir, 'projects', mangled, `${uuid}.jsonl`)
