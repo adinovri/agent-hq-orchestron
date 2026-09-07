@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/StatusPill'
 import { isActive } from '@/lib/status'
 import { formatRelative, formatDuration } from '@/lib/time'
-import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw, Copy, ClipboardCheck } from 'lucide-react'
+import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw, Copy, ClipboardCheck, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 
@@ -27,6 +27,8 @@ interface Props {
   projectPath?: string
   projectDefaultModel?: string
   projectDefaultEffort?: string
+  onDeleteRecord?: () => void
+  deletingRecord?: boolean
 }
 
 /** Tiny copy-to-clipboard button. Renders as a low-contrast icon that
@@ -54,7 +56,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
   )
 }
 
-export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, onRespawn, killing, archiving, reopening, cloning, respawning, projectName, projectPath, projectDefaultModel, projectDefaultEffort }: Props) {
+export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, onRespawn, onDeleteRecord, killing, archiving, reopening, cloning, respawning, deletingRecord, projectName, projectPath, projectDefaultModel, projectDefaultEffort }: Props) {
   const harnessDefaultModel = implicitDefaultModel(session.agentType)
   const harnessDefaultEffort = implicitDefaultEffort(session.agentType)
   const effectiveModel = session.model ?? projectDefaultModel ?? harnessDefaultModel
@@ -282,6 +284,19 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
                   title={`Kill session${descendantCount ? ` (${descendantCount} children)` : ''}`}
                 >
                   <X className="w-4 h-4" />
+                </Button>
+              )}
+              {/* Delete orchestron record — only for terminal / sleeping. Kill first for active states. */}
+              {['succeeded', 'killed', 'failed', 'sleeping'].includes(session.status) && onDeleteRecord && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-red-700 hover:text-red-800 hover:bg-red-50 dark:hover:bg-red-950 h-8 w-8 p-0"
+                  disabled={deletingRecord}
+                  onClick={onDeleteRecord}
+                  title="Delete orchestron record — harness transcript stays on disk (re-adopt later with same UUID)"
+                >
+                  <Trash2 className="w-4 h-4" />
                 </Button>
               )}
             </div>

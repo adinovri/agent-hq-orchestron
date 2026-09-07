@@ -928,5 +928,24 @@ export function sessionsPlugin(
         throw err
       }
     })
+
+    // Permanently remove the orchestron session record (JSON + .bak + per-
+    // session MCP config). Distinct from DELETE /api/sessions/:uuid which
+    // kills the tmux and keeps the record in `killed` state for review.
+    // Only allowed for terminal / sleeping states — active must be killed
+    // first. Harness transcript stays put so the same session can be Adopt'd
+    // back later.
+    app.delete('/api/sessions/:uuid/record', async (req, reply) => {
+      const { uuid } = req.params as { uuid: string }
+      try {
+        const result = await manager.deleteRecord(uuid)
+        return reply.code(200).send(result)
+      } catch (err: unknown) {
+        const msg = (err as Error).message ?? ''
+        if (msg.includes('not found')) return reply.code(404).send({ error: msg })
+        if (msg.includes('Cannot delete')) return reply.code(409).send({ error: msg })
+        throw err
+      }
+    })
   })
 }

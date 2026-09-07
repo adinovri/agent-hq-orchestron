@@ -10,6 +10,7 @@ import type { EffortLevel } from '@agent-hq-orchestron/shared'
 import { InputBox } from '@/components/InputBox'
 import { KillConfirmDialog } from '@/components/KillConfirmDialog'
 import { PendingPromptBanner } from '@/components/PendingPromptBanner'
+import { DeleteRecordDialog } from '@/components/DeleteRecordDialog'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
 import type { SessionMetadata, DelegationEdges, ProjectMetadata } from '@agent-hq-orchestron/shared'
 
@@ -26,6 +27,8 @@ export default function SessionDetailPage({ params }: PageProps) {
   const [archiving, setArchiving] = useState(false)
   const [reopening, setReopening] = useState(false)
   const [cloning, setCloning] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deletingRecord, setDeletingRecord] = useState(false)
 
   const { data: session, isLoading } = useQuery<SessionMetadata>({
     queryKey: ['session', uuid],
@@ -71,6 +74,21 @@ export default function SessionDetailPage({ params }: PageProps) {
       qc.invalidateQueries({ queryKey: ['session', uuid] })
       qc.invalidateQueries({ queryKey: ['sessions'] })
     },
+  })
+
+  const deleteRecordMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiFetch(`/api/sessions/${uuid}/record`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      return res.json()
+    },
+    onMutate: () => setDeletingRecord(true),
+    onSuccess: () => {
+      setDeleteOpen(false)
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      router.push('/dashboard')
+    },
+    onSettled: () => setDeletingRecord(false),
   })
 
   const [actionDialog, setActionDialog] = useState<SessionActionKind | null>(null)
@@ -180,6 +198,8 @@ export default function SessionDetailPage({ params }: PageProps) {
         projectPath={projectPath}
         projectDefaultModel={currentProject?.defaultModel}
         projectDefaultEffort={currentProject?.defaultEffort}
+        onDeleteRecord={() => setDeleteOpen(true)}
+        deletingRecord={deletingRecord}
       />
 
       {session.pendingPrompt && !readOnly && (
@@ -198,6 +218,15 @@ export default function SessionDetailPage({ params }: PageProps) {
         onConfirm={() => killMutation.mutate()}
         descendantCount={descendantCount}
         killing={killing}
+      />
+
+      <DeleteRecordDialog
+        open={deleteOpen}
+        session={session}
+        workspacePath={projectPath}
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={() => deleteRecordMutation.mutate()}
+        deleting={deletingRecord}
       />
 
       <SessionActionDialog

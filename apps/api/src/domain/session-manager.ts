@@ -1800,6 +1800,82 @@ export class SessionManager {
   }
 
   /**
+   * Permanently remove the orchestron session record and its per-session MCP
+   * config (both live + `.bak`). Distinct from `kill` — kill terminates the
+   * live tmux and keeps the record in `killed` state for review; deleteRecord
+   * removes the record entirely so it no longer appears in list/dashboard.
+   *
+   * Preserves everything the harness owns:
+   * - <CLAUDE_CONFIG_DIR>/projects/<mangled-cwd>/<uuid>.jsonl transcript
+   * - <CLAUDE_CONFIG_DIR>/file-history/<uuid>/* edit history
+   * - codex rollout jsonl / SQLite thread_history
+   * so the same session can be adopted back later via the Adopt flow.
+   *
+   * Preserves orchestron aggregates that reference the session id:
+   * - metrics/sessions.jsonl (historical record)
+   * - delegation/*.jsonl (parent/child edges become harmless orphans)
+   *
+   * State gate: only allowed for terminal states (`succeeded`, `killed`,
+   * `failed`) or `sleeping` (no live tmux). For active states the caller
+   * must kill first — refuses with a helpful error otherwise. If sleeping
+   * still has a lingering tmux window (orphan-scan raced), kills tmux best-
+   * effort before wiping the record.
+   */
+  async deleteRecord(uuid: string): Promise<{ deleted: string[] }> {
+    const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!session) throw new Error(`Session not found: ${uuid}`)
+
+    const DELETABLE: SessionStatus[] = ['succeeded', 'killed', 'failed', 'sleeping']
+    if (!DELETABLE.includes(session.status)) {
+      throw new Error(`Cannot delete session in ${session.status} state. Kill it first (its record will move to 'killed' which is deletable).`)
+    }
+
+    // Close any in-memory watchers so the fs.watch handle isn't dangling.
+    const watcher = this.turnWatchers.get(uuid)
+    if (watcher) {
+      watcher.close()
+      this.turnWatchers.delete(uuid)
+    }
+    const timer = this.idleSweepers.get(uuid)
+    if (timer) {
+      clearTimeout(timer)
+      this.idleSweepers.delete(uuid)
+    }
+
+    // Sleeping sessions have no tmux by construction, but an orphaned tmux
+    // could still be alive if the boot-time scan missed it. Best-effort kill
+    // via the adapter to avoid leaving a detached tmux writing to the
+    // harness's JSONL after the record is gone.
+    if (session.tmuxName) {
+      try {
+        const adapter = this.registry.getOrThrow(session.agentType)
+        await adapter.kill({
+          tmuxName: session.tmuxName,
+          claudeUuid: session.claudeSessionUuid,
+          jsonlPath: session.jsonlPath,
+        })
+      } catch { /* tmux may already be gone — fine */ }
+    }
+
+    const { unlink } = await import('node:fs/promises')
+    const deleted: string[] = []
+    const candidates = [
+      this.sessionPath(uuid),
+      `${this.sessionPath(uuid)}.bak`,
+      this.mcpConfigPath(uuid),
+      `${this.mcpConfigPath(uuid)}.bak`,
+    ]
+    for (const p of candidates) {
+      try {
+        await unlink(p)
+        deleted.push(p)
+      } catch { /* file may not exist (e.g. no .bak yet, no mcp config) */ }
+    }
+
+    return { deleted }
+  }
+
+  /**
    * On boot, resume turn-end watchers for any session still marked `running`.
    * Watchers are in-memory only; without this, a server restart leaves
    * previously-running sessions unable to auto-transition to `awaiting_input`.
