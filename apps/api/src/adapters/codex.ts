@@ -165,9 +165,20 @@ export class CodexAdapter implements AgentAdapter {
       mcpConfigInline: config.mcpConfigInline,
     })
 
-    const env: NodeJS.ProcessEnv | undefined = config.configDir
-      ? { CODEX_HOME: expandHome(config.configDir) }
-      : undefined
+    // Skip CODEX_HOME when it resolves to the harness default (~/.codex).
+    // Codex on macOS stores OAuth tokens in the Keychain under a service
+    // name derived from the CODEX_HOME value — bare-run (env unset) hits
+    // the default entry, explicit CODEX_HOME=~/.codex hits a hashed one
+    // that doesn't exist unless the user logged in with the env
+    // explicitly set. Passing env when the value equals the default
+    // forces a keychain mismatch and orchestron-spawned codex re-prompts
+    // for OAuth. Same fix + same reasoning as claude.ts.
+    const defaultDir = path.join(os.homedir(), '.codex')
+    const expandedConfigDir = config.configDir ? expandHome(config.configDir) : undefined
+    const env: NodeJS.ProcessEnv | undefined =
+      expandedConfigDir && expandedConfigDir !== defaultDir
+        ? { CODEX_HOME: expandedConfigDir }
+        : undefined
 
     const [cmd, ...args] = argv
     await tmux.newSession(tmuxName, [cmd!, ...args], config.workspace, env)
@@ -273,9 +284,20 @@ export class CodexAdapter implements AgentAdapter {
       mcpConfigInline: config.mcpConfigInline,
     })
 
-    const env: NodeJS.ProcessEnv | undefined = config.configDir
-      ? { CODEX_HOME: expandHome(config.configDir) }
-      : undefined
+    // Skip CODEX_HOME when it resolves to the harness default (~/.codex).
+    // Codex on macOS stores OAuth tokens in the Keychain under a service
+    // name derived from the CODEX_HOME value — bare-run (env unset) hits
+    // the default entry, explicit CODEX_HOME=~/.codex hits a hashed one
+    // that doesn't exist unless the user logged in with the env
+    // explicitly set. Passing env when the value equals the default
+    // forces a keychain mismatch and orchestron-spawned codex re-prompts
+    // for OAuth. Same fix + same reasoning as claude.ts.
+    const defaultDir = path.join(os.homedir(), '.codex')
+    const expandedConfigDir = config.configDir ? expandHome(config.configDir) : undefined
+    const env: NodeJS.ProcessEnv | undefined =
+      expandedConfigDir && expandedConfigDir !== defaultDir
+        ? { CODEX_HOME: expandedConfigDir }
+        : undefined
 
     const [cmd, ...args] = argv
     await tmux.newSession(tmuxName, [cmd!, ...args], config.workspace, env)
