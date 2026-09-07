@@ -55,6 +55,25 @@ interface RolloutParsed {
 }
 
 /** Parse Claude JSONL rollout. */
+/** Model-derived context window for Claude sessions. JSONL doesn't emit
+ *  a native context_window (codex does), so we infer from the model
+ *  string carried on the session record.
+ *
+ *  - Any model with a `[1m]` suffix (Claude Code's opt-in 1M-tier tag,
+ *    e.g. `opus[1m]`, `sonnet[1m]`) → 1_000_000
+ *  - Opus 5 (native 1M tier by default) → 1_000_000
+ *  - Everything else (Sonnet/Haiku/older Opus without [1m]) → 200_000
+ *
+ *  Falls back to 200K when the model is unknown / undefined so the UI
+ *  never renders an unbounded bar. */
+function claudeContextWindowForModel(model?: string): number {
+  if (!model) return 200_000
+  const m = model.toLowerCase()
+  if (/\[1m\]$/.test(m)) return 1_000_000
+  if (/(^|[^0-9])opus[- ]?5(\b|[^0-9])/.test(m)) return 1_000_000
+  return 200_000
+}
+
 function parseClaudeRollout(raw: string): RolloutParsed {
   const entries: RolloutEntry[] = []
   let lastTurnEndTs = ''
@@ -572,7 +591,16 @@ export function sessionsPlugin(
         }
       }
 
-      return { entries: parsed.entries, size: raw.length, contextStats: parsed.contextStats }
+      // Claude JSONL doesn't emit a native context_window field the way
+      // codex rollout does — enrich contextStats with a model-derived
+      // window so the UI indicator matches what the user actually has
+      // (Opus 5 native = 1M, `<model>[1m]` suffix opts the 200K-native
+      // families onto the 1M tier).
+      const withWindow =
+        session.agentType === 'claude' && parsed.contextStats && !parsed.contextStats.contextWindow
+          ? { ...parsed.contextStats, contextWindow: claudeContextWindowForModel(session.model) }
+          : parsed.contextStats
+      return { entries: parsed.entries, size: raw.length, contextStats: withWindow }
     })
 
     app.post('/api/sessions/:uuid/input', async (req, reply) => {
