@@ -98,10 +98,24 @@ export class ClaudeAdapter implements AgentAdapter {
       sessionMode: { type: 'new', uuid: claudeUuid },
     })
 
-    // Only pass override vars, not full process.env — tmux -e sets these
-    const env: NodeJS.ProcessEnv | undefined = config.configDir
-      ? { CLAUDE_CONFIG_DIR: expandHome(config.configDir) }
-      : undefined
+    // Only pass override vars, not full process.env — tmux -e sets these.
+    //
+    // Skip CLAUDE_CONFIG_DIR when it resolves to the harness default
+    // (~/.claude). Claude Code 2.x stores OAuth tokens in macOS Keychain
+    // under a service name that HASHES the CLAUDE_CONFIG_DIR value —
+    // `claude` bare (env unset) reads `Claude Code-credentials`, while
+    // `CLAUDE_CONFIG_DIR=~/.claude claude` reads `Claude Code-credentials-
+    // <hash-of-path>`. Passing the env explicitly when the value is
+    // already the default forces a different keychain entry than the one
+    // the user's interactive shell authenticated, so orchestron-spawned
+    // claude re-prompts for OAuth. Match the interactive shell's behavior
+    // by leaving env inherited when configDir === default.
+    const defaultDir = path.join(os.homedir(), '.claude')
+    const expandedConfigDir = config.configDir ? expandHome(config.configDir) : undefined
+    const env: NodeJS.ProcessEnv | undefined =
+      expandedConfigDir && expandedConfigDir !== defaultDir
+        ? { CLAUDE_CONFIG_DIR: expandedConfigDir }
+        : undefined
 
     const [cmd, ...args] = argv
     await tmux.newSession(tmuxName, [cmd!, ...args], config.workspace, env)
@@ -127,10 +141,24 @@ export class ClaudeAdapter implements AgentAdapter {
       sessionMode: { type: 'resume', uuid: sessionUuid },
     })
 
-    // Only pass override vars, not full process.env — tmux -e sets these
-    const env: NodeJS.ProcessEnv | undefined = config.configDir
-      ? { CLAUDE_CONFIG_DIR: expandHome(config.configDir) }
-      : undefined
+    // Only pass override vars, not full process.env — tmux -e sets these.
+    //
+    // Skip CLAUDE_CONFIG_DIR when it resolves to the harness default
+    // (~/.claude). Claude Code 2.x stores OAuth tokens in macOS Keychain
+    // under a service name that HASHES the CLAUDE_CONFIG_DIR value —
+    // `claude` bare (env unset) reads `Claude Code-credentials`, while
+    // `CLAUDE_CONFIG_DIR=~/.claude claude` reads `Claude Code-credentials-
+    // <hash-of-path>`. Passing the env explicitly when the value is
+    // already the default forces a different keychain entry than the one
+    // the user's interactive shell authenticated, so orchestron-spawned
+    // claude re-prompts for OAuth. Match the interactive shell's behavior
+    // by leaving env inherited when configDir === default.
+    const defaultDir = path.join(os.homedir(), '.claude')
+    const expandedConfigDir = config.configDir ? expandHome(config.configDir) : undefined
+    const env: NodeJS.ProcessEnv | undefined =
+      expandedConfigDir && expandedConfigDir !== defaultDir
+        ? { CLAUDE_CONFIG_DIR: expandedConfigDir }
+        : undefined
 
     const [cmd, ...args] = argv
     await tmux.newSession(tmuxName, [cmd!, ...args], config.workspace, env)
