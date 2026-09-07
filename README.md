@@ -40,6 +40,13 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
   the transcript renders it as a card with the options as clickable
   pills (plus an `✎ Other` free-text). Pick, hit send, answer goes
   back to the session — no need to attach to the tmux pane to reply.
+- **Pending-prompt banner** — a 20 s background sweep watches every
+  live claude AND codex tmux pane for the universal TUI selector
+  modal (permission approval, AskUserQuestion buffered by claude,
+  codex trust prompt). When detected the session transitions to
+  `needs_input` and the session detail page renders a clickable
+  banner — pick an option, orchestron sends the corresponding
+  arrow-nav + Enter into the pane to answer the modal.
 - **Adopt existing sessions** — import a claude / codex session started
   outside orchestron (via `claude --resume`, a background job, another
   supervisor) into a new orchestron record. Pre-check refuses adoption

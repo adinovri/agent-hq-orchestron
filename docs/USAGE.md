@@ -248,7 +248,49 @@ tmux pane read-only (`tmux attach -rt <tmux-name>`) and press `Escape`.
 
 **Not** used for permission approvals (e.g. `Bash rm foo.txt — Approve?`)
 — those are runtime safety gates, not tool calls, and don't appear in
-the transcript. See "Session stuck on `running` status" in DEPLOY.md.
+the transcript. See "Session stuck on `running` status" in DEPLOY.md
+and the "Pending prompt banner" subsection below.
+
+### Pending prompt banner (permission approval / interactive selector)
+
+Some interactive TUI modals never make it into the transcript JSONL —
+current Claude buffers `AskUserQuestion` tool_use writes until the modal
+is answered, permission approval prompts are runtime safety gates that
+aren't tool calls at all, and codex's first-workspace trust prompt
+lives entirely in the TUI. Without help, orchestron would show these
+sessions as `running` forever until you attached to the tmux pane
+manually.
+
+A background sweep (every 20 s) `tmux capture-pane`'s every claude AND
+codex session that's still in `running` / `needs_input`, matches the
+universal TUI selector footer (`↑/↓ to navigate` + `Enter to select`),
+and when it finds one:
+
+- Transitions `running → needs_input` so the dashboard list surfaces
+  the session as waiting.
+- Parses the modal (checkbox header + title + options + optional
+  detail band above the option list) into `session.pendingPrompt`.
+- Session detail page renders a `PendingPromptBanner` above the
+  transcript with each option as a clickable button — click sends
+  `Down ×(index-1) + Enter` into the tmux pane to answer the modal;
+  banner is cleared optimistically and the next sweep confirms.
+
+Applies to **both** claude and codex. The parser anchors on the
+`☐ <header>` line at the top of the modal and walks down past
+separators / description continuation lines to collect all numbered
+options, so codex extras like `Type something` / `Chat about this`
+that live below a separator are still captured in order. `kind` is
+marked `permission` when the pane contains `Do you want to proceed?`
+or `Do you want to allow`, otherwise `question` (styling only —
+same submit path).
+
+Not covered:
+
+- Opencode adapter (not scanned yet).
+- Modals whose footer doesn't include the universal navigate/select
+  hint (rare — if you find one, the regex in
+  `apps/api/src/domain/session-manager.ts parseSelectorModal` needs
+  to be extended).
 
 ### Status lifecycle (allowed transitions)
 
