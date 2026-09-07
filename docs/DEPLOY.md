@@ -65,9 +65,9 @@ Build takes ~30 sec cold. Turborepo caches subsequent builds (~2 sec).
 bash scripts/init.sh
 ```
 
-Creates `~/.config/agent-hq-orchestron/`:
+Creates `~/.orchestron/`:
 ```
-~/.config/agent-hq-orchestron/
+~/.orchestron/
 ├── sessions/       # session records (JSON)
 ├── projects/       # project registry (JSON)
 ├── delegation/     # parent-child edges (JSONL append-only)
@@ -117,7 +117,8 @@ export ORCHESTRON_SHARED_CODEX_MEMORY_DIR=~/.codex-shared-memory
 
 ### Option B: Config file
 
-`~/.config/agent-hq-orchestron/config.json`:
+`~/.orchestron/config.json` (created by hand — `scripts/init.sh` only
+scaffolds subdirs, not the config file itself):
 ```json
 {
   "bindHost": "127.0.0.1",
@@ -125,15 +126,35 @@ export ORCHESTRON_SHARED_CODEX_MEMORY_DIR=~/.codex-shared-memory
   "maxConcurrent": 8,
   "logLevel": "info",
   "idleTimeoutMs": 900000,
+  "remoteToken": "<48-char-hex>",
   "adapters": {
     "claude": true,
-    "codex": false,
+    "codex": true,
     "opencode": false
   }
 }
 ```
 
-Precedence: env > config file > built-in defaults.
+Schema (from `packages/shared/src/config.ts`):
+
+| Field | Type | Default | Env override |
+|---|---|---|---|
+| `bindHost` | string | `127.0.0.1` | `ORCHESTRON_BIND_HOST` |
+| `port` | int 1-65535 | `8080` | `ORCHESTRON_PORT` (or legacy `AHQ_API_PORT`) |
+| `dataDir` | string | `~/.orchestron` | `ORCHESTRON_DATA_DIR` (or legacy `AHQ_DATA_DIR`) |
+| `maxConcurrent` | int 1-200 | `floor(totalmem_MB / 800)`, capped at 20 | `ORCHESTRON_MAX_CONCURRENT` |
+| `remoteToken` | string? | none | `ORCHESTRON_REMOTE_TOKEN` |
+| `adapters.claude` | bool | `true` | — |
+| `adapters.codex` | bool | `false` | — |
+| `adapters.opencode` | bool | `false` | — |
+| `logLevel` | `error \| warn \| info \| debug` | `info` | `ORCHESTRON_LOG_LEVEL` |
+| `idleTimeoutMs` | int ≥ 0 | `900000` (15 min) | `ORCHESTRON_IDLE_TIMEOUT_MS` |
+
+Fields **not** in `config.json` (env-only): `ORCHESTRON_SHARED_MEMORY_DIR`,
+`ORCHESTRON_SHARED_CODEX_MEMORY_DIR` — set on the API service unit
+(§6b `orchestron-api.service`) alongside `NODE_ENV`.
+
+Precedence (highest wins): env > config file > built-in defaults.
 
 **Auto-detected default `maxConcurrent`**: `floor(totalmem_MB / 800)`, capped at 20. Overrideable.
 
@@ -387,7 +408,7 @@ Kalau server crash / disk full, punya fallback lokal. Setup nightly rsync ke lap
 # Di laptop
 crontab -e
 # Add line:
-0 2 * * * rsync -a --delete <server-ip>:~/.config/agent-hq-orchestron/ ~/orchestron-backup/
+0 2 * * * rsync -a --delete <server-ip>:~/.orchestron/ ~/orchestron-backup/
 ```
 
 ---
@@ -413,7 +434,7 @@ Use case: lu kerja di kafe → laptop only (server unreachable). Balik ke rumah 
 
 ### Konsekuensi penting
 
-- **State terpisah total.** Sessions yang spawn di laptop **tidak muncul** di server UI, dan sebaliknya. Setiap instance punya `~/.config/agent-hq-orchestron/` sendiri di host masing-masing.
+- **State terpisah total.** Sessions yang spawn di laptop **tidak muncul** di server UI, dan sebaliknya. Setiap instance punya `~/.orchestron/` sendiri di host masing-masing.
 - **Tidak ada auto-sync.** Kalau lu spawn session A di laptop, session A cuma ada di laptop. Server tidak tahu.
 - **No cross-host resume.** Session yang started di laptop tidak bisa di-resume dari server — transcript/rollout file host-specific: Claude di `~/.claude/projects/<mangled-cwd>/<uuid>.jsonl`, Codex di `~/.codex/sessions/YYYY/MM/DD/rollout-<iso>-<uuid>.jsonl`.
 - **Federation view = pending feature.** HLD Multi-Instance Topology Option 2 (peer registry + read-only cross-instance view) belum di-implement — laptop UI hanya show local sessions, tidak show server sessions.
@@ -449,7 +470,7 @@ Karena state terpisah, backup + occasional consolidate:
 ```bash
 # Di laptop crontab:
 0 2 * * * rsync -a --exclude='*.tmp' \
-  <server-ip>:~/.config/agent-hq-orchestron/ \
+  <server-ip>:~/.orchestron/ \
   ~/orchestron-server-archive/
 ```
 
@@ -459,7 +480,7 @@ Ini bukan sync — cuma backup buat lu bisa browse server session dari laptop of
 
 ### Anti-pattern: Two-way sync
 
-**JANGAN** sync `~/.config/agent-hq-orchestron/` bidirectional (Syncthing/rsync dua arah) — HLD Multi-Instance Topology explicit mark ini sebagai anti-pattern. Race condition kedua sisi nulis `sessions/*.json` bersamaan = corrupt data. Pakai federation view kalau butuh cross-visibility, atau accept state split.
+**JANGAN** sync `~/.orchestron/` bidirectional (Syncthing/rsync dua arah) — HLD Multi-Instance Topology explicit mark ini sebagai anti-pattern. Race condition kedua sisi nulis `sessions/*.json` bersamaan = corrupt data. Pakai federation view kalau butuh cross-visibility, atau accept state split.
 
 ---
 
@@ -485,7 +506,7 @@ Expected `/api/health` response:
 {
   "ok": true,
   "tmux": "tmux 3.4",
-  "storage": "/home/adi/.config/agent-hq-orchestron",
+  "storage": "/home/adi/.orchestron",
   "bindHost": "100.71.6.23",
   "remoteAuth": "enabled",
   "maxConcurrent": 8
@@ -551,7 +572,7 @@ Keyboard: `j`/`k` navigate, `Enter` open session, `k` kill, `n` new, `q` quit.
 
 ### Update Templates
 
-Template file live di `~/.config/agent-hq-orchestron/templates/<name>.md`:
+Template file live di `~/.orchestron/templates/<name>.md`:
 
 ```markdown
 ---
@@ -575,7 +596,7 @@ Reload otomatis pada next spawn — no restart needed.
 
 ### Add Hook
 
-Bikin script di `~/.config/agent-hq-orchestron/hooks/pre-spawn/enforce-no-secrets.ts`:
+Bikin script di `~/.orchestron/hooks/pre-spawn/enforce-no-secrets.ts`:
 
 ```typescript
 import { readFile } from 'node:fs/promises';
@@ -627,7 +648,7 @@ Data schema is additive (Zod schema evolution) — old JSON files always readabl
 
 Logs:
 ```bash
-tail -f ~/.config/agent-hq-orchestron/logs/api-$(date +%F).log
+tail -f ~/.orchestron/logs/api-$(date +%F).log
 journalctl --user -u orchestron-api.service -u orchestron-web.service -f
 ```
 
@@ -720,7 +741,7 @@ rm ~/.config/systemd/user/orchestron-api.service ~/.config/systemd/user/orchestr
 cd ~/Works/agent-hq-orchestron/apps/cli && npm unlink -g
 
 # Remove data (⚠ irreversible — backup first if needed)
-rm -rf ~/.config/agent-hq-orchestron/
+rm -rf ~/.orchestron/
 
 # Remove repo
 rm -rf ~/Works/agent-hq-orchestron/

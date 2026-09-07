@@ -124,7 +124,7 @@ Requirements Overview
 | NFR-02 | JSONL event streaming latency (transcript write → browser paint) | < 200ms p95 |
 | NFR-03 | Max concurrent subprocess | 20 (configurable) |
 | NFR-04 | Storage durability | Atomic write + `.bak` recovery, no corruption on `kill -9` |
-| NFR-05 | Portability | Copy `~/.config/agent-hq-orchestron/` = full backup + restore |
+| NFR-05 | Portability | Copy `~/.orchestron/` = full backup + restore |
 | NFR-06 | Dev bootstrap | `npm install && npm run dev` → running dalam < 60s |
 | NFR-07 | Cost | Nol API credit consumed — verify via Anthropic dashboard |
 | NFR-08 | Availability | Best-effort local; process supervisor via systemd user unit opsional |
@@ -241,10 +241,10 @@ data: {"type":"result","stop_reason":"end_turn","tokens":{"input":1234,"output":
 
 ### Storage Layout (File-Based)
 
-Storage root: `~/.config/agent-hq-orchestron/`
+Storage root: `~/.orchestron/`
 
 ```
-~/.config/agent-hq-orchestron/
+~/.orchestron/
 ├── config/
 │   ├── hq.yml                        # Projects, agent templates, defaults (YAML)
 │   └── hq.yml.bak
@@ -788,7 +788,7 @@ Tailer[TranscriptTailer]
 Deleg[DelegationTracker]
 end
 subgraph Storage
-Config[~/.config/agent-hq-orchestron/<br/>config, sessions, projects, delegation, logs]
+Config[~/.orchestron/<br/>config, sessions, projects, delegation, logs]
 end
 subgraph Subprocess
 Tmux[tmux sessions<br/>agent-\*]
@@ -814,7 +814,7 @@ Deleg -->|FileStore atomic write| Config
 
 1. **Client (Browser):** Next.js 15 App Router. Dashboard grid, session detail dengan live log stream, DAG orchestration graph pakai React Flow.
 2. **API (Fastify):** Single Node process, port 8080. Routes handle CRUD + SSE. Services orchestrate subprocess pool, storage, dan transcript tailing.
-3. **Storage (File-Based):** Semua state di `~/.config/agent-hq-orchestron/`. Atomic write + `.bak` backup. No SQL DB.
+3. **Storage (File-Based):** Semua state di `~/.orchestron/`. Atomic write + `.bak` backup. No SQL DB.
 4. **Subprocess (tmux + claude):** Setiap session = 1 detached tmux session menjalankan `claude` interaktif. TranscriptTailer watch JSONL yang di-write Claude ke `~/.claude/projects/`.
 
 ### Sequence Diagram - Session Spawn (Phase A: Boot + Prompt)
@@ -943,7 +943,7 @@ Data Flow & Privacy
 
 | Data | Classification | Location | Handling |
 | --- | --- | --- | --- |
-| Session prompts | User content | `~/.config/agent-hq-orchestron/sessions/*.jsonl` | File permission 0o600, no upload |
+| Session prompts | User content | `~/.orchestron/sessions/*.jsonl` | File permission 0o600, no upload |
 | Session responses | User content + code | `~/.claude/projects/*/*.jsonl` (Claude's dir) + our sessions/\*.jsonl | 0o600 |
 | Claude session UUID | Internal ID | Session metadata JSON | 0o600 |
 | Anthropic API key | Sensitive | Not stored — Claude CLI manages own auth | N/A |
@@ -953,7 +953,7 @@ Data Flow & Privacy
 
 ### File Permission
 
-Semua file yang di-write oleh FileStore pakai mode `0o600` (owner read/write only). Directory `~/.config/agent-hq-orchestron/` pakai mode `0o700`. Sesuai pattern Tycho.
+Semua file yang di-write oleh FileStore pakai mode `0o600` (owner read/write only). Directory `~/.orchestron/` pakai mode `0o700`. Sesuai pattern Tycho.
 
 ### File-Store Schema (ER Diagram)
 
@@ -1377,7 +1377,7 @@ Deployment Plan
 * npm ≥ 10
 * tmux ≥ 3.0
 * `claude` CLI installed + authenticated dengan Adi's Claude Pro/Max subscription
-* `~/.claude/` dan `~/.config/agent-hq-orchestron/` writable
+* `~/.claude/` dan `~/.orchestron/` writable
 * OS: macOS atau Linux (Windows via WSL only)
 
 ### Deployment Phases
@@ -1392,7 +1392,7 @@ Deployment Plan
 
 ### Feature Flags
 
-Tidak pakai runtime feature flag — semua config via `~/.config/agent-hq-orchestron/config/hq.yml`. Reload on file change (chokidar).
+Tidak pakai runtime feature flag — semua config via `~/.orchestron/config/hq.yml`. Reload on file change (chokidar).
 
 | Config Key | Description | Default |
 | --- | --- | --- |
@@ -1407,13 +1407,13 @@ Tidak pakai runtime feature flag — semua config via `~/.config/agent-hq-orches
 
 * `npm install && npm run build` → build FE + BE
 * `npm run start` → run production build (localhost:3000 + localhost:8080)
-* `scripts/init.sh` → bootstrap `~/.config/agent-hq-orchestron/{sessions,projects,delegation,logs}`
+* `scripts/init.sh` → bootstrap `~/.orchestron/{sessions,projects,delegation,logs}`
 * Optional: systemd user unit template untuk auto-start
 * Optional (Phase 4): Electron shell untuk desktop app packaging
 
 ### Rollback
 
-Personal tool — rollback = `git checkout <prev-tag>` + `npm install`. Data di `~/.config/agent-hq-orchestron/` backward-compatible (atomic JSON, additive schema evolution).
+Personal tool — rollback = `git checkout <prev-tag>` + `npm install`. Data di `~/.orchestron/` backward-compatible (atomic JSON, additive schema evolution).
 
 ### Deployment Scenarios
 
@@ -1535,7 +1535,7 @@ Open Items
 | ID | Item | Owner | Due Date | Status |
 | --- | --- | --- | --- | --- |
 | OI-01 | Konfirmasi package manager: **npm** (bukan pnpm) — sudah confirmed Adi | Adi | 2026-08-15 | Resolved |
-| OI-02 | Data folder location: `~/.config/agent-hq-orchestron/` — sudah confirmed Adi (XDG) | Adi | 2026-08-15 | Resolved |
+| OI-02 | Data folder location: `~/.orchestron/` — sudah confirmed Adi (XDG) | Adi | 2026-08-15 | Resolved |
 | OI-03 | Repo name: `agent-hq-orchestron` — sudah confirmed Adi | Adi | 2026-08-15 | Resolved |
 | OI-04 | Push ke public GitHub — plan future, credit Tycho di README | Adi | TBD | Open |
 | OI-05 | Codex CLI juga pakai `--session-id` pattern? Perlu spike sebelum Phase 3 | Adi | 2026-09-06 | Resolved — codex assigns v7 UUID on spawn (cannot pre-assign); resume via `codex resume <uuid>` subcommand; transcript is a JSONL rollout under `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<iso>-<uuid>.jsonl`. Interactive TUI does NOT write rollout — orchestron reconciles session id by scanning rollout dir after ready-marker |
