@@ -7,6 +7,7 @@ import { FilterBar, FilterState } from '@/components/FilterBar'
 import { SessionList } from '@/components/SessionList'
 import { SpawnDialog } from '@/components/SpawnDialog'
 import { AdoptSessionDialog } from '@/components/AdoptSessionDialog'
+import { ImportSessionDialog } from '@/components/ImportSessionDialog'
 import { SessionListSkeleton } from '@/components/Skeleton'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
 import type { SessionMetadata, ProjectMetadata } from '@agent-hq-orchestron/shared'
@@ -35,6 +36,7 @@ export default function DashboardPage() {
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
   const [spawnOpen, setSpawnOpen] = useState(false)
   const [adoptOpen, setAdoptOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [killingIds, setKillingIds] = useState<Set<string>>(new Set())
   const [groupBy, setGroupBy] = useState<'project' | 'none'>('none')
 
@@ -164,6 +166,9 @@ export default function DashboardPage() {
           <Button variant="outline" onClick={() => setAdoptOpen(true)} title="Adopt an existing claude/codex session started outside orchestron">
             Adopt
           </Button>
+          <Button variant="outline" onClick={() => setImportOpen(true)} title="Import a session bundle exported from another orchestron host">
+            Import
+          </Button>
           <Button onClick={() => setSpawnOpen(true)}>
             <Plus className="w-4 h-4 mr-1" /> Spawn
           </Button>
@@ -257,6 +262,21 @@ export default function DashboardPage() {
       <AdoptSessionDialog
         open={adoptOpen}
         onClose={() => setAdoptOpen(false)}
+        projects={projects.map((p) => ({
+          id: p.id,
+          name: p.name,
+          agentType: p.agentType,
+          path: p.path,
+          configDir: p.agentType === 'codex'
+            ? p.agentConfig?.env?.['CODEX_HOME']
+            : p.agentConfig?.env?.['CLAUDE_CONFIG_DIR'],
+        }))}
+      />
+
+      {/* Import bundle exported from another orchestron host */}
+      <ImportSessionDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
         projects={projects.map((p) => ({
           id: p.id,
           name: p.name,

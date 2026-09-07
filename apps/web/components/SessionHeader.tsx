@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/StatusPill'
 import { isActive } from '@/lib/status'
 import { formatRelative, formatDuration } from '@/lib/time'
-import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw, Copy, ClipboardCheck, Trash2 } from 'lucide-react'
+import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw, Copy, ClipboardCheck, Trash2, Download } from 'lucide-react'
 import { useState } from 'react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 
@@ -273,6 +273,19 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
                 >
                   <Check className="w-4 h-4" />
                 </Button>
+              )}
+              {/* Export harness transcript — plain download link so the
+               *  browser handles the file save. Server picks .jsonl vs
+               *  .tar.gz based on the harness + whether a rollout jsonl
+               *  exists on disk. */}
+              {session.claudeSessionUuid && (
+                <a
+                  href={`/api/sessions/${session.id}/export`}
+                  className="inline-flex items-center justify-center h-8 w-8 rounded text-sky-600 hover:text-sky-700 hover:bg-sky-50 dark:hover:bg-sky-950 transition"
+                  title="Export session bundle (jsonl or tar.gz) — import into another orchestron host with the Import button"
+                >
+                  <Download className="w-4 h-4" />
+                </a>
               )}
               {active && (
                 <Button
