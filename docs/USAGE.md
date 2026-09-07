@@ -149,6 +149,32 @@ Not for:
   with a real `--resume`. If you only want to read past output, open
   the JSONL directly.
 
+### Delete a session record
+
+Session detail header → trash icon (only visible for terminal states:
+`succeeded` / `killed` / `failed` / `sleeping` — active sessions must
+be killed first). Permanently removes the orchestron record so it stops
+appearing in list/dashboard. The harness transcript stays on disk, so
+the same session can be re-adopted later via Adopt using the same UUID.
+
+The confirm dialog explicitly enumerates:
+
+- **Deleted**: `~/.orchestron/sessions/<uuid>.json` (+ `.bak`),
+  `~/.orchestron/mcp-configs/<uuid>.json` (+ `.bak`).
+- **Preserved**: the harness transcript at
+  `<CLAUDE_CONFIG_DIR>/projects/<mangled-cwd>/<uuid>.jsonl`, the Claude
+  file-edit history at `<CLAUDE_CONFIG_DIR>/file-history/<uuid>/`,
+  the orchestron metrics aggregate, and delegation edges (parent/child
+  edges become harmless orphans — clearing them would break the tree
+  for surviving siblings).
+
+Distinct from kill:
+
+| Action | State change | Record | Tmux | Harness transcript |
+|---|---|---|---|---|
+| Kill (X icon) | active → `killed` | stays for review | terminated | untouched |
+| Delete record (trash icon) | record removed | removed | terminated best-effort if lingering | untouched |
+
 ### Session detail page
 
 Header shows: status pill, project chip (blue), harness chip (violet

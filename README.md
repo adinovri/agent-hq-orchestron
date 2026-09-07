@@ -45,6 +45,9 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
   supervisor) into a new orchestron record. Pre-check refuses adoption
   when a live process on the host is already holding the UUID, so two
   writers can't race the same transcript.
+- **Delete record** — trash icon on terminal-state sessions removes the
+  orchestron record without touching the harness transcript, so a
+  session can always be re-adopted later.
 - **Cron-scheduled spawns** — YAML-importable schedules with live-preview
   of the next fires.
 - **Agent-to-agent coordination** — auto-injected MCP server so a running
