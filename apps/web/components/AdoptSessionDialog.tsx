@@ -12,6 +12,10 @@ interface ProjectSummary {
   name: string
   agentType: 'claude' | 'codex' | 'opencode'
   path: string
+  /** Effective config dir surfaced from project.agentConfig.env
+   *  (CLAUDE_CONFIG_DIR for claude, CODEX_HOME for codex). Falls back to
+   *  the harness default when unset so the UI hint stays accurate. */
+  configDir?: string
 }
 
 interface Props {
@@ -128,32 +132,67 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
             </select>
           </div>
 
-          {currentProject && (
-            <div className="text-xs text-zinc-500 dark:text-zinc-400 space-y-0.5 font-mono">
-              <div>agent: <span className="text-zinc-800 dark:text-zinc-200">{currentProject.agentType}</span></div>
-              <div className="break-all">workspace: <span className="text-zinc-800 dark:text-zinc-200">{currentProject.path}</span></div>
+          {currentProject && (() => {
+            const isClaudish = currentProject.agentType === 'claude'
+            const cfgEnvName = isClaudish ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME'
+            const cfgDefault = isClaudish ? '~/.claude' : '~/.codex'
+            const effectiveCfg = currentProject.configDir ?? cfgDefault
+            const usingDefault = !currentProject.configDir
+            // Mangle workspace like Claude does (replace / with -) so the hint
+            // path matches the real jsonl location the user should have.
+            const mangled = currentProject.path.replace(/\//g, '-')
+            const claudeHint = `${effectiveCfg}/projects/${mangled}/<uuid>.jsonl`
+            const codexHint = `${effectiveCfg}/sessions/YYYY/MM/DD/rollout-*-<uuid>.jsonl`
+            return (
+              <>
+                <div className="text-xs text-zinc-500 dark:text-zinc-400 space-y-0.5 font-mono">
+                  <div>agent: <span className="text-zinc-800 dark:text-zinc-200">{currentProject.agentType}</span></div>
+                  <div className="break-all">workspace: <span className="text-zinc-800 dark:text-zinc-200">{currentProject.path}</span></div>
+                  <div className="break-all" title={`Set via project.agentConfig.env.${cfgEnvName}`}>
+                    {cfgEnvName.toLowerCase().replace(/_/g, ' ')}:{' '}
+                    <span className="text-zinc-800 dark:text-zinc-200">{effectiveCfg}</span>
+                    {usingDefault && (
+                      <span className="text-zinc-400 italic ml-1">(harness default)</span>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">
+                    Harness session UUID
+                  </label>
+                  <input
+                    type="text"
+                    autoFocus
+                    value={uuid}
+                    onChange={(e) => { setUuid(e.target.value); setValidation(null) }}
+                    onBlur={doValidate}
+                    disabled={adoptMutation.isPending}
+                    placeholder="e.g. 45b75ffc-156f-45f9-bf7f-77083b07af16"
+                    className="w-full px-3 py-2 text-sm font-mono bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded focus:outline-none focus:ring-2 focus:ring-violet-500"
+                  />
+                  <p className="mt-1 text-[10px] text-zinc-500 break-all">
+                    Expected transcript at{' '}
+                    <code className="text-zinc-600 dark:text-zinc-400">{isClaudish ? claudeHint : codexHint}</code>
+                  </p>
+                </div>
+              </>
+            )
+          })()}
+
+          {!currentProject && (
+            <div>
+              <label className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">
+                Harness session UUID
+              </label>
+              <input
+                type="text"
+                disabled
+                placeholder="Pick a project first"
+                className="w-full px-3 py-2 text-sm font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded opacity-60"
+              />
             </div>
           )}
-
-          <div>
-            <label className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">
-              Harness session UUID
-            </label>
-            <input
-              type="text"
-              autoFocus
-              value={uuid}
-              onChange={(e) => { setUuid(e.target.value); setValidation(null) }}
-              onBlur={doValidate}
-              disabled={adoptMutation.isPending}
-              placeholder="e.g. 45b75ffc-156f-45f9-bf7f-77083b07af16"
-              className="w-full px-3 py-2 text-sm font-mono bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded focus:outline-none focus:ring-2 focus:ring-violet-500"
-            />
-            <p className="mt-1 text-[10px] text-zinc-500">
-              For claude: the UUID after <code>--resume</code> or in <code>~/.claude/projects/&lt;cwd&gt;/*.jsonl</code>.
-              For codex: the UUID after <code>codex resume</code> or in <code>~/.codex/sessions/YYYY/MM/DD/rollout-*-&lt;uuid&gt;.jsonl</code>.
-            </p>
-          </div>
 
           {validating && (
             <div className="flex items-center gap-2 text-xs text-zinc-500">

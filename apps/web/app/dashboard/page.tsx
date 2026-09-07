@@ -247,7 +247,15 @@ export default function DashboardPage() {
       <AdoptSessionDialog
         open={adoptOpen}
         onClose={() => setAdoptOpen(false)}
-        projects={projects.map((p) => ({ id: p.id, name: p.name, agentType: p.agentType, path: p.path }))}
+        projects={projects.map((p) => ({
+          id: p.id,
+          name: p.name,
+          agentType: p.agentType,
+          path: p.path,
+          configDir: p.agentType === 'codex'
+            ? p.agentConfig?.env?.['CODEX_HOME']
+            : p.agentConfig?.env?.['CLAUDE_CONFIG_DIR'],
+        }))}
       />
     </div>
   )
