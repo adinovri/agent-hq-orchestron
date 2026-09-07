@@ -327,6 +327,12 @@ Delegate=yes
 WorkingDirectory=%h/Works/agent-hq-orchestron/apps/api
 Environment="NODE_ENV=production"
 Environment="PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin"
+# Shared memory pools — env-only (not in config.json). Uncomment to
+# override the defaults (~/.claude/shared-memory for claude,
+# ~/.codex-shared-memory for codex). Set to "" to disable that pool
+# and keep memory strictly per-workspace. Leave commented for defaults.
+#Environment="ORCHESTRON_SHARED_MEMORY_DIR=%h/.claude/shared-memory"
+#Environment="ORCHESTRON_SHARED_CODEX_MEMORY_DIR=%h/.codex-shared-memory"
 ExecStart=/home/linuxbrew/.linuxbrew/bin/node dist/server.js
 Restart=on-failure
 RestartSec=5
@@ -433,6 +439,14 @@ vs the Linux setup:
   <dict>
     <key>NODE_ENV</key><string>production</string>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <!-- Shared memory pools — env-only (not in config.json). Omit either
+         key to accept the code default (~/.claude/shared-memory for claude,
+         ~/.codex-shared-memory for codex). Set to empty string to disable
+         that pool entirely and keep memory strictly per-workspace. -->
+    <!--
+    <key>ORCHESTRON_SHARED_MEMORY_DIR</key><string>/Users/YOU/.claude/shared-memory</string>
+    <key>ORCHESTRON_SHARED_CODEX_MEMORY_DIR</key><string>/Users/YOU/.codex-shared-memory</string>
+    -->
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
