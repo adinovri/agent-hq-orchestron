@@ -41,9 +41,25 @@ function resolveApiUrl(): string {
 const API_URL = resolveApiUrl()
 console.log(`[next.config] Rewriting /api/* → ${API_URL}`)
 
-// Expose build timestamp so client can display which bundle it's running.
-// Rebuild every time invalidates cache implicitly and gives us a debug tag.
-const BUILD_STAMP = new Date().toISOString().replace('T', ' ').slice(0, 19)
+// Expose build stamp so client can display which bundle it's running. Prefer
+// the git commit SHA (short) so identical commits built on different hosts /
+// at different times get the SAME chip — makes cross-host "are these in
+// sync?" checks meaningful. Falls back to a build timestamp when git isn't
+// available (release tarball, no repo, etc). Explicit BUILD_STAMP env
+// override always wins for CI use.
+function computeBuildStamp(): string {
+  const explicit = process.env.BUILD_STAMP
+  if (explicit) return explicit
+  try {
+    // execSync is synchronous — fine at build config load
+    const sha = require('node:child_process')
+      .execSync('git rev-parse --short=8 HEAD', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+      .trim()
+    if (sha && /^[0-9a-f]{6,}$/.test(sha)) return sha
+  } catch { /* not a git repo or git not on PATH — fall through */ }
+  return new Date().toISOString().replace('T', ' ').slice(0, 19)
+}
+const BUILD_STAMP = computeBuildStamp()
 
 const nextConfig: NextConfig = {
   env: {
