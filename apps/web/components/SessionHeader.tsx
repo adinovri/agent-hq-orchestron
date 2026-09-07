@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/StatusPill'
 import { isActive } from '@/lib/status'
 import { formatRelative, formatDuration } from '@/lib/time'
-import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw } from 'lucide-react'
+import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw, Copy, ClipboardCheck } from 'lucide-react'
 import { useState } from 'react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 
@@ -24,11 +24,37 @@ interface Props {
   cloning?: boolean
   respawning?: boolean
   projectName?: string
+  projectPath?: string
   projectDefaultModel?: string
   projectDefaultEffort?: string
 }
 
-export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, onRespawn, killing, archiving, reopening, cloning, respawning, projectName, projectDefaultModel, projectDefaultEffort }: Props) {
+/** Tiny copy-to-clipboard button. Renders as a low-contrast icon that
+ *  briefly swaps to a checkmark after copy so mobile users get feedback
+ *  without a toast. Falls back silently on non-secure contexts. */
+function CopyButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false)
+  const onClick = async () => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+    } catch {
+      // clipboard API needs secure context — silently no-op
+    }
+  }
+  return (
+    <button
+      onClick={onClick}
+      title={`Copy ${label}`}
+      className="inline-flex items-center justify-center w-4 h-4 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition align-middle ml-1"
+    >
+      {copied ? <ClipboardCheck className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+    </button>
+  )
+}
+
+export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, onRespawn, killing, archiving, reopening, cloning, respawning, projectName, projectPath, projectDefaultModel, projectDefaultEffort }: Props) {
   const harnessDefaultModel = implicitDefaultModel(session.agentType)
   const harnessDefaultEffort = implicitDefaultEffort(session.agentType)
   const effectiveModel = session.model ?? projectDefaultModel ?? harnessDefaultModel
@@ -146,19 +172,50 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
             </button>
             {expanded && (
               <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 space-y-0.5 font-mono break-all">
-                <div>id: {session.id}</div>
+                <div>
+                  id: {session.id}
+                  <CopyButton value={session.id} label="session id" />
+                </div>
                 <div>project: {projectName ?? session.projectId}</div>
                 <div>agent: {session.agentType}</div>
-                {session.claudeSessionUuid && (
-                  <div title={session.agentType === 'codex' ? 'Resume: codex resume <uuid>' : 'Resume: claude --resume <uuid>'}>
-                    {session.agentType} session: {session.claudeSessionUuid}
+                {session.claudeSessionUuid && (() => {
+                  const resumeCmd = session.agentType === 'codex'
+                    ? `codex resume ${session.claudeSessionUuid}`
+                    : `claude --resume ${session.claudeSessionUuid}`
+                  return (
+                    <>
+                      <div title={`Resume: ${resumeCmd}`}>
+                        {session.agentType} session: {session.claudeSessionUuid}
+                        <CopyButton value={session.claudeSessionUuid} label="harness session id" />
+                      </div>
+                      <div title="Full resume command">
+                        resume: <span className="text-zinc-600 dark:text-zinc-300">{resumeCmd}</span>
+                        <CopyButton value={resumeCmd} label="resume command" />
+                      </div>
+                    </>
+                  )
+                })()}
+                {projectPath && (
+                  <div title="Workspace directory — cd here before running the resume command">
+                    workspace: {projectPath}
+                    <CopyButton value={projectPath} label="workspace path" />
                   </div>
                 )}
-                {session.tmuxName && (
-                  <div title="Attach read-only: tmux attach -rt <name>">
-                    tmux: {session.tmuxName}
-                  </div>
-                )}
+                {session.tmuxName && (() => {
+                  const attachCmd = `tmux attach -rt ${session.tmuxName}`
+                  return (
+                    <>
+                      <div title={`Attach read-only: ${attachCmd}`}>
+                        tmux: {session.tmuxName}
+                        <CopyButton value={session.tmuxName} label="tmux name" />
+                      </div>
+                      <div title="Full read-only attach command">
+                        attach: <span className="text-zinc-600 dark:text-zinc-300">{attachCmd}</span>
+                        <CopyButton value={attachCmd} label="attach command" />
+                      </div>
+                    </>
+                  )
+                })()}
                 <div>started: {new Date(session.startedAt).toLocaleString()}</div>
                 {session.endedAt && <div>ended: {new Date(session.endedAt).toLocaleString()}</div>}
                 {session.costUsd != null && <div>cost: ${session.costUsd.toFixed(4)}</div>}

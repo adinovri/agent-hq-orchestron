@@ -50,6 +50,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   const descendantCount = delegation?.edges?.length ?? 0
   const currentProject = projects.find((p) => p.id === session?.projectId)
   const projectName = currentProject?.name
+  const projectPath = currentProject?.path
 
   const killMutation = useMutation({
     mutationFn: () => apiFetch(`/api/sessions/${uuid}`, { method: 'DELETE' }),
@@ -176,6 +177,7 @@ export default function SessionDetailPage({ params }: PageProps) {
         cloning={cloning}
         respawning={respawning}
         projectName={projectName}
+        projectPath={projectPath}
         projectDefaultModel={currentProject?.defaultModel}
         projectDefaultEffort={currentProject?.defaultEffort}
       />
