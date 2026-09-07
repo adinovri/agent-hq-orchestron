@@ -238,7 +238,17 @@ export default function DashboardPage() {
       <SpawnDialog
         open={spawnOpen}
         onClose={() => setSpawnOpen(false)}
-        projects={projects.map((p) => ({ id: p.id, name: p.name, agentType: p.agentType }))}
+        projects={projects.map((p) => ({
+          id: p.id,
+          name: p.name,
+          agentType: p.agentType,
+          path: p.path,
+          defaultModel: p.defaultModel,
+          defaultEffort: p.defaultEffort,
+          configDir: p.agentType === 'codex'
+            ? p.agentConfig?.env?.['CODEX_HOME']
+            : p.agentConfig?.env?.['CLAUDE_CONFIG_DIR'],
+        }))}
         templates={templates}
         onSpawned={() => qc.invalidateQueries({ queryKey: ['sessions'] })}
       />

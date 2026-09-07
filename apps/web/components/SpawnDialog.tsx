@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, DragEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { apiFetch, fetchJson } from '@/lib/fetcher'
 import { X, Paperclip, FileText, Image as ImageIcon, FileCode, File as FileIcon } from 'lucide-react'
-import { modelsFor, effortsFor } from '@/lib/models'
+import { modelsFor, effortsFor, implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 
 interface AttachedFile {
   id: string
@@ -36,18 +36,43 @@ interface TemplateInfo {
 interface Props {
   open: boolean
   onClose: () => void
-  projects: Array<{ id: string; name: string; agentType?: import('@agent-hq-orchestron/shared').AgentType }>
+  projects: Array<{
+    id: string
+    name: string
+    agentType?: import('@agent-hq-orchestron/shared').AgentType
+    path?: string
+    configDir?: string
+    defaultModel?: string
+    defaultEffort?: import('@agent-hq-orchestron/shared').EffortLevel
+  }>
   templates: TemplateInfo[]
   onSpawned: () => void
 }
 
 // Model + effort options are harness-aware — computed inside the component
 // once the user picks a project. See lib/models.ts for the curated catalogs.
-const DEFAULT_ROW = { value: '', label: 'Default (project setting)' }
 
 export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: Props) {
   const [projectId, setProjectId] = useState('')
-  const selectedAgentType = projects.find((p) => p.id === projectId)?.agentType
+  const currentProject = projects.find((p) => p.id === projectId)
+  const selectedAgentType = currentProject?.agentType
+  // What "Default" resolves to at spawn: project.defaultModel > harness default.
+  const effectiveDefaultModel = currentProject?.defaultModel ?? implicitDefaultModel(selectedAgentType)
+  const effectiveDefaultEffort = currentProject?.defaultEffort ?? implicitDefaultEffort(selectedAgentType)
+  const defaultModelSource = currentProject?.defaultModel ? 'project' : 'harness'
+  const defaultEffortSource = currentProject?.defaultEffort ? 'project' : 'harness'
+  const DEFAULT_MODEL_ROW = {
+    value: '',
+    label: effectiveDefaultModel
+      ? `Default — ${effectiveDefaultModel}${defaultModelSource === 'harness' ? ' (harness)' : ' (project)'}`
+      : 'Default (project setting)',
+  }
+  const DEFAULT_EFFORT_ROW = {
+    value: '',
+    label: effectiveDefaultEffort
+      ? `Default — ${effectiveDefaultEffort}${defaultEffortSource === 'harness' ? ' (harness)' : ' (project)'}`
+      : 'Default (project setting)',
+  }
   const [template, setTemplate] = useState('')
   const [prompt, setPrompt] = useState('')
   const [model, setModel] = useState('')
@@ -214,6 +239,39 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
                 ))}
               </select>
             )}
+            {currentProject && (() => {
+              const isCodex = selectedAgentType === 'codex'
+              const cfgEnvName = isCodex ? 'codex home' : 'claude config dir'
+              const cfgDefault = isCodex ? '~/.codex' : '~/.claude'
+              const effectiveCfg = currentProject.configDir ?? cfgDefault
+              const cfgUnset = !currentProject.configDir
+              return (
+                <div className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400 space-y-0.5 font-mono">
+                  {selectedAgentType && (
+                    <div>agent: <span className="text-zinc-800 dark:text-zinc-200">{selectedAgentType}</span></div>
+                  )}
+                  {currentProject.path && (
+                    <div className="break-all">workspace: <span className="text-zinc-800 dark:text-zinc-200">{currentProject.path}</span></div>
+                  )}
+                  <div className="break-all" title={isCodex ? 'CODEX_HOME (from project.agentConfig.env)' : 'CLAUDE_CONFIG_DIR (from project.agentConfig.env)'}>
+                    {cfgEnvName}: <span className="text-zinc-800 dark:text-zinc-200">{effectiveCfg}</span>
+                    {cfgUnset && <span className="text-zinc-400 italic ml-1">(harness default)</span>}
+                  </div>
+                  {effectiveDefaultModel && (
+                    <div>
+                      default model: <span className="text-zinc-800 dark:text-zinc-200">{effectiveDefaultModel}</span>
+                      <span className="text-zinc-400 italic ml-1">({defaultModelSource})</span>
+                    </div>
+                  )}
+                  {effectiveDefaultEffort && (
+                    <div>
+                      default effort: <span className="text-zinc-800 dark:text-zinc-200">{effectiveDefaultEffort}</span>
+                      <span className="text-zinc-400 italic ml-1">({defaultEffortSource})</span>
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
           </div>
 
           {/* Template (only if any exist) */}
@@ -281,7 +339,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
                 onChange={(e) => setModel(e.target.value)}
                 className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"
               >
-                {[DEFAULT_ROW, ...modelsFor(selectedAgentType)].map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+                {[DEFAULT_MODEL_ROW, ...modelsFor(selectedAgentType)].map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
               </select>
             </div>
             <div>
@@ -291,7 +349,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
                 onChange={(e) => setEffort(e.target.value)}
                 className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"
               >
-                {[DEFAULT_ROW, ...effortsFor(selectedAgentType)].map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+                {[DEFAULT_EFFORT_ROW, ...effortsFor(selectedAgentType)].map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
               </select>
             </div>
           </div>
