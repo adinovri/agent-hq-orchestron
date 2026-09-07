@@ -418,6 +418,19 @@ vs the Linux setup:
   `/usr/local/bin/…`. Adjust the plist templates below.
 - **Home is `/Users/<you>`** — `~/.orchestron/`, `~/.claude/`,
   `~/.codex/` all still work the same relative to the user's home.
+- **⚠ Substitute both placeholders before loading** — the templates
+  below use `/Users/YOU/` for your macOS username and `<REPO_ROOT>/`
+  for where you cloned the repo (common choices: `Works`, `Codes`,
+  `Sites`, `Projects`, `Developer` — pick whatever `pwd` in the
+  cloned repo prints). Missing / wrong values here surface at load
+  as exit code 78 (`EX_CONFIG`) — launchd fails to `cd` into a
+  non-existent `WorkingDirectory` or can't find `dist/server.js`.
+  Verify with `launchctl list | grep orchestron` — a `0` in the exit
+  column means running, non-zero means the plist references a path
+  that doesn't exist. Also worth: `launchd` doesn't tail the plist
+  to a log for these early-boot failures (nothing lands in
+  `StandardErrorPath` because the process never starts), so cross-
+  check paths by hand with `ls`.
 
 `~/Library/LaunchAgents/com.orchestron.api.plist`:
 
@@ -431,10 +444,10 @@ vs the Linux setup:
   <key>ProgramArguments</key>
   <array>
     <string>/opt/homebrew/bin/node</string>
-    <string>/Users/YOU/Works/agent-hq-orchestron/apps/api/dist/server.js</string>
+    <string>/Users/YOU/<REPO_ROOT>/agent-hq-orchestron/apps/api/dist/server.js</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/YOU/Works/agent-hq-orchestron/apps/api</string>
+  <string>/Users/YOU/<REPO_ROOT>/agent-hq-orchestron/apps/api</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>NODE_ENV</key><string>production</string>
@@ -473,7 +486,7 @@ vs the Linux setup:
     <string>-p</string><string>3010</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/YOU/Works/agent-hq-orchestron/apps/web</string>
+  <string>/Users/YOU/<REPO_ROOT>/agent-hq-orchestron/apps/web</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>NODE_ENV</key><string>production</string>
