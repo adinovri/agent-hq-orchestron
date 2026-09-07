@@ -82,7 +82,10 @@ active sessions the dialog also shows an amber warning.
 
 ### Spawn
 
-Dashboard → **Spawn** button (top-right). The dialog:
+Dashboard → **Spawn** button (top-right, primary blue). The caret next
+to it opens a small overflow menu with **Adopt** and **Import bundle**
+— Spawn stays the daily target, secondary bring-in actions are one tap
+away without crowding the header on mobile. The dialog:
 
 - **Project** — dropdown, shows registered projects by name (not uuid).
   On select, a compact info panel below the dropdown surfaces what the
@@ -108,7 +111,7 @@ lands) → `needs_input` / `idle` / `succeeded`.
 
 ### Adopt an existing harness session
 
-Dashboard → **Adopt** button (next to Spawn). Import a claude / codex
+Dashboard → caret next to Spawn → **Adopt**. Import a claude / codex
 session that was started outside orchestron — via
 `claude --resume <uuid>` in a terminal, a background job (nafu-bg-claude
 / claw-bg-claude), another supervisor, or another orchestron instance —
@@ -200,6 +203,79 @@ Distinct from kill:
 | Kill (X icon) | active → `killed` | stays for review | terminated | untouched |
 | Delete record (trash icon) | record removed | removed | terminated best-effort if lingering | untouched |
 
+### Export / import a session bundle
+
+Move a harness session between orchestron hosts (server ↔ Mac, or across
+orchestron installs). No shared filesystem needed — just download from
+one, upload to the other.
+
+**Export** — session detail header → download icon (sky-blue arrow, next
+to Archive/Kill). Available whenever the session has a
+`claudeSessionUuid`. Auth-aware: it fetches the transcript via the API
+(with your Bearer token), then triggers a browser Save-File dialog on
+the returned blob. A spinner shows while the fetch is in flight; the
+button flashes red for a few seconds on failure and reverts.
+
+Bundle format picked automatically per harness:
+
+| Session shape | File | Contents |
+|---|---|---|
+| claude | `.jsonl` | Raw `<uuid>.jsonl` from `<CLAUDE_CONFIG_DIR>/projects/<mangled-cwd>/` |
+| codex with rollout on disk | `.jsonl` | Raw `rollout-*-<uuid>.jsonl` from `<CODEX_HOME>/sessions/YYYY/MM/DD/` |
+| codex TUI-only (SQLite only) | `.tar.gz` | `metadata.json` + `dump.jsonl` — one line per `thread_turns` / `thread_items` / `thread_history_projection_state` row scoped to this thread |
+
+Filename convention: `orchestron-<agentType>-<uuid>.jsonl` or
+`orchestron-codex-tui-<uuid>.tar.gz`. Content-Disposition drives it;
+the client falls back to `orchestron-session-<orchUuid>.<ext>` if the
+header was stripped.
+
+**Import** — Dashboard → caret next to Spawn → **Import bundle**. The
+dialog:
+
+- **Destination project** — dropdown; only claude/codex projects offered.
+  On select, orchestron surfaces effective agent / workspace / config
+  dir the same way Adopt does.
+- **Bundle file** — accepts `.jsonl`, `.tar.gz`, `.tgz`. A preview chip
+  shows the parsed format, detected harness (from filename hint), and
+  source UUID before you submit. If the detected harness disagrees with
+  the destination project, an amber banner warns you the server will
+  refuse with 409.
+- **Import session** — orchestron:
+  1. Parses the first ~10 JSONL lines (or `metadata.json` inside the
+     tar) to confirm harness + source UUID.
+  2. Resolves destination transcript path against the project's
+     workspace + config dir the same way spawn/adopt do
+     (Claude → `<CLAUDE_CONFIG_DIR>/projects/<mangled-cwd>/<uuid>.jsonl`;
+     Codex rollout → `<CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`
+     with today's UTC date + a fresh timestamp; Codex TUI →
+     `<CODEX_HOME>/thread_history_1.sqlite`).
+  3. If a transcript already exists at that path (or a codex thread
+     with the same id already lives in the destination SQLite),
+     regenerates the session UUID via `crypto.randomUUID()` and
+     `replaceAll`s occurrences of the old UUID in the bundle content
+     before writing.
+  4. Writes the transcript (jsonl) or inserts the rows
+     (`INSERT OR REPLACE` into `thread_turns` / `thread_items` /
+     `thread_history_projection_state`) — codex TUI import requires the
+     destination `thread_history_1.sqlite` to already exist (run
+     `codex` at least once on the destination host).
+  5. Calls the same `manager.adopt()` used by the Adopt button, so
+     the imported session picks up an orchestron record, seeds
+     `initialPrompt` from the transcript, and spawns a fresh tmux
+     via `claude --resume` / `codex resume`.
+
+Response includes `importedFromUuid` (the original) and
+`regeneratedUuid: true|false` so the caller can tell whether a
+collision fired the rewrite path.
+
+Round-trip verified: export on host A → import on host B → the
+resumed conversation carries its full history exactly as it did on A.
+
+**Not** a workaround for cross-account harness auth — the destination
+must have the same claude/codex CLI available and authenticated (via
+its own keychain / config dir) so `--resume` can pick up the session.
+Bundles carry conversation state, not credentials.
+
 ### Session detail page
 
 Header shows: status pill, project chip (blue), harness chip (violet
@@ -210,8 +286,11 @@ count. Buttons (based on state):
 |---|---|---|
 | ▶ Play (green) | **Reopen** — resume with same context, same claude-session-uuid | terminal states (`succeeded`, `killed`, `failed`) |
 | Fork (blue) | **Clone** — spawn a new session inheriting this conversation | always |
+| ↻ Rotate (orange) | **Respawn** — fresh session with same prompt, new harness UUID | terminal states |
 | ✓ Check (green) | **Archive** — mark succeeded, kill tmux | active states |
+| ↓ Download (sky) | **Export bundle** — auth-aware fetch + Save-File on `.jsonl` / `.tar.gz` | session has a `claudeSessionUuid` |
 | ✕ X (red) | **Kill** — SIGKILL tmux + mark killed | active states |
+| 🗑 Trash (red) | **Delete record** — remove orchestron record, keep transcript | terminal / sleeping |
 
 Expand the header (chevron under the timestamps) for id/project/agent/
 started/ended/cost detail.
@@ -661,7 +740,9 @@ Top row: stats grid (needs input, running, succeeded, failed counts).
 Header actions:
 - **Rows icon** — flat list (default)
 - **FolderTree icon** — group sessions by project
-- **Spawn button** — open spawn dialog
+- **Spawn button** (split) — main tap opens spawn dialog; caret opens
+  a menu with **Adopt** (attach a session by UUID) and **Import bundle**
+  (upload a `.jsonl` / `.tar.gz` exported from another host)
 
 Grouping is persisted in `localStorage` (`orchestron.dashboard.groupBy`).
 

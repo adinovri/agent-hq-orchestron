@@ -55,6 +55,11 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
 - **Delete record** — trash icon on terminal-state sessions removes the
   orchestron record without touching the harness transcript, so a
   session can always be re-adopted later.
+- **Export / import session bundles** — download the harness transcript
+  as a single `.jsonl` (claude / codex rollout) or `.tar.gz` (codex TUI
+  SQLite dump), upload it into another orchestron host to restore the
+  session in-place. UUID collisions at the destination are auto-resolved
+  by regenerating and rewriting the transcript.
 - **Cron-scheduled spawns** — YAML-importable schedules with live-preview
   of the next fires.
 - **Agent-to-agent coordination** — auto-injected MCP server so a running
