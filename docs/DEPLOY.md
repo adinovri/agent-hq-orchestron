@@ -272,12 +272,18 @@ orchestron token generate
 export ORCHESTRON_REMOTE_TOKEN="<paste>"
 ```
 
-Or write ke `~/.orchestron.env`:
-```bash
-ORCHESTRON_REMOTE_TOKEN=<hex-token>
-ORCHESTRON_BIND_HOST=100.x.y.z   # Tailscale IP or 0.0.0.0
-ORCHESTRON_PORT=8080
-```
+Persist them one of two ways (whichever fits your setup):
+
+- **In `~/.orchestron/config.json`** for `bindHost` / `port` /
+  `remoteToken` — see the schema table in §4 Option B.
+- **Inline in the systemd unit** (`Environment="KEY=VALUE"` lines in
+  `orchestron-api.service` — §6b below) for env-only settings like
+  `ORCHESTRON_SHARED_MEMORY_DIR` / `ORCHESTRON_SHARED_CODEX_MEMORY_DIR`
+  or when you want an env to win over the config file.
+
+There is no `EnvironmentFile=` on the current unit — put values
+directly on the `Environment=` lines. An external `.env` file wouldn't
+be read.
 
 **Boot guard**: kalau bind non-loopback (`0.0.0.0`, Tailscale IP, dst) dan `ORCHESTRON_REMOTE_TOKEN` unset → server refuse to start. Fail-fast.
 
@@ -380,13 +386,18 @@ sudo tailscale up
 tailscale ip -4   # note the IP, e.g. 100.71.6.23
 ```
 
-Update `~/.orchestron.env`:
-```bash
-ORCHESTRON_BIND_HOST=100.71.6.23
+Set the bind host — either in `~/.orchestron/config.json`:
+```json
+{ "bindHost": "100.71.6.23" }
+```
+Or inline on the API systemd unit (add to the `[Service]` block):
+```ini
+Environment="ORCHESTRON_BIND_HOST=100.71.6.23"
 ```
 
-Restart service:
+Restart both services:
 ```bash
+systemctl --user daemon-reload   # only if you edited the unit file
 systemctl --user restart orchestron-api.service orchestron-web.service
 ```
 
