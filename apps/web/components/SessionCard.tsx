@@ -113,7 +113,24 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
                 </span>
               )
             })()}
-            <span className="text-xs text-zinc-400 dark:text-zinc-500 font-mono">{session.id.slice(0, 8)}</span>
+            <span
+              className="text-xs text-zinc-400 dark:text-zinc-500 font-mono"
+              title={`orchestron session id: ${session.id}`}
+            >
+              {session.id.slice(0, 8)}
+            </span>
+            {session.claudeSessionUuid && (
+              <span
+                className="text-[10px] text-zinc-400 dark:text-zinc-600 font-mono uppercase tracking-wide"
+                title={
+                  session.agentType === 'codex'
+                    ? `Resume: codex resume ${session.claudeSessionUuid}`
+                    : `Resume: claude --resume ${session.claudeSessionUuid}`
+                }
+              >
+                ↳ {session.claudeSessionUuid.slice(0, 8)}
+              </span>
+            )}
           </div>
 
           <p className="mt-1.5 text-sm text-zinc-800 dark:text-zinc-200 line-clamp-2 leading-snug">

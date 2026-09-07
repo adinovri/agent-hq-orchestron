@@ -686,12 +686,24 @@ export function sessionsPlugin(
         const { findCodexRolloutPath, effectiveCodexHome } = await import('../adapters/codex.js')
         const rolloutPath = await findCodexRolloutPath(configDir, body.data.harnessSessionId)
         const codexHome = effectiveCodexHome(configDir)
-        if (!rolloutPath) {
-          // Could still be a TUI-only session with a thread_history record;
-          // let the adopt call verify SQLite. For dry-run, warn but don't block.
-          return { ok: true, agent: project.agentType, workspace: project.path, jsonlPath: `(TUI-only — will verify via ${codexHome}/thread_history_1.sqlite at adopt)`, warning: 'No rollout file found; adopt will check SQLite thread_history as fallback.' }
+        if (rolloutPath) {
+          return { ok: true, agent: project.agentType, workspace: project.path, jsonlPath: rolloutPath }
         }
-        return { ok: true, agent: project.agentType, workspace: project.path, jsonlPath: rolloutPath }
+        // No rollout — verify SQLite thread_history_1.sqlite has the thread.
+        // TUI-only sessions never write rollout jsonl; SQLite is authoritative.
+        const dbPath = path.join(codexHome, 'thread_history_1.sqlite')
+        try {
+          const Database = (await import('better-sqlite3')).default
+          const db = new Database(dbPath, { readonly: true, fileMustExist: true })
+          const row = db.prepare('SELECT 1 FROM thread_items WHERE thread_id = ? LIMIT 1').get(body.data.harnessSessionId) as { '1': number } | undefined
+          db.close()
+          if (row) {
+            return { ok: true, agent: project.agentType, workspace: project.path, jsonlPath: `${dbPath} (SQLite thread_history, TUI-only session — no rollout on disk)` }
+          }
+          return { ok: false, error: `Codex thread ${body.data.harnessSessionId} not found in ${codexHome}/sessions/YYYY/MM/DD/rollout-*.jsonl nor SQLite thread_history_1.sqlite. Check the UUID.` }
+        } catch (err) {
+          return { ok: false, error: `Codex rollout not found and SQLite unreadable at ${dbPath}: ${(err as Error).message}` }
+        }
       }
     })
 
