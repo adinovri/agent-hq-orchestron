@@ -1222,7 +1222,13 @@ export class SessionManager {
       // is dismissed externally (user hit Escape in tmux, another agent
       // answered, etc.).
       if (s.status !== 'running' && s.status !== 'needs_input') continue
-      if (s.agentType !== 'claude') continue
+      // Scan BOTH claude and codex. Codex spawns with --ask-for-approval never
+      // so approval modals should not appear, but the first-workspace trust
+      // prompt (auto-dismissed by the adapter) and future codex TUI modals
+      // can still surface. The parser regex (↑/↓ to navigate + Enter to
+      // select) is a universal TUI convention and matches both harnesses'
+      // selector shape when it does appear. Opencode is not scanned yet.
+      if (s.agentType !== 'claude' && s.agentType !== 'codex') continue
       if (!s.tmuxName) continue
       try {
         const pane = await tmux.capturePane(s.tmuxName)
