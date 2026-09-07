@@ -15,12 +15,12 @@
   "dependencies": {
     "@agent-hq-orchestron/shared": "*",
     "eventsource": "^3.0.5",
-    "ink": "^5.2.1",
-    "react": "^18.3.1"
+    "ink": "^7.1.1",
+    "react": "^19.2.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
-    "@types/react": "^18.3.12",
+    "@types/react": "^19.2.0",
     "ink-testing-library": "^4.0.0",
     "tsx": "^4.16.2",
     "typescript": "^5.5.4",

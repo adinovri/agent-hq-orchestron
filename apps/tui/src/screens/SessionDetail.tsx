@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { Box, Text, useInput } from 'ink'
-import EventSource from 'eventsource'
+import { EventSource } from 'eventsource'
 import type { SessionMetadata } from '@agent-hq-orchestron/shared'
 import type { ApiConfig } from '../hooks/useApi.js'
 import { getHeaders } from '../hooks/useApi.js'
