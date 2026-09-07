@@ -149,6 +149,22 @@ Not for:
   with a real `--resume`. If you only want to read past output, open
   the JSONL directly.
 
+Notes on `initialPrompt` for adopted sessions:
+
+- Claude: read from the first `type:user` line in
+  `<uuid>.jsonl`, first text block wins.
+- Codex (rollout on disk): read from the first `response_item` with
+  `payload.role='user'`; CLI-injected wrappers
+  (`<environment_context>`, `<skills_instructions>`,
+  `<user_instructions>`) are skipped so the returned text is what the
+  user actually typed first.
+- Codex (TUI-only, no rollout): read from
+  `<CODEX_HOME>/thread_history_1.sqlite`'s first
+  `thread_items` row with `item_type='userMessage'`.
+- Cap: 500 characters. Placeholder text
+  `(adopted … — first prompt unknown)` only appears when the
+  transcript exists but no user message could be extracted (very rare).
+
 ### Delete a session record
 
 Session detail header → trash icon (only visible for terminal states:
