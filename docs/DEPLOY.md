@@ -379,6 +379,121 @@ tailscale serve --bg --https=443 3010
 # path exists.
 ```
 
+### 6b-macOS. launchd LaunchAgent (macOS equivalent of §6b)
+
+macOS has no systemd. Use `launchd` LaunchAgents — plists live in
+`~/Library/LaunchAgents/`, load with `launchctl bootstrap`. Notes
+vs the Linux setup:
+
+- **No `loginctl enable-linger`** — LaunchAgents auto-start at user
+  login; for headless / lid-closed operation, keep the user logged in
+  (System Settings → Users → Automatic login) or convert to a
+  system-wide `LaunchDaemon` (needs sudo, runs as root — bigger blast
+  radius; only do it if the box is truly headless).
+- **No `Delegate=yes` equivalent needed** — the tmux transient-scope
+  cgroup issue that motivated `Delegate=yes` on Linux is systemd-
+  specific; macOS tmux spawns don't hit it.
+- **Homebrew binary paths differ by arch** — Apple Silicon:
+  `/opt/homebrew/bin/{node,npx,tmux,tailscale}`; Intel:
+  `/usr/local/bin/…`. Adjust the plist templates below.
+- **Home is `/Users/<you>`** — `~/.orchestron/`, `~/.claude/`,
+  `~/.codex/` all still work the same relative to the user's home.
+
+`~/Library/LaunchAgents/com.orchestron.api.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.orchestron.api</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/Users/YOU/Works/agent-hq-orchestron/apps/api/dist/server.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/YOU/Works/agent-hq-orchestron/apps/api</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key><string>production</string>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>StandardOutPath</key><string>/Users/YOU/.orchestron/logs/api.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/.orchestron/logs/api.err.log</string>
+</dict>
+</plist>
+```
+
+`~/Library/LaunchAgents/com.orchestron.web.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.orchestron.web</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/npx</string>
+    <string>next</string><string>start</string>
+    <string>-H</string><string>127.0.0.1</string>
+    <string>-p</string><string>3010</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/YOU/Works/agent-hq-orchestron/apps/web</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key><string>production</string>
+    <key>PORT</key><string>3010</string>
+    <key>HOSTNAME</key><string>127.0.0.1</string>
+    <key>NEXT_PUBLIC_API_URL</key><string>http://100.x.y.z:8090</string>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>StandardOutPath</key><string>/Users/YOU/.orchestron/logs/web.out.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/.orchestron/logs/web.err.log</string>
+</dict>
+</plist>
+```
+
+Load + start:
+
+```bash
+# GUI user session (uid = $(id -u))
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.orchestron.api.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.orchestron.web.plist
+launchctl kickstart -k gui/$(id -u)/com.orchestron.api
+launchctl kickstart -k gui/$(id -u)/com.orchestron.web
+```
+
+Status / logs / restart:
+
+```bash
+launchctl print gui/$(id -u)/com.orchestron.api   # verbose state
+tail -f ~/.orchestron/logs/api.err.log ~/.orchestron/logs/web.err.log
+launchctl kickstart -k gui/$(id -u)/com.orchestron.api   # restart
+launchctl bootout gui/$(id -u)/com.orchestron.web        # stop + unload
+```
+
+Tailscale Serve works the same as Linux — Tailscale ships a native
+macOS app + `tailscale` CLI (`brew install tailscale` for the CLI-only
+package, or use the Mac App Store version's Serve toggle in the menu
+bar). The `tailscale serve --bg --https=443 3010` invocation is
+identical.
+
+**Untested here** — the API + web on this project have been verified on
+Linux (systemd). The launchd templates above are the direct translation
+based on the equivalent primitives; verify with `launchctl print` and
+the log paths after first load, and read
+[Apple launchd docs](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html)
+if anything misbehaves. Report back so this section can be tightened.
+
 ### 6c. Tailscale (recommended for remote)
 
 ```bash
