@@ -97,6 +97,58 @@ Click **Spawn** and you'll land on the session detail page. Status
 progresses: `spawning` → `running` (once TUI is ready + prompt paste
 lands) → `needs_input` / `idle` / `succeeded`.
 
+### Adopt an existing harness session
+
+Dashboard → **Adopt** button (next to Spawn). Import a claude / codex
+session that was started outside orchestron — via
+`claude --resume <uuid>` in a terminal, a background job (nafu-bg-claude
+/ claw-bg-claude), another supervisor, or another orchestron instance —
+into a new orchestron record so it becomes fully manageable from the
+dashboard (interrupt, send input, kill, reopen, PendingPromptBanner
+all apply).
+
+The dialog:
+
+- **Project** — dropdown, only claude/codex projects offered (opencode
+  is not supported for adoption). On select, orchestron surfaces the
+  effective agent, workspace, and config dir (`CLAUDE_CONFIG_DIR` for
+  claude, `CODEX_HOME` for codex) — labelled `(harness default)` when
+  the project has no override.
+- **Harness session UUID** — the UUID that harness assigned when the
+  original session started. For claude: the value after `--resume`,
+  or the filename under `<configDir>/projects/<mangled-cwd>/*.jsonl`.
+  For codex: the value after `codex resume`, or the suffix of a
+  rollout file under `<CODEX_HOME>/sessions/YYYY/MM/DD/rollout-*-<uuid>.jsonl`.
+  A path template right under the input shows exactly where orchestron
+  will look, resolved against the selected project's config dir +
+  workspace.
+- **Live validation** — orchestron dry-runs the check on blur:
+  UUID format, transcript exists at the expected path, no active
+  orchestron session already tracks this UUID, and — the important one
+  — no live claude/codex process on the host is currently holding it
+  (scanned via `/proc/*/cmdline`). If any check fails, an inline
+  amber/red banner explains what to fix. Adopt button stays disabled
+  until validation is green.
+- **Adopt session** — orchestron spawns a fresh tmux with the harness's
+  native resume flag (`claude --resume <uuid>` / `codex resume <uuid>`),
+  reads the first user prompt out of the transcript to seed the
+  dashboard title, wires the record through the same
+  `spawning → waiting → idle` path a Reopen would follow (no
+  re-sending the prompt — the resumed conversation already carries
+  its history), then redirects to the session detail page.
+
+Adopted records get `metadata.adopted: true` and
+`metadata.adoptedFromUuid` so you can distinguish them from natively-
+spawned records later if needed.
+
+Not for:
+
+- Reopening a session orchestron already knows about — use the Reopen
+  action on the session card instead.
+- Read-only "just look at the transcript" — adopt spawns a real tmux
+  with a real `--resume`. If you only want to read past output, open
+  the JSONL directly.
+
 ### Session detail page
 
 Header shows: status pill, project chip (blue), harness chip (violet

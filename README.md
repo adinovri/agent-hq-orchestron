@@ -40,6 +40,11 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
   the transcript renders it as a card with the options as clickable
   pills (plus an `✎ Other` free-text). Pick, hit send, answer goes
   back to the session — no need to attach to the tmux pane to reply.
+- **Adopt existing sessions** — import a claude / codex session started
+  outside orchestron (via `claude --resume`, a background job, another
+  supervisor) into a new orchestron record. Pre-check refuses adoption
+  when a live process on the host is already holding the UUID, so two
+  writers can't race the same transcript.
 - **Cron-scheduled spawns** — YAML-importable schedules with live-preview
   of the next fires.
 - **Agent-to-agent coordination** — auto-injected MCP server so a running
