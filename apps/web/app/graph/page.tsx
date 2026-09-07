@@ -38,7 +38,7 @@ export default function GraphPage({
   })
 
   return (
-    <div className="flex flex-col h-[calc(100vh-56px)]">
+    <div className="flex flex-col h-full">
       {/* Toolbar */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
         <h1 className="text-sm font-semibold shrink-0">Delegation Graph</h1>

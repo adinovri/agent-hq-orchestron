@@ -175,7 +175,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   const readOnly = (session.metadata as Record<string, unknown>)?.readOnly === true
 
   return (
-    <div className="flex flex-col h-[calc(100vh-56px)]">
+    <div className="flex flex-col h-full">
       <SessionHeader
         session={session}
         descendantCount={descendantCount}

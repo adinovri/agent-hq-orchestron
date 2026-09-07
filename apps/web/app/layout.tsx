@@ -42,13 +42,15 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
         <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
       </head>
-      <body className="min-h-full flex flex-col">
+      <body className="h-full flex flex-col overflow-hidden">
         <Providers>
           <ThemeApplier />
           <SwAutoReload />
           <VersionCheck />
           <NavBar />
-          <main className="flex-1">{children}</main>
+          {/* min-h-0 lets flex-1 actually shrink so children using h-full
+           *  can resolve a real pixel height regardless of nav row count. */}
+          <main className="flex-1 min-h-0 overflow-auto">{children}</main>
         </Providers>
       </body>
     </html>
