@@ -222,7 +222,7 @@ Kapan pakai: **daily driver**, stable use, systemd service target.
 git pull origin main
 npm install
 npm run build --workspaces --if-present
-# Restart process (kalau via systemd: systemctl --user restart orchestron)
+# Restart process (kalau via systemd: systemctl --user restart orchestron-api.service orchestron-web.service)
 ```
 
 ### Open UI
@@ -260,20 +260,33 @@ ORCHESTRON_PORT=8080
 
 **Boot guard**: kalau bind non-loopback (`0.0.0.0`, Tailscale IP, dst) dan `ORCHESTRON_REMOTE_TOKEN` unset → server refuse to start. Fail-fast.
 
-### 6b. Install as systemd user service
+### 6b. Install as systemd user services (API + Web)
 
-Create `~/.config/systemd/user/orchestron.service`:
+Orchestron runs as **two** separate services — the Fastify API and the
+Next.js dashboard. Both are needed for the browser/PWA to work; the
+`orchestron serve` CLI only spawns the API (via `tsx` on source, dev
+convenience) and doesn't cover the web, so production installs should
+skip the CLI and wire the two dist builds directly.
+
+`~/.config/systemd/user/orchestron-api.service`:
 
 ```ini
 [Unit]
-Description=Orchestron API server
+Description=Orchestron API — Fastify backend for coding agent supervisor
 After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=%h/.orchestron.env
-ExecStart=%h/.local/bin/orchestron serve
-WorkingDirectory=%h/Works/agent-hq-orchestron
+# Delegate=yes lets orchestron-api manage its own cgroups so tmux's
+# transient scope creation (StartTransientUnit for tmux-spawn-*.scope)
+# isn't denied by systemd — without this the spawned pane dies within
+# a few seconds.
+Delegate=yes
+WorkingDirectory=%h/Works/agent-hq-orchestron/apps/api
+Environment="NODE_ENV=production"
+Environment="PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/linuxbrew/.linuxbrew/bin/node dist/server.js
 Restart=on-failure
 RestartSec=5
 
@@ -281,17 +294,62 @@ RestartSec=5
 WantedBy=default.target
 ```
 
-Enable + start:
+`~/.config/systemd/user/orchestron-web.service`:
+
+```ini
+[Unit]
+Description=Orchestron Web UI — Next.js frontend
+After=network-online.target orchestron-api.service
+Wants=network-online.target
+Requires=orchestron-api.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Works/agent-hq-orchestron/apps/web
+Environment="NODE_ENV=production"
+Environment="PORT=3010"
+# Bind to loopback only when fronted by Tailscale Serve (recommended).
+# Set to your bind interface if exposing directly.
+Environment="HOSTNAME=127.0.0.1"
+# NEXT_PUBLIC_API_URL is baked at build time — must match the API's
+# actual bind so the browser can reach it. Same-origin `/api/*` also
+# rewrites through next.config.ts as a fallback.
+Environment="NEXT_PUBLIC_API_URL=http://<api-host>:8090"
+Environment="PATH=%h/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin"
+# Next.js 16 no longer honors HOSTNAME env for bind — pass -H explicitly.
+ExecStart=/home/linuxbrew/.linuxbrew/bin/npx next start -H 127.0.0.1 -p 3010
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+Enable + start both:
 
 ```bash
 systemctl --user daemon-reload
-systemctl --user enable --now orchestron.service
-systemctl --user status orchestron.service
+systemctl --user enable --now orchestron-api.service orchestron-web.service
+systemctl --user status orchestron-api.service orchestron-web.service
 ```
 
 Persistent across boots requires linger:
 ```bash
 sudo loginctl enable-linger $USER
+```
+
+Restart / logs — both services:
+```bash
+systemctl --user restart orchestron-api.service orchestron-web.service
+journalctl --user -u orchestron-api.service -u orchestron-web.service -f
+```
+
+Front the web with Tailscale Serve for HTTPS + PWA + safe public bind:
+```bash
+tailscale serve --bg --https=443 3010
+# https://<hostname>.<tailnet>.ts.net/ becomes the frontdoor;
+# firewall-drop :3010 from public so only loopback → TS Serve → 3010
+# path exists.
 ```
 
 ### 6c. Tailscale (recommended for remote)
@@ -308,7 +366,7 @@ ORCHESTRON_BIND_HOST=100.71.6.23
 
 Restart service:
 ```bash
-systemctl --user restart orchestron.service
+systemctl --user restart orchestron-api.service orchestron-web.service
 ```
 
 ### 6d. QR Onboarding untuk Mobile
@@ -542,10 +600,10 @@ npm install
 npm run build
 
 # Restart service
-systemctl --user restart orchestron.service
+systemctl --user restart orchestron-api.service orchestron-web.service
 
 # Verify
-systemctl --user status orchestron.service
+systemctl --user status orchestron-api.service orchestron-web.service
 orchestron doctor
 ```
 
@@ -570,7 +628,7 @@ Data schema is additive (Zod schema evolution) — old JSON files always readabl
 Logs:
 ```bash
 tail -f ~/.config/agent-hq-orchestron/logs/api-$(date +%F).log
-journalctl --user -u orchestron.service -f
+journalctl --user -u orchestron-api.service -u orchestron-web.service -f
 ```
 
 ---
@@ -654,9 +712,9 @@ once with a fresh session UUID; if it fails again, check per harness:
 ## 13. Uninstall
 
 ```bash
-# Stop + disable service
-systemctl --user disable --now orchestron.service
-rm ~/.config/systemd/user/orchestron.service
+# Stop + disable both services
+systemctl --user disable --now orchestron-api.service orchestron-web.service
+rm ~/.config/systemd/user/orchestron-api.service ~/.config/systemd/user/orchestron-web.service
 
 # Unlink CLI
 cd ~/Works/agent-hq-orchestron/apps/cli && npm unlink -g
