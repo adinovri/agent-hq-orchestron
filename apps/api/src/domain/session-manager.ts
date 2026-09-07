@@ -131,8 +131,8 @@ async function findLiveHarnessProcess(harnessSessionId: string): Promise<{ pid: 
   return null
 }
 
-/** Read the first user-role message content from a JSONL transcript file.
- *  Used by adopt() to populate initialPrompt so the dashboard has a
+/** Read the first user-role message content from a Claude JSONL transcript
+ *  file. Used by adopt() to populate initialPrompt so the dashboard has a
  *  meaningful title for an imported session. Returns null when the file
  *  has no user event yet (rare — usually the file exists only after the
  *  very first prompt is written). */
@@ -152,6 +152,70 @@ function readFirstUserPromptFromJsonl(jsonlPath: string): string | null {
               const text = (block as { text?: string }).text
               if (typeof text === 'string' && text.trim()) return text.slice(0, 500)
             }
+          }
+        }
+      } catch { /* skip malformed line */ }
+    }
+  } catch { /* file unreadable */ }
+  return null
+}
+
+/** Read the first real user message from codex thread_history_1.sqlite.
+ *  Used when a codex session is TUI-only (no rollout jsonl on disk).
+ *  item_type='userMessage' rows carry `{content: [{type:'text', text:'...'}]}`.
+ *  Returns null if no userMessage found. */
+function readFirstUserPromptFromCodexSqlite(dbPath: string, threadId: string): string | null {
+  try {
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true })
+    const row = db.prepare(
+      `SELECT item_json FROM thread_items WHERE thread_id = ? AND item_type = 'userMessage' ORDER BY rowid ASC LIMIT 1`,
+    ).get(threadId) as { item_json?: string } | undefined
+    db.close()
+    if (!row?.item_json) return null
+    const parsed = JSON.parse(row.item_json) as { content?: Array<{ type?: string; text?: string }> }
+    for (const block of parsed.content ?? []) {
+      if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
+        return block.text.slice(0, 500)
+      }
+    }
+  } catch { /* SQLite unreadable / thread absent */ }
+  return null
+}
+
+/** Same as readFirstUserPromptFromJsonl but for codex rollout jsonl, which
+ *  has a totally different schema: top-level {type: 'response_item', payload:
+ *  {type: 'message', role: 'user'|'developer'|'assistant', content: [{type:
+ *  'input_text', text: '...'}]}}. The FIRST user-role message is always the
+ *  CLI-injected <environment_context> block (and other wrapper roles emit
+ *  <skills_instructions>, <user_instructions>) — those need to be skipped
+ *  so the returned string is what the human actually typed first. */
+function readFirstUserPromptFromCodexRollout(jsonlPath: string): string | null {
+  const WRAPPER_TAGS = ['environment_context', 'skills_instructions', 'user_instructions']
+  const looksInjectedWrapper = (t: string): boolean => {
+    const trimmed = t.trim()
+    if (!trimmed.startsWith('<')) return false
+    return WRAPPER_TAGS.some((tag) => trimmed.includes(`</${tag}>`) || trimmed.startsWith(`<${tag}>`) || trimmed.startsWith(`<${tag}`))
+  }
+  try {
+    const raw = fs.readFileSync(jsonlPath, 'utf8')
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line.trim()) continue
+      try {
+        const d = JSON.parse(line) as { type?: string; payload?: { type?: string; role?: string; content?: unknown } }
+        if (d.type !== 'response_item') continue
+        const p = d.payload
+        if (!p || p.type !== 'message' || p.role !== 'user') continue
+        const content = p.content
+        if (!Array.isArray(content)) continue
+        for (const block of content) {
+          if (!block || typeof block !== 'object') continue
+          const b = block as { type?: string; text?: string }
+          // Codex uses type: 'input_text' for user-typed content
+          if ((b.type === 'input_text' || b.type === 'text') && typeof b.text === 'string') {
+            const t = b.text.trim()
+            if (!t) continue
+            if (looksInjectedWrapper(t)) continue
+            return t.slice(0, 500)
           }
         }
       } catch { /* skip malformed line */ }
@@ -1427,25 +1491,32 @@ export class SessionManager {
       const rolloutPath = await findCodexRolloutPath(config.configDir, config.harnessSessionId)
       if (rolloutPath) {
         expectedJsonlPath = rolloutPath
-        initialPrompt = readFirstUserPromptFromJsonl(rolloutPath) ?? '(adopted codex session — first prompt unknown)'
+        // Codex rollout has a totally different JSONL schema than Claude —
+        // use the codex-specific parser (skips CLI-injected wrappers like
+        // <environment_context> so the returned text is what the user typed).
+        initialPrompt = readFirstUserPromptFromCodexRollout(rolloutPath) ?? '(adopted codex session — first prompt unknown)'
       } else {
         const codexHome = effectiveCodexHome(config.configDir)
         const dbPath = path.join(codexHome, 'thread_history_1.sqlite')
-        let promptRow: { text?: string } | undefined
+        // Verify the thread exists in SQLite (TUI-only sessions never write
+        // rollout jsonl). Real schema is thread_items(item_type=..., item_json)
+        // — earlier draft used `type='user_input'` which doesn't exist.
+        let exists = false
         try {
           const db = new Database(dbPath, { readonly: true, fileMustExist: true })
-          promptRow = db.prepare(
-            `SELECT payload FROM thread_items WHERE thread_id = ? AND type = 'user_input' ORDER BY rowid ASC LIMIT 1`,
-          ).get(config.harnessSessionId) as { text?: string } | undefined
+          const row = db.prepare(
+            `SELECT 1 FROM thread_items WHERE thread_id = ? LIMIT 1`,
+          ).get(config.harnessSessionId) as { '1': number } | undefined
           db.close()
+          exists = !!row
         } catch (err) {
           throw new Error(`Codex session ${config.harnessSessionId} not found in rollout dir (${codexHome}/sessions/...) nor SQLite (${dbPath}): ${(err as Error).message}`)
         }
-        if (!promptRow) {
+        if (!exists) {
           throw new Error(`Codex session ${config.harnessSessionId} not found in rollout dir nor SQLite thread_items. Confirm the UUID.`)
         }
-        // Best-effort prompt text — payload column shape varies by codex version.
-        initialPrompt = '(adopted codex session — first prompt from SQLite)'
+        // TUI-only session — extract first userMessage from SQLite.
+        initialPrompt = readFirstUserPromptFromCodexSqlite(dbPath, config.harnessSessionId) ?? '(adopted codex TUI-only session — first prompt unknown)'
       }
     }
 
