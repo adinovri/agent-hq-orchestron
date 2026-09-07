@@ -8,6 +8,7 @@ import { SessionList } from '@/components/SessionList'
 import { SpawnDialog } from '@/components/SpawnDialog'
 import { AdoptSessionDialog } from '@/components/AdoptSessionDialog'
 import { ImportSessionDialog } from '@/components/ImportSessionDialog'
+import { SpawnActionsMenu } from '@/components/SpawnActionsMenu'
 import { SessionListSkeleton } from '@/components/Skeleton'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
 import type { SessionMetadata, ProjectMetadata } from '@agent-hq-orchestron/shared'
@@ -163,15 +164,11 @@ export default function DashboardPage() {
               <FolderTree className="w-4 h-4" />
             </button>
           </div>
-          <Button variant="outline" onClick={() => setAdoptOpen(true)} title="Adopt an existing claude/codex session started outside orchestron">
-            Adopt
-          </Button>
-          <Button variant="outline" onClick={() => setImportOpen(true)} title="Import a session bundle exported from another orchestron host">
-            Import
-          </Button>
-          <Button onClick={() => setSpawnOpen(true)}>
-            <Plus className="w-4 h-4 mr-1" /> Spawn
-          </Button>
+          <SpawnActionsMenu
+            onSpawn={() => setSpawnOpen(true)}
+            onAdopt={() => setAdoptOpen(true)}
+            onImport={() => setImportOpen(true)}
+          />
         </div>
       </div>
 
