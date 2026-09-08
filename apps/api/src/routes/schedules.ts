@@ -144,6 +144,12 @@ export function schedulesPlugin(scheduler: Scheduler) {
       let skipped = 0
       const errors: Array<{ id?: string; error: string }> = []
 
+      // Schedule ids flow into Scheduler.schedulePath() which does
+      // path.join(dir, `${id}.json`). Anything with slashes, dots, or
+      // control chars can escape the schedules dir — validate strictly
+      // here (import is the only path where the id is externally supplied;
+      // scheduler.create() also generates its own UUID for missing ids).
+      const SCHEDULE_ID_RE = /^[\w-]{1,64}$/
       for (const raw of items) {
         try {
           if (!raw.cron || !raw.projectId) {
@@ -152,6 +158,10 @@ export function schedulesPlugin(scheduler: Scheduler) {
           }
           if (!raw.template && !raw.prompt) {
             errors.push({ id: raw.id, error: 'missing prompt or template' })
+            continue
+          }
+          if (raw.id !== undefined && !SCHEDULE_ID_RE.test(raw.id)) {
+            errors.push({ id: raw.id, error: `invalid id ${JSON.stringify(raw.id)} — must match ${SCHEDULE_ID_RE.source}` })
             continue
           }
 

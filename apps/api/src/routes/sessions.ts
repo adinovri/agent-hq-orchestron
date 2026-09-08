@@ -1193,7 +1193,12 @@ export function sessionsPlugin(
         const raw = fileBuf.toString('utf8')
         if (!raw.trim()) return reply.code(400).send({ error: 'empty jsonl' })
 
-        // Detect harness by scanning first few non-empty JSON lines.
+        // Detect harness by scanning first few non-empty JSON lines. Every
+        // path that assigns sourceUuid MUST validate it against
+        // BUNDLE_UUID_RE — sourceUuid flows into claudeTranscriptPath() /
+        // the codex rollout path and would path-traverse otherwise
+        // (e.g. `../../../tmp/pwned` as sessionId → arbitrary jsonl write).
+        const BUNDLE_UUID_RE = /^[0-9a-fA-F-]{8,64}$/
         let detected: 'claude' | 'codex' | 'unknown' = 'unknown'
         let sourceUuid = ''
         const firstLines = raw.split(/\r?\n/).filter(l => l.trim().length > 0).slice(0, 10)
@@ -1205,11 +1210,12 @@ export function sessionsPlugin(
             else if ('payload' in entry || 'record_type' in entry || 'session_id' in entry) detected = 'codex'
           }
           if (!sourceUuid) {
-            if (detected === 'claude' && typeof entry.sessionId === 'string') sourceUuid = entry.sessionId
-            else if (detected === 'codex') {
+            if (detected === 'claude' && typeof entry.sessionId === 'string' && BUNDLE_UUID_RE.test(entry.sessionId)) {
+              sourceUuid = entry.sessionId
+            } else if (detected === 'codex') {
               const p = entry.payload as Record<string, unknown> | undefined
-              if (p && typeof p.id === 'string' && /^[0-9a-fA-F-]{8,}$/.test(p.id)) sourceUuid = p.id
-              else if (typeof entry.session_id === 'string') sourceUuid = entry.session_id
+              if (p && typeof p.id === 'string' && BUNDLE_UUID_RE.test(p.id)) sourceUuid = p.id
+              else if (typeof entry.session_id === 'string' && BUNDLE_UUID_RE.test(entry.session_id)) sourceUuid = entry.session_id
             }
           }
           if (detected !== 'unknown' && sourceUuid) break
@@ -1315,6 +1321,12 @@ export function sessionsPlugin(
         }
         const sourceUuid = String(meta.sourceUuid ?? '')
         if (!sourceUuid) return reply.code(400).send({ error: 'metadata missing sourceUuid' })
+        // Bundle-controlled; sourceUuid flows into SQL @thread_id binds
+        // (safe) but also into the adopted-session record and the resume
+        // command's --resume flag — validate strictly to avoid arg smuggle.
+        if (!/^[0-9a-fA-F-]{8,64}$/.test(sourceUuid)) {
+          return reply.code(400).send({ error: `metadata.sourceUuid does not look like a UUID: ${JSON.stringify(sourceUuid)}` })
+        }
 
         let dumpRaw: string
         try {
@@ -1346,13 +1358,34 @@ export function sessionsPlugin(
           return reply.code(500).send({ error: `collision check failed: ${(err as Error).message}` })
         }
 
-        // Whitelist of accepted table kinds — bundle-controlled but we
-        // never let the string reach SQL directly; only pick columns from
-        // the row object as parameter names.
+        // Bundle-controlled schema. Table names come through a fixed map
+        // (safe), but earlier we passed `Object.keys(entry.data)` straight
+        // into the INSERT column list — better-sqlite3 blocks stacked
+        // statements so no `; DROP TABLE`, but a crafted key could still
+        // inject an identifier expression and corrupt the codex thread DB.
+        // Filter columns against an explicit per-table allowlist derived
+        // from the shipped codex 0.x schema; unknown keys are dropped
+        // silently so a future codex column addition just gets ignored
+        // rather than 400-ing the whole import.
         const kindToTable: Record<string, string> = {
           thread_turn: 'thread_turns',
           thread_item: 'thread_items',
           projection_state: 'thread_history_projection_state',
+        }
+        const COLS_ALLOWED: Record<string, Set<string>> = {
+          thread_turns: new Set([
+            'thread_id', 'turn_id', 'rollout_ordinal', 'status', 'error_json',
+            'started_at', 'completed_at', 'duration_ms',
+            'first_user_item_id', 'final_agent_item_id',
+            'rollout_byte_offset', 'rollout_end_ordinal', 'rollout_end_byte_offset',
+          ]),
+          thread_items: new Set([
+            'thread_id', 'turn_id', 'item_id', 'rollout_ordinal', 'created_at_ms',
+            'item_json', 'item_type', 'updated_at_ordinal',
+          ]),
+          thread_history_projection_state: new Set([
+            'thread_id', 'next_rollout_byte_offset', 'next_rollout_ordinal',
+          ]),
         }
         try {
           const db = new Database(dbPath)
@@ -1363,8 +1396,14 @@ export function sessionsPlugin(
               const entry = JSON.parse(line) as { kind: string; data: Record<string, unknown> }
               const table = kindToTable[entry.kind]
               if (!table) continue
-              const cols = Object.keys(entry.data)
+              const allow = COLS_ALLOWED[table]!
+              const cols = Object.keys(entry.data).filter((c) => allow.has(c))
               if (cols.length === 0) continue
+              // Every col is now from an in-code Set of literals, so
+              // interpolating cols.join(', ') is safe (no attacker-
+              // controlled string reaches SQL identifier position).
+              const filteredData: Record<string, unknown> = {}
+              for (const c of cols) filteredData[c] = entry.data[c]
               const key = `${table}:${cols.join(',')}`
               let stmt = preparedByKey.get(key)
               if (!stmt) {
@@ -1373,7 +1412,7 @@ export function sessionsPlugin(
                 )
                 preparedByKey.set(key, stmt)
               }
-              stmt.run(entry.data)
+              stmt.run(filteredData)
             }
           })
           tx(payload.split(/\r?\n/))
