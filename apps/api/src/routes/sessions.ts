@@ -59,10 +59,18 @@ interface RolloutParsed {
  *  a native context_window (codex does), so we infer from the model
  *  string carried on the session record.
  *
- *  - Any model with a `[1m]` suffix (Claude Code's opt-in 1M-tier tag,
- *    e.g. `opus[1m]`, `sonnet[1m]`) → 1_000_000
- *  - Opus 5 (native 1M tier by default) → 1_000_000
- *  - Everything else (Sonnet/Haiku/older Opus without [1m]) → 200_000
+ *  Native 1M tier (per Anthropic docs, cached 2026-09-08):
+ *    - Fable 5 / 5.1 (`claude-fable-5*`)
+ *    - Mythos 5 / 5.1 (`claude-mythos-5*`)
+ *    - Opus 5, 4.8, 4.7, 4.6 (`claude-opus-4-6` and later)
+ *    - Sonnet 5, 4.6 (`claude-sonnet-4-6` and later)
+ *
+ *  Native 200K:
+ *    - Haiku 4.5 (`claude-haiku-4-5`)
+ *    - Older families (Sonnet 3.5 / 4.5, older Opus without `[1m]`)
+ *
+ *  Explicit `[1m]` suffix (Claude Code's opt-in 1M tag on 200K-native
+ *  families like `opus[1m]` / `sonnet[1m]`) → 1M.
  *
  *  Falls back to 200K when the model is unknown / undefined so the UI
  *  never renders an unbounded bar. */
@@ -70,7 +78,16 @@ function claudeContextWindowForModel(model?: string): number {
   if (!model) return 200_000
   const m = model.toLowerCase()
   if (/\[1m\]$/.test(m)) return 1_000_000
-  if (/(^|[^0-9])opus[- ]?5(\b|[^0-9])/.test(m)) return 1_000_000
+  const match = m.match(/(?:^|[^a-z])(fable|mythos|opus|sonnet|haiku)-(\d+)(?:-(\d+))?/)
+  if (!match) return 200_000
+  const family = match[1]
+  const major = parseInt(match[2]!, 10)
+  const minor = match[3] ? parseInt(match[3], 10) : 0
+  if (family === 'fable' || family === 'mythos') return 1_000_000
+  if (family === 'haiku') return 200_000
+  // opus + sonnet: 5+ = 1M, 4.6+ = 1M, else 200K
+  if (major >= 5) return 1_000_000
+  if (major === 4 && minor >= 6) return 1_000_000
   return 200_000
 }
 
