@@ -109,7 +109,14 @@ const fastify = Fastify({
   },
 })
 
-await fastify.register(cors, { origin: true })
+// Same-origin only. The Next.js web workspace proxies /api/* server-side
+// (see apps/web/next.config.ts rewrites), so the browser never talks to
+// the API cross-origin in the supported flow; CLI/curl callers don't send
+// Origin so they aren't affected. Reflecting arbitrary origins was CSRF-
+// enabling: on a default install with no remoteToken, any page the
+// operator visited could drive-by-fetch the API and spawn shell-executing
+// agent sessions. Set to false to refuse cross-origin browser requests.
+await fastify.register(cors, { origin: false })
 await fastify.register(sensible)
 await fastify.register(authPlugin, { config })
 
