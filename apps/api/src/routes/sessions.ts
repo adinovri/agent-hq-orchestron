@@ -11,6 +11,17 @@ import { SpawnSessionBodySchema } from '@agent-hq-orchestron/shared'
 import { SessionManager } from '../domain/session-manager.js'
 
 const UPLOAD_ROOT = '/tmp/orchestron/uploads'
+
+/** Redact the operator's home dir (and username) from a filesystem path
+ *  before echoing it in an error response. `/home/scriberion/.orchestron/…`
+ *  becomes `~/.orchestron/…` — still diagnostic for the operator, no
+ *  longer a host/user fingerprint for an unauthenticated (or authed but
+ *  hostile) caller. */
+function redactHome(p: string): string {
+  const home = os.homedir()
+  if (!home) return p
+  return p.startsWith(home) ? '~' + p.slice(home.length) : p
+}
 const MAX_FILE_BYTES = 20 * 1024 * 1024   // 20MB per file
 const MAX_FILES_PER_REQ = 10
 
@@ -737,7 +748,7 @@ export function sessionsPlugin(
         const jsonlPath = claudeTranscriptPath(project.path, effCfg, body.data.harnessSessionId)
         const { existsSync } = await import('node:fs')
         if (!existsSync(jsonlPath)) {
-          return { ok: false, error: `Transcript not found at ${jsonlPath}. Check the UUID + that the session was started in this workspace.` }
+          return { ok: false, error: `Transcript not found at ${redactHome(jsonlPath)}. Check the UUID + that the session was started in this workspace.` }
         }
         return { ok: true, agent: project.agentType, workspace: project.path, jsonlPath }
       } else {
@@ -756,11 +767,11 @@ export function sessionsPlugin(
           const row = db.prepare('SELECT 1 FROM thread_items WHERE thread_id = ? LIMIT 1').get(body.data.harnessSessionId) as { '1': number } | undefined
           db.close()
           if (row) {
-            return { ok: true, agent: project.agentType, workspace: project.path, jsonlPath: `${dbPath} (SQLite thread_history, TUI-only session — no rollout on disk)` }
+            return { ok: true, agent: project.agentType, workspace: project.path, jsonlPath: `${redactHome(dbPath)} (SQLite thread_history, TUI-only session — no rollout on disk)` }
           }
-          return { ok: false, error: `Codex thread ${body.data.harnessSessionId} not found in ${codexHome}/sessions/YYYY/MM/DD/rollout-*.jsonl nor SQLite thread_history_1.sqlite. Check the UUID.` }
+          return { ok: false, error: `Codex thread ${body.data.harnessSessionId} not found in ${redactHome(codexHome)}/sessions/YYYY/MM/DD/rollout-*.jsonl nor SQLite thread_history_1.sqlite. Check the UUID.` }
         } catch (err) {
-          return { ok: false, error: `Codex rollout not found and SQLite unreadable at ${dbPath}: ${(err as Error).message}` }
+          return { ok: false, error: `Codex rollout not found and SQLite unreadable at ${redactHome(dbPath)}: ${(err as Error).message}` }
         }
       }
     })
@@ -1093,7 +1104,7 @@ export function sessionsPlugin(
         const codexHome = effectiveCodexHome(configDir)
         const dbPath = path.join(codexHome, 'thread_history_1.sqlite')
         if (!existsSync(dbPath)) {
-          return reply.code(404).send({ error: `codex thread_history not found at ${dbPath}` })
+          return reply.code(404).send({ error: `codex thread_history not found at ${redactHome(dbPath)}` })
         }
         let turns: Record<string, unknown>[] = []
         let items: Record<string, unknown>[] = []
@@ -1109,7 +1120,7 @@ export function sessionsPlugin(
           return reply.code(500).send({ error: `SQLite read failed: ${(err as Error).message}` })
         }
         if (turns.length === 0 && items.length === 0) {
-          return reply.code(404).send({ error: `no rows for thread ${harnessUuid} in ${dbPath}` })
+          return reply.code(404).send({ error: `no rows for thread ${harnessUuid} in ${redactHome(dbPath)}` })
         }
         const stage = path.join('/tmp', `orchestron-export-${crypto.randomBytes(6).toString('hex')}`)
         await mkdir(stage, { recursive: true, mode: 0o700 })
@@ -1307,7 +1318,7 @@ export function sessionsPlugin(
             transcriptPath: destPath,
           })
         } catch (err: unknown) {
-          return reply.code(500).send({ error: `bundle written to ${destPath} but adopt failed: ${(err as Error).message}` })
+          return reply.code(500).send({ error: `bundle written to ${redactHome(destPath)} but adopt failed: ${(err as Error).message}` })
         }
       }
 
@@ -1321,6 +1332,22 @@ export function sessionsPlugin(
         const tarInput = path.join(stage, 'bundle.tar.gz')
         await writeFile(tarInput, fileBuf, { mode: 0o600 })
         const { spawnSync } = await import('node:child_process')
+        // Tar-bomb guard: check decompressed size before extract. gzip
+        // stores the uncompressed size in the trailer, exposed via
+        // `gzip -l`. Cap at 200 MB — a real codex-TUI thread dump is
+        // KB-MB range; anything past 200 MB is either a mistake or an
+        // attack aimed at filling the ephemeral /tmp filesystem.
+        const MAX_DECOMPRESSED_BYTES = 200 * 1024 * 1024
+        const gzipList = spawnSync('gzip', ['-l', tarInput], { encoding: 'utf8' })
+        if (gzipList.status === 0) {
+          // `gzip -l` output: "compressed uncompressed ratio uncompressed_name\n<c> <u> <ratio> <name>"
+          const lines = gzipList.stdout.trim().split('\n')
+          const cols = lines[lines.length - 1]?.trim().split(/\s+/)
+          const uncompressed = cols ? parseInt(cols[1]!, 10) : NaN
+          if (Number.isFinite(uncompressed) && uncompressed > MAX_DECOMPRESSED_BYTES) {
+            return reply.code(413).send({ error: `bundle decompresses to ${uncompressed} bytes, exceeds ${MAX_DECOMPRESSED_BYTES}-byte cap` })
+          }
+        }
         const untar = spawnSync('tar', ['-xzf', tarInput, '-C', stage], { encoding: 'utf8' })
         if (untar.status !== 0) {
           return reply.code(400).send({ error: `tar extract failed: ${untar.stderr ?? ''}` })
@@ -1354,7 +1381,7 @@ export function sessionsPlugin(
         const codexHome = effectiveCodexHome(configDir)
         const dbPath = path.join(codexHome, 'thread_history_1.sqlite')
         if (!existsSync(dbPath)) {
-          return reply.code(409).send({ error: `destination codex SQLite not found at ${dbPath} — run codex CLI once so it initializes the DB, then retry` })
+          return reply.code(409).send({ error: `destination codex SQLite not found at ${redactHome(dbPath)} — run codex CLI once so it initializes the DB, then retry` })
         }
 
         let destUuid = sourceUuid

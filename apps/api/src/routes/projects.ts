@@ -31,8 +31,22 @@ export function projectsPlugin(registry: ProjectRegistry) {
       return { projects }
     })
 
+    // Project ids flow into project-registry.projectPath() which does
+    // path.join(dir, `${id}.json`). Fastify percent-decodes route params
+    // AFTER route matching, so `..%2f..%2fsessions%2f<uuid>` decodes to
+    // `../../sessions/<uuid>` inside `id` — a DELETE reaches arbitrary
+    // `*.json` records elsewhere on disk. Gate every :id route with the
+    // same UUID regex the domain layer already assumes.
+    const PROJECT_ID_RE = /^[0-9a-fA-F-]{8,64}$/
+    function validId(id: string, reply: import('fastify').FastifyReply): boolean {
+      if (PROJECT_ID_RE.test(id)) return true
+      reply.code(400).send({ error: `invalid project id — must match ${PROJECT_ID_RE.source}` })
+      return false
+    }
+
     app.get('/api/projects/:id', async (req, reply) => {
       const { id } = req.params as { id: string }
+      if (!validId(id, reply)) return
       try {
         const project = await registry.get(id)
         return project
@@ -44,6 +58,7 @@ export function projectsPlugin(registry: ProjectRegistry) {
 
     app.patch('/api/projects/:id', async (req, reply) => {
       const { id } = req.params as { id: string }
+      if (!validId(id, reply)) return
       const body = PatchProjectBodySchema.safeParse(req.body)
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
       try {
@@ -57,6 +72,7 @@ export function projectsPlugin(registry: ProjectRegistry) {
 
     app.delete('/api/projects/:id', async (req, reply) => {
       const { id } = req.params as { id: string }
+      if (!validId(id, reply)) return
       try {
         await registry.delete(id)
         return reply.code(204).send()

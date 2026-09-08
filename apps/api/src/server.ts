@@ -181,7 +181,16 @@ fastify.get('/api/reset', async (_req, reply) => {
 // so dashboard React Query doesn't 404-throw.
 fastify.get('/api/templates', async () => ({ templates: [] }))
 
+// Anonymous liveness — no auth required (in AUTH_WHITELIST). Keeps the
+// body minimal so unauth callers on the tailnet can't fingerprint the
+// host (absolute dataDir path, bindHost, remoteAuth state, tmux version).
+// The verbose diagnostics moved to /api/health/detail below, which
+// requires the Bearer token like the rest of the API.
 fastify.get('/api/health', async () => {
+  return { ok: true }
+})
+
+fastify.get('/api/health/detail', async () => {
   let tmuxVersion = 'unavailable'
   try {
     const { stdout } = await execFileAsync('tmux', ['-V'])

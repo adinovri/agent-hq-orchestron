@@ -546,29 +546,34 @@ export class SessionManager {
     return path.join(this.sessionsDir, `${uuid}.json`)
   }
 
-  /** Serializes spawn calls per parentSessionId so the check-then-act on
-   *  MAX_CHILDREN / RATE_LIMIT_MAX below cannot be TOCTOU-raced by
-   *  parallel spawn_session MCP calls from the same parent. Not a
-   *  cross-process lock (would need a filesystem lock or SQLite), but
-   *  MCP delegation is the only realistic concurrent spawn source and it
-   *  all lives inside this process. Key `__no_parent__` covers top-level
-   *  spawns; the maxConcurrent gate above already caps total live count. */
-  private spawnLocks = new Map<string, Promise<void>>()
+  /** Generic in-process serializer used by spawn() and by every mutating
+   *  lifecycle method (reopen/respawn/clone/adopt/archive/kill/
+   *  deleteRecord/updateMetadata). Callers pick a key — `spawn:${parent}`
+   *  for delegation-guardrail TOCTOU, `uuid:${id}` for lifecycle races
+   *  that would otherwise clobber the same record from two concurrent
+   *  handlers. Not a cross-process lock (would need a filesystem lock or
+   *  SQLite); MCP + the local HTTP API are the only concurrent callers
+   *  and both live inside this Node process. */
+  private locks = new Map<string, Promise<void>>()
+
+  private async withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    while (this.locks.has(key)) {
+      try { await this.locks.get(key) } catch { /* prior holder failed — proceed */ }
+    }
+    let release!: () => void
+    const p = new Promise<void>((r) => { release = r })
+    this.locks.set(key, p)
+    try {
+      return await fn()
+    } finally {
+      this.locks.delete(key)
+      release()
+    }
+  }
 
   async spawn(spawnConfig: SpawnConfig): Promise<SessionMetadata> {
-    const lockKey = spawnConfig.parentSessionId ?? '__no_parent__'
-    while (this.spawnLocks.has(lockKey)) {
-      try { await this.spawnLocks.get(lockKey) } catch { /* prior spawn failed — proceed */ }
-    }
-    let releaseLock!: () => void
-    const lockPromise = new Promise<void>((r) => { releaseLock = r })
-    this.spawnLocks.set(lockKey, lockPromise)
-    try {
-      return await this._spawnUnlocked(spawnConfig)
-    } finally {
-      this.spawnLocks.delete(lockKey)
-      releaseLock()
-    }
+    const key = `spawn:${spawnConfig.parentSessionId ?? '__no_parent__'}`
+    return this.withLock(key, () => this._spawnUnlocked(spawnConfig))
   }
 
   private async _spawnUnlocked(spawnConfig: SpawnConfig): Promise<SessionMetadata> {
@@ -1390,6 +1395,10 @@ export class SessionManager {
    * and starts over from the initialPrompt.
    */
   async respawn(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
+    return this.withLock(`uuid:${uuid}`, () => this._respawnUnlocked(uuid, workspace, configDir, fallbackModel, fallbackEffort, overrides))
+  }
+
+  private async _respawnUnlocked(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
@@ -1493,6 +1502,18 @@ export class SessionManager {
    * to the resumed session (the conversation already has its history).
    */
   async adopt(config: {
+    projectId: string
+    agentType: import('@agent-hq-orchestron/shared').AgentType
+    workspace: string
+    configDir?: string
+    model?: string
+    effort?: import('@agent-hq-orchestron/shared').EffortLevel
+    harnessSessionId: string
+  }): Promise<SessionMetadata> {
+    return this.withLock(`adopt:${config.harnessSessionId}`, () => this._adoptUnlocked(config))
+  }
+
+  private async _adoptUnlocked(config: {
     projectId: string
     agentType: import('@agent-hq-orchestron/shared').AgentType
     workspace: string
@@ -1650,6 +1671,10 @@ export class SessionManager {
   }
 
   async reopen(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
+    return this.withLock(`uuid:${uuid}`, () => this._reopenUnlocked(uuid, workspace, configDir, fallbackModel, fallbackEffort, overrides))
+  }
+
+  private async _reopenUnlocked(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
@@ -1812,6 +1837,10 @@ export class SessionManager {
    * UUID + new tmux; original session record is untouched.
    */
   async clone(uuid: string, spawnConfig: Pick<SpawnConfig, 'workspace' | 'configDir'>, extraPrompt?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
+    return this.withLock(`uuid:${uuid}`, () => this._cloneUnlocked(uuid, spawnConfig, extraPrompt, fallbackModel, fallbackEffort, overrides))
+  }
+
+  private async _cloneUnlocked(uuid: string, spawnConfig: Pick<SpawnConfig, 'workspace' | 'configDir'>, extraPrompt?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
     const active = await this.countActiveSessions()
     if (active >= this.maxConcurrent) {
       throw new PoolFullError(this.maxConcurrent)
@@ -1982,6 +2011,10 @@ export class SessionManager {
    * effort before wiping the record.
    */
   async deleteRecord(uuid: string): Promise<{ deleted: string[] }> {
+    return this.withLock(`uuid:${uuid}`, () => this._deleteRecordUnlocked(uuid))
+  }
+
+  private async _deleteRecordUnlocked(uuid: string): Promise<{ deleted: string[] }> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 

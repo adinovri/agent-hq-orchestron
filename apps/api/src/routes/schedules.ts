@@ -3,10 +3,20 @@ import type { FastifyInstance } from 'fastify'
 import fp from 'fastify-plugin'
 import { z } from 'zod'
 import YAML from 'yaml'
+import { CronExpressionParser } from 'cron-parser'
 import { Scheduler, ScheduleNotFoundError, type ScheduleEntry } from '../domain/scheduler.js'
 
+// Reject cron expressions that don't parse. Pass-2 finding #6: without
+// this, POST /api/schedules with a newline-containing cron passes
+// (`min(1)` doesn't care about newlines), the Scheduler tries to fire
+// it, cron-parser throws, and the raw multi-line value gets echoed
+// through `console.warn` — a log-injection primitive.
+function isValidCron(expr: string): boolean {
+  try { CronExpressionParser.parse(expr); return true } catch { return false }
+}
+
 const CreateScheduleSchema = z.object({
-  cron: z.string().min(1),
+  cron: z.string().min(1).refine(isValidCron, { message: 'invalid cron expression' }),
   projectId: z.string().min(1),
   template: z.string().optional(),
   prompt: z.string().optional(),
@@ -162,6 +172,10 @@ export function schedulesPlugin(scheduler: Scheduler) {
           }
           if (raw.id !== undefined && !SCHEDULE_ID_RE.test(raw.id)) {
             errors.push({ id: raw.id, error: `invalid id ${JSON.stringify(raw.id)} — must match ${SCHEDULE_ID_RE.source}` })
+            continue
+          }
+          if (!isValidCron(raw.cron)) {
+            errors.push({ id: raw.id, error: `invalid cron expression ${JSON.stringify(raw.cron)}` })
             continue
           }
 

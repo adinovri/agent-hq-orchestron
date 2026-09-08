@@ -110,7 +110,11 @@ export class Scheduler {
       const iter = CronExpressionParser.parse(entry.cron, { currentDate: new Date() })
       nextTs = iter.next().toDate()
     } catch (err) {
-      console.warn(`[Scheduler] invalid cron "${entry.cron}" for schedule ${entry.id}:`, (err as Error).message)
+      // Strip CR/LF so a schedule with a newline-bearing cron (should be
+      // impossible now that the route validates via CronExpressionParser,
+      // but defense-in-depth) can't forge log entries in stderr/journald.
+      const safeCron = String(entry.cron).replace(/[\r\n]/g, '\\n')
+      console.warn(`[Scheduler] invalid cron "${safeCron}" for schedule ${entry.id}:`, (err as Error).message)
       return
     }
 
