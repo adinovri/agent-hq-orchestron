@@ -677,6 +677,28 @@ open http://100.71.6.23:3010
 npm test
 ```
 
+### SSE / WS auth — `?ticket=` (preferred) vs `?token=` (legacy)
+
+SSE and WebSocket endpoints can't send an `Authorization` header from
+the browser, so they authenticate via a query-string credential. Two
+modes are accepted:
+
+```bash
+# Preferred — mint a one-shot 60-second ticket, then open the stream:
+TICKET=$(curl -s -X POST \
+  -H "Authorization: Bearer $ORCHESTRON_REMOTE_TOKEN" \
+  http://100.71.6.23:8080/api/sse-ticket | jq -r .ticket)
+curl -N "http://100.71.6.23:8080/api/stream?ticket=$TICKET"
+
+# Legacy — long-lived remoteToken directly (still accepted):
+curl -N "http://100.71.6.23:8080/api/stream?token=$ORCHESTRON_REMOTE_TOKEN"
+```
+
+Tickets are single-use, expire in 60 s, and live in the API's memory
+only. Prefer them for any client that can POST first — the ticket
+approach keeps the long-lived `remoteToken` out of proxy access logs,
+browser history, and `Referer` headers.
+
 Expected `/api/health` response:
 ```json
 {
@@ -814,7 +836,9 @@ Data schema is additive (Zod schema evolution) — old JSON files always readabl
 |---|---|---|
 | `EADDRINUSE :8080` | Port already used | `lsof -i:8080` → kill or change `ORCHESTRON_PORT` |
 | Boot guard error `refusing to bind` | Non-loopback + no token | Set `ORCHESTRON_REMOTE_TOKEN` env |
-| `401 Unauthorized` | Missing/wrong Bearer header | Verify token, check WS uses `?token=` param |
+| `401 Unauthorized` | Missing/wrong Bearer header | Verify token, check WS uses `?token=` param (or `?ticket=` from `POST /api/sse-ticket`) |
+| `413 Payload Too Large` on `/transcript` | Session transcript exceeded the 50MB in-memory cap | Use `GET /api/sessions/:uuid/export` — it streams the file instead of buffering |
+| `[orchestron] SECURITY:` on boot | `~/.orchestron/config.json` is group/world-readable | `chmod 600 ~/.orchestron/config.json` |
 | Sessions stuck `spawning` (Claude) | tmux marker not detected | Check `claude` CLI authenticated; run `claude` manually to verify |
 | Sessions stuck `spawning` (Codex) | Ready marker (`>_ OpenAI Codex` banner) not detected, or trust prompt blocking | Run `codex` manually in the workspace dir once to accept the trust prompt (persists in `~/.codex/config.toml`); check `codex login` status; confirm `CODEX_HOME` (if set) points to the same dir orchestron passes via `--config-dir` |
 | Codex session shows `agentType: codex` but never captures a session id | Interactive TUI mode does NOT write rollout JSONL — orchestron scans `$CODEX_HOME/sessions/YYYY/MM/DD/` for a NEW rollout newer than spawn time | Check the rollout dir date subfolders exist and are writable; watch API log for `[adapter:codex] rollout scan` warnings |
