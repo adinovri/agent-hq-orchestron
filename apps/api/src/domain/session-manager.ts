@@ -546,7 +546,32 @@ export class SessionManager {
     return path.join(this.sessionsDir, `${uuid}.json`)
   }
 
+  /** Serializes spawn calls per parentSessionId so the check-then-act on
+   *  MAX_CHILDREN / RATE_LIMIT_MAX below cannot be TOCTOU-raced by
+   *  parallel spawn_session MCP calls from the same parent. Not a
+   *  cross-process lock (would need a filesystem lock or SQLite), but
+   *  MCP delegation is the only realistic concurrent spawn source and it
+   *  all lives inside this process. Key `__no_parent__` covers top-level
+   *  spawns; the maxConcurrent gate above already caps total live count. */
+  private spawnLocks = new Map<string, Promise<void>>()
+
   async spawn(spawnConfig: SpawnConfig): Promise<SessionMetadata> {
+    const lockKey = spawnConfig.parentSessionId ?? '__no_parent__'
+    while (this.spawnLocks.has(lockKey)) {
+      try { await this.spawnLocks.get(lockKey) } catch { /* prior spawn failed — proceed */ }
+    }
+    let releaseLock!: () => void
+    const lockPromise = new Promise<void>((r) => { releaseLock = r })
+    this.spawnLocks.set(lockKey, lockPromise)
+    try {
+      return await this._spawnUnlocked(spawnConfig)
+    } finally {
+      this.spawnLocks.delete(lockKey)
+      releaseLock()
+    }
+  }
+
+  private async _spawnUnlocked(spawnConfig: SpawnConfig): Promise<SessionMetadata> {
     const active = await this.countActiveSessions()
     if (active >= this.maxConcurrent) {
       throw new PoolFullError(this.maxConcurrent)

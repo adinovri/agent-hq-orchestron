@@ -549,7 +549,20 @@ export function sessionsPlugin(
         return { entries: parsed.entries, size: 0, contextStats: parsed.contextStats }
       }
 
-      const { readFile } = await import('node:fs/promises')
+      const { readFile, stat } = await import('node:fs/promises')
+      // Cap transcript read at 50MB to prevent OOM on runaway sessions.
+      // Real transcripts are KB-MB; 50MB is orders of magnitude beyond
+      // normal. If a session grew that large, the UI can't render it
+      // anyway — 413 tells the operator to /export instead.
+      const TRANSCRIPT_READ_CAP = 50 * 1024 * 1024
+      try {
+        const st = await stat(session.jsonlPath)
+        if (st.size > TRANSCRIPT_READ_CAP) {
+          return reply.code(413).send({
+            error: `transcript size ${st.size} exceeds ${TRANSCRIPT_READ_CAP}-byte cap; use /api/sessions/${uuid}/export to download the full bundle`,
+          })
+        }
+      } catch { /* stat failed — readFile below handles it */ }
       let raw = ''
       try {
         raw = await readFile(session.jsonlPath, 'utf8')
@@ -1057,19 +1070,21 @@ export function sessionsPlugin(
         return reply.code(409).send({ error: 'Session has no harness UUID yet — spawn likely still pending' })
       }
 
-      const { existsSync } = await import('node:fs')
-      const { readFile, rm } = await import('node:fs/promises')
+      const { existsSync, createReadStream } = await import('node:fs')
+      const { rm } = await import('node:fs/promises')
 
       // Case A — raw .jsonl on disk (claude, or codex with rollout).
+      // Stream the file so a multi-hundred-MB transcript doesn't get
+      // fully buffered into API memory. Fastify handles Readable stream
+      // responses natively.
       if (session.jsonlPath && existsSync(session.jsonlPath)) {
-        const buf = await readFile(session.jsonlPath)
         const fileName = `orchestron-${session.agentType}-${harnessUuid}.jsonl`
         reply
           .header('content-type', 'application/x-ndjson; charset=utf-8')
           .header('content-disposition', `attachment; filename="${fileName}"`)
           .header('x-orchestron-agent-type', session.agentType)
           .header('x-orchestron-source-uuid', harnessUuid)
-        return reply.send(buf)
+        return reply.send(createReadStream(session.jsonlPath))
       }
 
       // Case B — codex TUI-only, dump SQLite rows for this thread.

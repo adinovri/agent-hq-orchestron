@@ -149,6 +149,13 @@ scaffolds subdirs, not the config file itself):
 }
 ```
 
+**Then lock it down** — `remoteToken` is a plaintext bearer credential:
+```bash
+chmod 600 ~/.orchestron/config.json
+```
+On startup the API stat-checks the mode and prints a `[orchestron] SECURITY:`
+warning to stderr if group/world bits are set (non-fatal, but do the chmod).
+
 Schema (from `packages/shared/src/config.ts`):
 
 | Field | Type | Default | Env override |

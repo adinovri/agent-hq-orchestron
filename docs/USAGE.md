@@ -738,7 +738,21 @@ protection):
 - **Rate limit 5 spawns / minute per parent**
 
 Exceeding any raises an error. Chain depth walks `parentSessionId`
-pointers back through storage.
+pointers back through storage. Spawn calls from the same parent are
+serialized in-process (per-parent mutex) so parallel `spawn_session`
+calls can't TOCTOU-race the guardrail check.
+
+**Trust boundary — orchestron is single-tenant.** MCP tools that take
+an arbitrary `sessionId` argument (`read_transcript`, `get_status`,
+`send_input`, `list_sessions`) resolve the target globally, not scoped
+to the caller's delegation subtree or project. Any spawned agent can
+read the transcript of, or inject input into, any other live session on
+the host — including sessions from unrelated projects. This is
+intentional given the local-only trust model (all sessions run as the
+same OS user, with the same filesystem access), but be aware that a
+compromised or misbehaving child agent can observe peer work across
+project boundaries. Do not run untrusted prompts on a host that also
+runs sensitive sessions.
 
 ---
 

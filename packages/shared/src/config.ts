@@ -57,6 +57,24 @@ function defaultDataDir(): string {
 function readConfigFile(configPath: string): unknown {
   if (!fs.existsSync(configPath)) return {}
   try {
+    // Warn (not fatal) when config.json — which holds the plaintext
+    // remoteToken — is group/world-readable on a POSIX filesystem. Any
+    // local user on a shared host can otherwise lift the bearer.
+    // Fatal-refuse would break existing single-user deploys, so keep it
+    // to a stderr warning. Windows / non-POSIX perms are ignored (mode
+    // reads as 0o666 there — noisy false positive).
+    if (process.platform !== 'win32') {
+      try {
+        const st = fs.statSync(configPath)
+        const worldGroupBits = st.mode & 0o077
+        if (worldGroupBits !== 0) {
+          const modeStr = (st.mode & 0o777).toString(8).padStart(3, '0')
+          console.warn(
+            `[orchestron] SECURITY: ${configPath} mode is 0${modeStr} — remoteToken is readable by other local users. Run: chmod 600 ${configPath}`,
+          )
+        }
+      } catch { /* stat failed — skip warning */ }
+    }
     return JSON.parse(fs.readFileSync(configPath, 'utf8'))
   } catch (err) {
     throw new Error(`invalid config file ${configPath}: ${(err as Error).message}`)
