@@ -1,6 +1,7 @@
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import sensible from '@fastify/sensible'
+import rateLimit from '@fastify/rate-limit'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import os from 'node:os'
@@ -118,6 +119,23 @@ const fastify = Fastify({
 // agent sessions. Set to false to refuse cross-origin browser requests.
 await fastify.register(cors, { origin: false })
 await fastify.register(sensible)
+
+// Global rate limit — an authenticated caller (or a compromised MCP
+// agent that reached the real remoteToken via ORCHESTRON_TOKEN) can
+// otherwise flood /input, /notes, or /import until the event loop
+// stalls. Key on bearer token when present, IP otherwise. 600 req/min
+// is generous — the dashboard poll cadence is ~1 req/2s per open
+// session and even 20 idle sessions stay well under.
+await fastify.register(rateLimit, {
+  max: 600,
+  timeWindow: '1 minute',
+  allowList: ['127.0.0.1', '::1'],   // loopback (dev/proxy) exempt
+  keyGenerator: (req) => {
+    const auth = req.headers.authorization ?? ''
+    return auth.startsWith('Bearer ') ? `bearer:${auth.slice(7, 15)}` : req.ip
+  },
+})
+
 await fastify.register(authPlugin, { config })
 
 // Accept YAML/plain-text bodies (used by /api/schedules/import).
