@@ -2244,7 +2244,14 @@ export class SessionManager {
 
   private async countActiveSessions(): Promise<number> {
     const all = await this.list()
-    const terminal: SessionStatus[] = ['succeeded', 'failed', 'killed']
-    return all.filter((s) => !terminal.includes(s.status)).length
+    // Only sessions holding a LIVE tmux count toward the pool cap.
+    // Terminal (succeeded/failed/killed) records are just JSON on disk.
+    // Sleeping records are also cheap — tmux was released by the idle
+    // sweeper, they wake on next `--resume` — so accumulating them
+    // shouldn't block new spawns. Real wake-time overflow is bounded by
+    // how many sleeping sessions the user ends up reopening at once,
+    // which in practice is small enough not to need its own cap.
+    const NON_LIVE: SessionStatus[] = ['succeeded', 'failed', 'killed', 'sleeping']
+    return all.filter((s) => !NON_LIVE.includes(s.status)).length
   }
 }
