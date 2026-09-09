@@ -2,6 +2,9 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { fetchJson } from '@/lib/fetcher'
+import { isTerminal } from '@/lib/status'
+import { resolveUseTmux } from '@agent-hq-orchestron/shared'
+import type { SessionStatus } from '@agent-hq-orchestron/shared'
 
 /** Authed server diagnostics. `/api/health` is anonymous `{ok:true}` only —
  *  everything below moved behind the Bearer token at `/api/health/detail`
@@ -48,4 +51,30 @@ export function useHealthDetail() {
 export function useHeadlessEnabled(): boolean {
   const { data } = useHealthDetail()
   return data?.enableHeadlessMode ?? true
+}
+
+/**
+ * Whether a session's "headless" badge should be shown.
+ *
+ * With the switch on, it always is — the badge states a fact about the
+ * session and nothing is being masked.
+ *
+ * With the switch off, the badge survives only while the session is still
+ * live. A running headless session genuinely *is* headless: the process was
+ * launched that way and cannot be intercepted mid-flight, so hiding the
+ * badge would misdescribe what is on the machine. Once it reaches a terminal
+ * state the badge is describing a mode the user can no longer choose, next
+ * to Reopen/Respawn buttons that will not produce it — so it comes off, in
+ * keeping with the rest of the masking.
+ *
+ * `?? true` via resolveUseTmux: a record written before the toggle existed
+ * has no field and is a tmux session, which never had a badge anyway.
+ */
+export function useHeadlessBadgeVisible(
+  useTmux: boolean | undefined,
+  status: SessionStatus,
+): boolean {
+  const headlessEnabled = useHeadlessEnabled()
+  if (resolveUseTmux(useTmux)) return false
+  return headlessEnabled || !isTerminal(status)
 }

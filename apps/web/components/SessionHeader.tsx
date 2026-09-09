@@ -9,6 +9,7 @@ import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw, 
 import { useState } from 'react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 import { apiFetch } from '@/lib/fetcher'
+import { useHeadlessBadgeVisible } from '@/lib/server-config'
 
 interface Props {
   session: SessionMetadata
@@ -148,6 +149,11 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
   // it re-runs the same prompt in the session's own mode.
   // `?? true` — sessions predating the toggle are tmux sessions.
   const isHeadless = !(session.useTmux ?? true)
+  // Badge visibility is a separate question from `isHeadless`: the flag can
+  // hide the badge on a terminal session while Reopen/Fork stay disabled,
+  // because those are gated on what the record says, not on what the badge
+  // shows.
+  const showHeadlessBadge = useHeadlessBadgeVisible(session.useTmux, session.status)
   const canReopen = isTerminal && hasTranscript && !isHeadless
   const canClone = isTerminal && hasTranscript && !isHeadless
   // Respawn always available on terminal — doesn't need the old JSONL.
@@ -177,7 +183,7 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
               >
                 {session.agentType}
               </span>
-              {!(session.useTmux ?? true) && (
+              {showHeadlessBadge && (
                 <span
                   className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono uppercase bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
                   title={`Headless run — one-shot ${session.agentType === 'codex' ? 'codex exec' : 'claude -p'}, no tmux. No live TUI, no sleeping, no follow-up input.`}

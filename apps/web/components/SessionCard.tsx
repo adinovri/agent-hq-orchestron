@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/StatusPill'
 import { formatRelative, formatDuration } from '@/lib/time'
 import { isActive } from '@/lib/status'
+import { useHeadlessBadgeVisible } from '@/lib/server-config'
 import { Sparkles, Terminal, Bot, X, GitBranch, Zap } from 'lucide-react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 
@@ -45,6 +46,9 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
   const effortFromHarness = !session.effort && !projectDefaultEffort && !!harnessDefaultEffort
   const active = isActive(session.status)
   const needsInput = session.status === 'needs_input'
+  // Hidden on terminal sessions while the global headless switch is off —
+  // see useHeadlessBadgeVisible for why a *running* one keeps it.
+  const showHeadlessBadge = useHeadlessBadgeVisible(session.useTmux, session.status)
   const icon = AGENT_ICON[session.agentType] ?? <Bot className="w-4 h-4" />
 
   return (
@@ -79,7 +83,7 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
             >
               {session.agentType}
             </span>
-            {!(session.useTmux ?? true) && (
+            {showHeadlessBadge && (
               <span
                 className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono uppercase bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
                 title={`Headless run — one-shot ${session.agentType === 'codex' ? 'codex exec' : 'claude -p'}, no tmux. No live TUI, no sleeping, no follow-up input.`}
