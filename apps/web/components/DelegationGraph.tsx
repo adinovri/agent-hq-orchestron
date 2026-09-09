@@ -146,10 +146,30 @@ export function DelegationGraph({ sessions, delegationEdges, rootUuid }: Props) 
         fitViewOptions={{ padding: 0.2 }}
         minZoom={0.2}
         maxZoom={2}
+        // Dark theme — React Flow's Controls / MiniMap / Background pull
+        // their palette from this. Without it, buttons + minimap render
+        // pure white on the app's dark ground → glaring white boxes in
+        // bottom-left/bottom-right. See @xyflow/react docs § colorMode.
+        colorMode="dark"
       >
-        <Background />
-        <Controls />
-        <MiniMap nodeColor={(n) => (n.style as { background?: string })?.background ?? '#aaa'} />
+        <Background gap={20} size={1} color="rgba(255,255,255,0.08)" />
+        <Controls
+          className="react-flow__controls-dark"
+          style={{
+            background: 'rgba(20, 22, 28, 0.85)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: 6,
+          }}
+        />
+        <MiniMap
+          nodeColor={(n) => (n.style as { background?: string })?.background ?? '#71717a'}
+          maskColor="rgba(20, 22, 28, 0.6)"
+          style={{
+            background: 'rgba(20, 22, 28, 0.85)',
+            border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: 6,
+          }}
+        />
       </ReactFlow>
     </div>
   )
