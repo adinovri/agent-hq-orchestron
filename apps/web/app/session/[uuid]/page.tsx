@@ -13,6 +13,7 @@ import { PendingPromptBanner } from '@/components/PendingPromptBanner'
 import { DeleteRecordDialog } from '@/components/DeleteRecordDialog'
 import { SessionMetadataEditDialog } from '@/components/SessionMetadataEditDialog'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
+import { noticeIfCoerced } from '@/lib/notice'
 import type { SessionMetadata, DelegationEdges, ProjectMetadata } from '@agent-hq-orchestron/shared'
 
 interface PageProps {
@@ -154,7 +155,10 @@ export default function SessionDetailPage({ params }: PageProps) {
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
       return res.json() as Promise<SessionMetadata>
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // Saved as tmux when the global headless switch is off — say so
+      // rather than letting the record silently disagree with the request.
+      noticeIfCoerced(data)
       setEditMetaOpen(false)
       qc.invalidateQueries({ queryKey: ['session', uuid] })
       qc.invalidateQueries({ queryKey: ['sessions'] })
@@ -173,7 +177,11 @@ export default function SessionDetailPage({ params }: PageProps) {
       return res.json() as Promise<SessionMetadata>
     },
     onMutate: () => setRespawning(true),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // Respawn is the lifecycle action that migrates a headless record to
+      // tmux while the switch is off, so it is the one most likely to
+      // surprise someone who set the session up headless.
+      noticeIfCoerced(data)
       // Respawn is now in-place — same session id, just refresh queries so
       // the header + transcript pick up the new claudeSessionUuid + status.
       qc.invalidateQueries({ queryKey: ['session', uuid] })

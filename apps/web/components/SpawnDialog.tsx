@@ -6,6 +6,7 @@ import { apiFetch, fetchJson } from '@/lib/fetcher'
 import { X, Paperclip, FileText, Image as ImageIcon, FileCode, File as FileIcon } from 'lucide-react'
 import { modelsFor, effortsFor, implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 import { useHeadlessEnabled } from '@/lib/server-config'
+import { noticeIfCoerced } from '@/lib/notice'
 
 interface AttachedFile {
   id: string
@@ -205,7 +206,9 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
         })
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
-      await res.json()
+      // The dialog closes right after this, so the notice has to be raised
+      // from the app-level toast stack rather than shown inline here.
+      noticeIfCoerced(await res.json())
       // Clear + close
       setPrompt('')
       setTemplate('')

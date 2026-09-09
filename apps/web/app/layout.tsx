@@ -5,6 +5,7 @@ import { Providers } from "@/components/Providers";
 import { NavBar } from "@/components/NavBar";
 import { SwAutoReload } from "@/components/SwAutoReload";
 import { VersionCheck } from "@/components/VersionCheck";
+import { NoticeToast } from "@/components/NoticeToast";
 import { ThemeApplier } from "@/components/ThemeSwitcher";
 
 const geistSans = Geist({
@@ -47,6 +48,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <ThemeApplier />
           <SwAutoReload />
           <VersionCheck />
+          <NoticeToast />
           <NavBar />
           {/* min-h-0 lets flex-1 actually shrink so children using h-full
            *  can resolve a real pixel height regardless of nav row count. */}
