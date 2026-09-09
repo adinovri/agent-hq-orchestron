@@ -138,3 +138,111 @@ export function parseHeadlessResultDocument(raw: string | undefined | null): Hea
   const inquiry: Inquiry = { message, fields }
   return { summary, inquiry }
 }
+
+// ── Transcript normalisation ─────────────────────────────────────
+
+/** Name of the tool Claude Code synthesises when `--json-schema` is passed.
+ *  The model is told "You MUST call this tool exactly once at the end of your
+ *  response", and its input is the structured document. Verified against
+ *  Claude Code 2.1.267. */
+export const STRUCTURED_OUTPUT_TOOL_NAME = 'StructuredOutput'
+
+/** The tool_result Claude Code writes back after accepting the document.
+ *  Fixed string in the CLI bundle, not model-authored. */
+const STRUCTURED_OUTPUT_TOOL_RESULT = 'Structured output provided successfully'
+
+/** Minimal shape of a parsed transcript entry — structurally compatible with
+ *  the `RolloutEntry` the API's rollout parsers emit. Declared here so the
+ *  normaliser stays a pure function with no dependency on the API. */
+export interface TranscriptEntryLike {
+  seq: number
+  timestamp: string
+  kind: 'user' | 'assistant' | 'tool_use' | 'tool_result'
+  toolName?: string
+  content: string
+}
+
+/** True when `text` is one of OUR structured documents and nothing else.
+ *
+ *  Deliberately stricter than `parseHeadlessResultDocument`, which is a
+ *  forgiving *reader*. This is a *classifier*: it decides whether hiding the
+ *  raw text loses information. An object carrying keys beyond `summary` and
+ *  `inquiry` is somebody else's payload — an agent that was legitimately
+ *  asked to answer in JSON — and rewriting it to its `summary` would destroy
+ *  the answer. So only an exact-shape document qualifies. */
+function isExactResultDocument(text: string): boolean {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('{')) return false
+  let doc: unknown
+  try { doc = JSON.parse(trimmed) } catch { return false }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return false
+  const keys = Object.keys(doc as Record<string, unknown>)
+  if (!keys.includes('summary')) return false
+  return keys.every((k) => k === 'summary' || k === 'inquiry')
+}
+
+/**
+ * Strip the structured-output plumbing out of a headless transcript.
+ *
+ * Turning the schema on makes each harness leave machinery in the transcript
+ * that is addressed to Orchestron, not to the person reading the pane:
+ *
+ *  - **Claude** synthesises a `StructuredOutput` tool. The transcript gets a
+ *    `tool_use` whose input is the raw `{summary, inquiry}` document, plus a
+ *    canned `tool_result`. Both rendered verbatim before this — the raw JSON
+ *    block and the enforcement chatter the operator reported.
+ *  - **Codex** has no tool: the final agent message *is* the document, so the
+ *    only thing the reader gets is raw JSON where prose used to be.
+ *
+ * The two therefore need opposite treatment, which is why this is one pass
+ * over the entries rather than a per-entry filter:
+ *
+ *  - A `StructuredOutput` tool_use that follows the model's own prose is pure
+ *    duplication → dropped. When there is no prose (the model answered only
+ *    through the tool) its `summary` is promoted to an assistant message, so
+ *    the turn is never rendered empty.
+ *  - The canned tool_result is always dropped.
+ *  - An assistant message that is exactly a result document is rewritten to
+ *    its `summary` — the Codex case.
+ *
+ * `seq` values are preserved, not renumbered: they are React keys and stable
+ * identifiers for the client, and gaps are harmless.
+ *
+ * Only call this for headless sessions. A tmux session never sees the schema,
+ * and running the classifier over its transcript could only misfire.
+ */
+export function normalizeStructuredOutputTranscript<T extends TranscriptEntryLike>(
+  entries: readonly T[],
+): T[] {
+  const out: T[] = []
+
+  for (const entry of entries) {
+    if (
+      entry.kind === 'tool_result' &&
+      entry.content.trim() === STRUCTURED_OUTPUT_TOOL_RESULT
+    ) {
+      continue
+    }
+
+    if (entry.kind === 'tool_use' && entry.toolName === STRUCTURED_OUTPUT_TOOL_NAME) {
+      const prev = out[out.length - 1]
+      const prosePrecedes = prev?.kind === 'assistant' && prev.content.trim().length > 0
+      if (prosePrecedes) continue
+
+      const summary = parseHeadlessResultDocument(entry.content).summary.trim()
+      if (!summary) continue
+      out.push({ ...entry, kind: 'assistant', toolName: undefined, content: summary })
+      continue
+    }
+
+    if (entry.kind === 'assistant' && isExactResultDocument(entry.content)) {
+      const summary = parseHeadlessResultDocument(entry.content).summary.trim()
+      if (summary) out.push({ ...entry, content: summary })
+      continue
+    }
+
+    out.push(entry)
+  }
+
+  return out
+}

@@ -14,6 +14,7 @@ import {
   HEADLESS_COERCED_REASON,
   applyHeadlessSwitch,
   headlessCoercion,
+  normalizeStructuredOutputTranscript,
 } from '@agent-hq-orchestron/shared'
 import { resolveClaudeTranscriptPath } from '../adapters/claude.js'
 import { SessionManager } from '../domain/session-manager.js'
@@ -701,7 +702,17 @@ export function sessionsPlugin(
         session.agentType === 'claude' && parsed.contextStats && !parsed.contextStats.contextWindow
           ? { ...parsed.contextStats, contextWindow: claudeContextWindowForModel(session.model) }
           : parsed.contextStats
-      return { entries: parsed.entries, size: raw.length, contextStats: withWindow }
+
+      // Structured output leaves harness plumbing in a headless transcript —
+      // Claude's StructuredOutput tool_use/tool_result pair, and on Codex a
+      // final agent message that is the raw document. None of it is addressed
+      // to the reader. Strip it here rather than in a client so every
+      // consumer of this endpoint (web pane, TUI) sees the same thing.
+      // Gated on headless: a tmux session is never handed the schema.
+      const entries = session.useTmux === false
+        ? normalizeStructuredOutputTranscript(parsed.entries)
+        : parsed.entries
+      return { entries, size: raw.length, contextStats: withWindow }
     })
 
     app.post('/api/sessions/:uuid/input', async (req, reply) => {
