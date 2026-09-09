@@ -1,7 +1,6 @@
 'use client'
 
 import { useSyncExternalStore } from 'react'
-import { HEADLESS_COERCED_NOTICE, HEADLESS_COERCED_HINT } from '@agent-hq-orchestron/shared'
 
 /**
  * Transient, app-wide notices ("the server did something you did not ask
@@ -93,12 +92,25 @@ export function useNotices(): Notice[] {
 }
 
 /**
+ * Display copy for a headless coercion.
+ *
+ * Web-local, like every other piece of UI copy in this app. The *wire*
+ * value is shared (`HEADLESS_COERCED_REASON`, which is what lands in the
+ * response body and the API log) and is not shown to anyone — importing
+ * the string from shared would pull its config module, and `node:fs`
+ * with it, into the client bundle.
+ */
+export const HEADLESS_COERCED_TITLE =
+  'Headless mode is disabled globally — this session runs in tmux.'
+export const HEADLESS_COERCED_DETAIL =
+  'set enableHeadlessMode: true in ~/.orchestron/config.json'
+
+/**
  * Raise the standard notice for a mutation the server coerced.
  *
  * Mutation responses carry `coerced` only when the server overrode the
- * request, so `body?.coerced` is the whole condition — no value inspection.
- * Copy lives in shared so the API log, the docs and this toast cannot
- * drift apart.
+ * request, so `body?.coerced` is the whole condition — no value inspection
+ * and no import needed to read it.
  *
  * Call it with any parsed response body; it no-ops on one without the
  * field, which keeps the call sites down to a single line each.
@@ -106,8 +118,8 @@ export function useNotices(): Notice[] {
 export function noticeIfCoerced(body: unknown): void {
   const coerced = (body as { coerced?: { useTmux?: boolean } } | null | undefined)?.coerced
   if (!coerced?.useTmux) return
-  pushNotice(HEADLESS_COERCED_NOTICE, {
-    detail: HEADLESS_COERCED_HINT,
+  pushNotice(HEADLESS_COERCED_TITLE, {
+    detail: HEADLESS_COERCED_DETAIL,
     tone: 'warn',
   })
 }

@@ -97,19 +97,18 @@ export function isHeadless(
   return !resolveUseTmux(sessionOrSpawn, projectDefault)
 }
 
-/** Machine-readable reason attached to a coerced response. Exported so
- *  route, session-manager, tests and docs cannot drift from each other. */
+/**
+ * Machine-readable reason attached to a coerced response and logged
+ * alongside it. Exported so route, session-manager and tests cannot drift
+ * from each other.
+ *
+ * This is a wire value, not display copy — nobody is shown this string.
+ * The toast wording lives in `apps/web/lib/notice.ts` with the rest of the
+ * app's UI copy, because importing a runtime value from this module into a
+ * client component pulls `node:fs` (via loadConfig below) into the browser
+ * bundle.
+ */
 export const HEADLESS_COERCED_REASON = 'headless disabled globally'
-
-/** Operator-facing copy for the same event. The UI shows this verbatim in
- *  a toast; the API logs it. English to match the rest of the interface. */
-export const HEADLESS_COERCED_NOTICE =
-  'Headless mode is disabled globally — this session runs in tmux.'
-
-/** Hint pointing at the one place the switch lives. Surfaced next to the
- *  notice, not as an error hint — nothing failed. */
-export const HEADLESS_COERCED_HINT =
-  'set enableHeadlessMode: true in ~/.orchestron/config.json'
 
 /**
  * Advertised on a mutation response whose `useTmux` the server changed on

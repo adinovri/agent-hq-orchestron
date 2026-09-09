@@ -3,7 +3,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchJson } from '@/lib/fetcher'
 import { isTerminal } from '@/lib/status'
-import { resolveUseTmux } from '@agent-hq-orchestron/shared'
 import type { SessionStatus } from '@agent-hq-orchestron/shared'
 
 /** Authed server diagnostics. `/api/health` is anonymous `{ok:true}` only —
@@ -67,14 +66,18 @@ export function useHeadlessEnabled(): boolean {
  * to Reopen/Respawn buttons that will not produce it — so it comes off, in
  * keeping with the rest of the masking.
  *
- * `?? true` via resolveUseTmux: a record written before the toggle existed
- * has no field and is a tmux session, which never had a badge anyway.
+ * `?? true`: a record written before the toggle existed has no field and is
+ * a tmux session, which never had a badge anyway.
  */
 export function useHeadlessBadgeVisible(
   useTmux: boolean | undefined,
   status: SessionStatus,
 ): boolean {
   const headlessEnabled = useHeadlessEnabled()
-  if (resolveUseTmux(useTmux)) return false
+  // `?? true` rather than shared's resolveUseTmux: importing a runtime
+  // value from shared pulls its config module — and `node:fs` with it —
+  // into the client bundle. Every other component here spells the same
+  // nullish default inline for that reason.
+  if (useTmux ?? true) return false
   return headlessEnabled || !isTerminal(status)
 }

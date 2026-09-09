@@ -3,8 +3,6 @@ import {
   applyHeadlessSwitch,
   headlessCoercion,
   HEADLESS_COERCED_REASON,
-  HEADLESS_COERCED_NOTICE,
-  HEADLESS_COERCED_HINT,
 } from '@agent-hq-orchestron/shared'
 
 /**
@@ -63,14 +61,11 @@ describe('headlessCoercion', () => {
   })
 })
 
-describe('coercion copy', () => {
-  it('keeps the reason machine-shaped and the notice human-shaped', () => {
-    // The reason lands in a JSON body and a log line; the notice is read
-    // by a person in a toast. Conflating them is how one of the two ends
-    // up wrong for its audience.
+describe('coercion reason', () => {
+  it('is a stable wire value', () => {
+    // Pinned because it goes out in a response body and into log lines
+    // that someone will grep. Display copy is deliberately elsewhere —
+    // apps/web/lib/notice.ts — so this stays machine-shaped.
     expect(HEADLESS_COERCED_REASON).toBe('headless disabled globally')
-    expect(HEADLESS_COERCED_NOTICE).toMatch(/tmux/)
-    expect(HEADLESS_COERCED_HINT).toContain('enableHeadlessMode')
-    expect(HEADLESS_COERCED_HINT).toContain('config.json')
   })
 })
