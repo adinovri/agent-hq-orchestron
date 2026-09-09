@@ -1,25 +1,13 @@
 'use client'
 
-import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { fetchJson } from '@/lib/fetcher'
+import { useHealthDetail } from '@/lib/server-config'
 import { Skeleton } from '@/components/Skeleton'
 import {
   Server, Key, FileCog, AlertCircle, CheckCircle2, Copy, Check,
   ShieldCheck, ShieldOff, Palette,
 } from 'lucide-react'
 import { ThemeSelect } from '@/components/ThemeSwitcher'
-
-interface HealthResponse {
-  ok: boolean
-  tmux: string
-  storage: string
-  bindHost: string
-  remoteAuth: 'enabled' | 'disabled'
-  maxConcurrent: number
-  platform?: NodeJS.Platform
-  uid?: number | null
-}
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -68,15 +56,12 @@ function CopyableCommand({ command }: { command: string }) {
 }
 
 export default function SettingsPage() {
-  const { data: health, isLoading, error } = useQuery<HealthResponse>({
-    queryKey: ['health'],
-    // /api/health is now anonymous {ok:true} only — verbose fields
-    // (storage/bindHost/tmux/remoteAuth/maxConcurrent/platform) moved
-    // behind Bearer at /api/health/detail after security pass-1 finding
-    // #3. This page is authed anyway, so hit the detail endpoint.
-    queryFn: () => fetchJson('/api/health/detail'),
-    refetchInterval: 30_000,
-  })
+  // /api/health is now anonymous {ok:true} only — verbose fields
+  // (storage/bindHost/tmux/remoteAuth/maxConcurrent/platform) moved behind
+  // Bearer at /api/health/detail after security pass-1 finding #3. This
+  // page is authed anyway, so it hits the detail endpoint — via the same
+  // shared hook the spawn/project/session dialogs use for the headless flag.
+  const { data: health, isLoading, error } = useHealthDetail()
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6 space-y-5">
@@ -127,6 +112,13 @@ export default function SettingsPage() {
             } />
             <InfoRow label="Max concurrent" value={String(health.maxConcurrent)} />
             <InfoRow label="tmux" value={health.tmux} />
+            <InfoRow label="Headless mode" value={
+              // Older servers omit the field entirely — those predate the
+              // kill switch and always allowed headless.
+              (health.enableHeadlessMode ?? true)
+                ? <span className="text-emerald-600 dark:text-emerald-400">enabled</span>
+                : <span className="text-amber-600 dark:text-amber-400">disabled globally</span>
+            } />
             <InfoRow label="Storage dir" value={health.storage} />
           </>
         ) : null}

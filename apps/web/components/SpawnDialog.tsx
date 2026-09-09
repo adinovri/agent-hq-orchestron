@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { apiFetch, fetchJson } from '@/lib/fetcher'
 import { X, Paperclip, FileText, Image as ImageIcon, FileCode, File as FileIcon } from 'lucide-react'
 import { modelsFor, effortsFor, implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
+import { useHeadlessEnabled, HEADLESS_DISABLED_TOOLTIP } from '@/lib/server-config'
 
 interface AttachedFile {
   id: string
@@ -83,8 +84,12 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
   // into state via an effect — no cascading render, no stale value.
   // `?? true`: a project with no stored preference means tmux.
   const [useTmuxOverride, setUseTmuxOverride] = useState<boolean | null>(null)
+  const headlessEnabled = useHeadlessEnabled()
   const projectDefaultUseTmux = currentProject?.defaultUseTmux ?? true
-  const useTmux = useTmuxOverride ?? projectDefaultUseTmux
+  // With the global switch off, tmux is the only reachable value — force it
+  // over both the user's override and a headless project default, so the
+  // checkbox never shows a state the API would 400.
+  const useTmux = headlessEnabled ? (useTmuxOverride ?? projectDefaultUseTmux) : true
   const [vars, setVars] = useState<Record<string, string>>({})
   const [attachments, setAttachments] = useState<AttachedFile[]>([])
   const [dragOver, setDragOver] = useState(false)
@@ -370,12 +375,16 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
 
           {/* Run mode */}
           <div>
-            <label className="flex items-start gap-2 cursor-pointer">
+            <label
+              className={headlessEnabled ? 'flex items-start gap-2 cursor-pointer' : 'flex items-start gap-2 cursor-not-allowed'}
+              title={headlessEnabled ? undefined : HEADLESS_DISABLED_TOOLTIP}
+            >
               <input
                 type="checkbox"
                 checked={useTmux}
+                disabled={!headlessEnabled}
                 onChange={(e) => setUseTmuxOverride(e.target.checked)}
-                className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600"
+                className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600 disabled:opacity-60"
               />
               <span>
                 <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
@@ -383,8 +392,11 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
                   {useTmux
                     ? 'Interactive session — live transcript, follow-up input, sleeps when idle.'
                     : `Headless (one-shot ${selectedAgentType === 'codex' ? 'codex exec' : 'claude -p'}) — runs to completion and exits. No live TUI, no sleeping, no follow-up input.`}
-                  {useTmux !== projectDefaultUseTmux && (
+                  {headlessEnabled && useTmux !== projectDefaultUseTmux && (
                     <span className="italic"> Overrides the project default.</span>
+                  )}
+                  {!headlessEnabled && (
+                    <span className="block italic">{HEADLESS_DISABLED_TOOLTIP}</span>
                   )}
                 </span>
               </span>

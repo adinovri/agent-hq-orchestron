@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import type { AgentType, EffortLevel } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
+import { useHeadlessEnabled, HEADLESS_DISABLED_TOOLTIP } from '@/lib/server-config'
 
 const RESET: { value: ''; label: string } = { value: '', label: '— Reset to project default' }
 
@@ -31,6 +32,7 @@ export function SessionMetadataEditDialog({
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
   const [useTmux, setUseTmux] = useState(true)
+  const headlessEnabled = useHeadlessEnabled()
 
   // `?? true` throughout — a record written before the toggle existed has no
   // field, and those are all tmux sessions.
@@ -104,21 +106,31 @@ export function SessionMetadataEditDialog({
             </select>
           </div>
 
+          {/* Forced-checked while the global switch is off: the API 400s an
+              explicit useTmux:false, so tmux is the only value this session
+              can respawn with. `useTmux` state is left untouched, which
+              keeps `dirty` false — editing model/effort during an outage
+              must not silently rewrite a headless session's record. */}
           <div>
-            <label className="flex items-start gap-2 cursor-pointer">
+            <label
+              className={headlessEnabled ? 'flex items-start gap-2 cursor-pointer' : 'flex items-start gap-2 cursor-not-allowed'}
+              title={headlessEnabled ? undefined : HEADLESS_DISABLED_TOOLTIP}
+            >
               <input
                 type="checkbox"
-                checked={useTmux}
+                checked={headlessEnabled ? useTmux : true}
                 onChange={(e) => setUseTmux(e.target.checked)}
-                disabled={pending}
-                className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600"
+                disabled={pending || !headlessEnabled}
+                className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600 disabled:opacity-60"
               />
               <span>
                 <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
                 <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
-                  {useTmux
-                    ? 'Respawn interactively in tmux.'
-                    : `Respawn headless (one-shot ${agentType === 'codex' ? 'codex exec' : 'claude -p'}) — no live TUI, no follow-up input.`}
+                  {!headlessEnabled
+                    ? HEADLESS_DISABLED_TOOLTIP
+                    : useTmux
+                      ? 'Respawn interactively in tmux.'
+                      : `Respawn headless (one-shot ${agentType === 'codex' ? 'codex exec' : 'claude -p'}) — no live TUI, no follow-up input.`}
                 </span>
               </span>
             </label>
