@@ -163,10 +163,12 @@ const MCP_TOOLS_TMUX = [
   'mcp__orchestron__note_list',
 ]
 
-/** Same list minus `wait_for_idle`. That tool blocks until a child session
- *  goes idle, which can be minutes — in a one-shot invocation there is no
- *  turn boundary to release it and no way to interrupt, so the whole
- *  headless run would hang on it. Async delegation (Phase 3) replaces it. */
+/** Same list minus `wait_for_idle`. That tool blocks until a CHILD session
+ *  goes idle, which can be minutes. A headless session is multi-turn now,
+ *  but each of its turns is still a single process with no way to interrupt
+ *  it — so the parent's turn would sit blocked for the whole wait, burning
+ *  its context window on a poll loop. Async delegation (Phase 3) replaces
+ *  it with a callback that resumes the parent when the child lands. */
 const MCP_TOOLS_HEADLESS = MCP_TOOLS_TMUX.filter((t) => t !== 'mcp__orchestron__wait_for_idle')
 
 /** Keep at most this many bytes of the child's stderr for `failureReason`.

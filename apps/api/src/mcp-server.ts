@@ -167,8 +167,10 @@ const TOOLS: ToolDef[] = [
   {
     name: 'send_input',
     description:
-      'Queue a new user turn into an existing session. Works whether the session is idle, ' +
-      'waiting for input, or actively running (queued).',
+      'Send a new user turn to an existing session. A tmux session accepts it whether it is ' +
+      'idle, waiting for input, or actively running (the TUI queues it). A HEADLESS session ' +
+      'accepts it only when idle or waiting on an inquiry — it has no input queue, so sending ' +
+      'mid-turn fails; wait for the turn to end rather than retrying.',
     inputSchema: {
       type: 'object',
       properties: {
