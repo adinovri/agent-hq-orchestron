@@ -10,6 +10,7 @@ import type { EffortLevel } from '@agent-hq-orchestron/shared'
 import { InputBox } from '@/components/InputBox'
 import { KillConfirmDialog } from '@/components/KillConfirmDialog'
 import { PendingPromptBanner } from '@/components/PendingPromptBanner'
+import { InquiryCard } from '@/components/InquiryCard'
 import { DeleteRecordDialog } from '@/components/DeleteRecordDialog'
 import { SessionMetadataEditDialog } from '@/components/SessionMetadataEditDialog'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
@@ -240,6 +241,14 @@ export default function SessionDetailPage({ params }: PageProps) {
 
       {session.pendingPrompt && !readOnly && (
         <PendingPromptBanner uuid={uuid} prompt={session.pendingPrompt} />
+      )}
+
+      {/* Headless counterpart of the banner above: a structured question the
+        * agent returned in its final response, answered as text that becomes
+        * the next turn. The two are mutually exclusive in practice — a
+        * pendingPrompt is scraped off a live tmux pane. */}
+      {session.pendingInquiry && !readOnly && (
+        <InquiryCard uuid={uuid} inquiry={session.pendingInquiry} />
       )}
 
       <div className="flex-1 overflow-hidden">
