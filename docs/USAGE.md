@@ -731,6 +731,36 @@ Three consequences worth knowing:
   take it differently: Claude's `--json-schema` wants it inline and errors
   on a path, Codex's `--output-schema` wants a file.
 
+##### None of this is visible in the transcript
+
+Structured output is machinery, and the transcript pane shows you the
+conversation, not the machinery. The schema is requested purely through a
+CLI flag — nothing is appended to your prompt — and each harness's
+book-keeping is stripped out of the transcript before it reaches any client:
+
+- Claude answers the schema by calling a synthesised `StructuredOutput`
+  tool, which lands in the transcript as a tool call carrying the raw JSON
+  document plus a canned "Structured output provided successfully" result.
+  Both are dropped; you see the prose answer, exactly as with the schema
+  off. In the rare case where the model answers *only* through the tool and
+  writes no prose, its `summary` is shown as the assistant message so the
+  turn is never blank.
+- Codex has no such tool — its final message simply *is* the document, so
+  that message is rendered as its `summary`.
+
+This is done in `GET /api/sessions/:uuid/transcript`, so the web pane, the
+TUI and `orchestron session tail` all agree. It applies to headless sessions
+only; a tmux transcript is passed through untouched.
+
+An assistant message that merely *looks* like JSON is left alone. Only an
+object whose keys are exactly `summary` and `inquiry` counts as ours — an
+agent legitimately asked to answer in JSON keeps its answer.
+
+Before this was in place (Phase 2 as first shipped), a headless session
+rendered the enforcement chatter and a raw `{"summary": …, "inquiry": null}`
+block instead of its answer. If you turned `headlessStructuredOutput` off to
+work around that, it is safe to turn back on.
+
 To turn it off, set `headlessStructuredOutput` to `false` in
 `~/.orchestron/config.json` and restart the API:
 

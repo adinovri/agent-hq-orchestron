@@ -214,7 +214,10 @@ form. The cost is that a turn's `finalResponse` becomes the model's
 *summary* of its answer rather than the answer's prose (the full text is
 still in the transcript). Set it to `false` if a workflow reads
 `finalResponse` as the deliverable; headless then loses the ability to
-raise a question. Config-file only, read at boot. See
+raise a question. The schema itself is invisible to the reader — it is
+requested through a CLI flag, and each harness's book-keeping is stripped
+out of the transcript before any client sees it, so leaving this on costs
+nothing in the UI. Config-file only, read at boot. See
 [USAGE.md § How a headless agent asks you a question](USAGE.md#how-a-headless-agent-asks-you-a-question).
 
 **Idle sweeper (`idleTimeoutMs`)**: default 900000 (15 min). Sessions in
