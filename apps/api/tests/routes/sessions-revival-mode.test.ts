@@ -10,7 +10,7 @@ import { ProjectRegistry } from '../../src/domain/project-registry.js'
 import { DelegationTracker } from '../../src/domain/delegation-tracker.js'
 import { HookRunner } from '../../src/domain/hook-runner.js'
 import { TemplateResolver } from '../../src/domain/template-resolver.js'
-import { HEADLESS_DISABLED_ERROR } from '@agent-hq-orchestron/shared'
+import { HEADLESS_COERCED_REASON } from '@agent-hq-orchestron/shared'
 import type { AgentAdapter, TmuxHandle } from '@agent-hq-orchestron/shared'
 
 /**
@@ -203,43 +203,84 @@ describe('POST /api/sessions/:uuid/clone — useTmux', () => {
   })
 })
 
-describe('the kill switch still applies to the revival routes', () => {
-  it('refuses an explicit useTmux:false on each of them', async () => {
+describe('the kill switch masks the revival routes', () => {
+  const COERCED = { useTmux: true, reason: HEADLESS_COERCED_REASON }
+
+  it('coerces an explicit useTmux:false on each of them and says so', async () => {
+    // Masking, not guarding: nothing 400s, the action succeeds in tmux, and
+    // the response carries `coerced` so the UI can raise the notice. The web
+    // dialog hides the checkbox entirely while the switch is off, so a
+    // caller still sending `false` is a script or an older client.
     harness = await makeApp(false)
-    const id = await harness.seed(true)
     for (const route of ['reopen', 'respawn', 'clone']) {
+      // A fresh terminal session per route — reopen and respawn both revive
+      // the one they are given, so a shared session would be non-terminal
+      // by the second iteration.
+      const id = await harness.seed(true)
       const res = await harness.app.inject({
         method: 'POST', url: `/api/sessions/${id}/${route}`, payload: { useTmux: false },
       })
-      expect(res.statusCode, route).toBe(400)
-      expect(res.json().error, route).toBe(HEADLESS_DISABLED_ERROR)
+      expect([200, 201], route).toContain(res.statusCode)
+      expect(res.json().useTmux, route).toBe(true)
+      expect(res.json().coerced, route).toEqual(COERCED)
     }
   })
 
-  it('still allows moving a session back TO tmux while the switch is off', async () => {
-    // Unwinding must stay possible, or a headless session spawned before the
-    // switch was flipped has no way home. Seeding needs a flag-ON server —
-    // with the switch off the spawn itself would be refused — so this is the
-    // real-world sequence: session created, operator then flips the switch.
+  it('coerces a headless session that asked for nothing at all', async () => {
+    // The record itself is what would have produced headless here, so an
+    // untouched dialog coerces exactly as much as an unticked box does.
     const before = await makeApp(true)
     const id = await before.seed(false)
     await before.app.close()
 
-    // Same dataDir, so the flag-off server sees the same records.
+    harness = await makeApp(false)
+    const res = await harness.app.inject({
+      method: 'POST', url: `/api/sessions/${id}/reopen`, payload: {},
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().useTmux).toBe(true)
+    expect(res.json().coerced).toEqual(COERCED)
+  })
+
+  it('asking for tmux explicitly is not reported as a coercion', async () => {
+    // `coerced` is the toast trigger, so it must fire only when the user got
+    // something other than what they asked for. Someone who ticked the box
+    // got exactly what they picked.
+    const before = await makeApp(true)
+    const id = await before.seed(false)
+    await before.app.close()
+
     harness = await makeApp(false)
     const res = await harness.app.inject({
       method: 'POST', url: `/api/sessions/${id}/reopen`, payload: { useTmux: true },
     })
     expect(res.statusCode).toBe(200)
     expect(res.json().useTmux).toBe(true)
+    expect(res.json().coerced).toBeUndefined()
   })
 
-  it('leaves a request with no useTmux alone', async () => {
+  it('leaves a tmux session with no override completely alone', async () => {
     harness = await makeApp(false)
     const id = await harness.seed(true)
     const res = await harness.app.inject({
       method: 'POST', url: `/api/sessions/${id}/respawn`, payload: {},
     })
     expect(res.statusCode).toBe(200)
+    expect(res.json().coerced).toBeUndefined()
+  })
+
+  it('does not rewrite the stored preference of a session it did not touch', async () => {
+    // Flipping the switch back on has to restore each session to the mode it
+    // actually asked for, so a coercion must not persist as a new preference
+    // anywhere the action did not already rewrite the record. Reopen-to-tmux
+    // does rewrite it (the session really is tmux now); a plain GET of an
+    // untouched headless session must still say headless.
+    const before = await makeApp(true)
+    const id = await before.seed(false)
+    await before.app.close()
+
+    harness = await makeApp(false)
+    const res = await harness.app.inject({ method: 'GET', url: `/api/sessions/${id}` })
+    expect(res.json().useTmux).toBe(false)
   })
 })

@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from 'fastify'
+import type { FastifyInstance } from 'fastify'
 import fp from 'fastify-plugin'
 import multipart from '@fastify/multipart'
 import { z } from 'zod'
@@ -11,8 +11,9 @@ import { existsSync } from 'node:fs'
 import {
   SpawnSessionBodySchema,
   DEFAULT_ENABLE_HEADLESS_MODE,
-  HEADLESS_DISABLED_ERROR,
-  HEADLESS_DISABLED_HINT,
+  HEADLESS_COERCED_REASON,
+  applyHeadlessSwitch,
+  headlessCoercion,
 } from '@agent-hq-orchestron/shared'
 import { resolveClaudeTranscriptPath } from '../adapters/claude.js'
 import { SessionManager } from '../domain/session-manager.js'
@@ -486,24 +487,26 @@ export function sessionsPlugin(
       }
       const agentType = project.agentType
 
-      // Global headless kill switch. Two distinct cases, deliberately
-      // handled differently:
-      //   * the caller explicitly asked for headless  → 400, because
-      //     silently running it in tmux would be a lie about what was
-      //     spawned;
-      //   * only the *project default* is headless    → coerce to tmux,
-      //     because 400-ing here would brick every spawn in that project
-      //     the moment an operator flips the switch — the opposite of
-      //     what an emergency kill switch is for.
-      let effectiveUseTmux = body.data.useTmux ?? project.defaultUseTmux
-      if (!headlessEnabled && effectiveUseTmux === false) {
-        if (body.data.useTmux === false) {
-          return reply.code(400).send({
-            error: HEADLESS_DISABLED_ERROR,
-            hint: HEADLESS_DISABLED_HINT,
-          })
-        }
-        effectiveUseTmux = true
+      // Global headless kill switch, masking flavour: with it off, every
+      // headless request — whether the caller typed `useTmux: false` or
+      // only the project default is headless — quietly becomes tmux and
+      // the spawn succeeds. Rejecting instead would brick every spawn in
+      // a headless project the moment an operator flips the switch, which
+      // is the opposite of what an emergency kill switch is for; and the
+      // UI hides the toggle while the switch is off, so a caller who still
+      // sends `false` is a script or an older client, not someone staring
+      // at a checkbox.
+      const requestedUseTmux = body.data.useTmux ?? project.defaultUseTmux
+      const { useTmux: effectiveUseTmux, coerced: useTmuxCoerced } =
+        applyHeadlessSwitch(requestedUseTmux, headlessEnabled)
+      if (useTmuxCoerced) {
+        // info, not warn: this is the switch working as configured, but it
+        // still has to be greppable when someone asks why their headless
+        // spawn came up in tmux.
+        req.log.info(
+          { projectId, requestedUseTmux, effectiveUseTmux },
+          `coerced useTmux=false to true (${HEADLESS_COERCED_REASON})`,
+        )
       }
 
       const session = await manager.spawn({
@@ -533,7 +536,12 @@ export function sessionsPlugin(
       // Async post-spawn notification
       hookRunner.fire('post-transcript-chunk', { event: 'post-transcript-chunk', sessionUuid: session.id }).catch(() => {})
 
-      return reply.code(201).send(session)
+      // `coerced` rides along only when something actually was coerced, so
+      // the client can treat its presence as "raise the notice" without
+      // inspecting values. Additive to the session body — clients that
+      // ignore it keep working.
+      const coerced = headlessCoercion(useTmuxCoerced)
+      return reply.code(201).send(coerced ? { ...session, coerced } : session)
     })
 
     app.get('/api/sessions', async (req) => {
@@ -840,23 +848,33 @@ export function sessionsPlugin(
         useTmux: z.boolean().optional(),
       }).safeParse(req.body ?? {})
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
-      // Same kill switch as spawn. Only an explicit flip *to* headless is
-      // refused — patches that leave useTmux alone, or move a session back
-      // to tmux, stay legal so an operator can unwind existing records
-      // while the switch is off.
-      if (!headlessEnabled && body.data.useTmux === false) {
-        return reply.code(400).send({
-          error: HEADLESS_DISABLED_ERROR,
-          hint: HEADLESS_DISABLED_HINT,
-        })
+      // Same masking rule as spawn. A patch that leaves useTmux alone stays
+      // untouched (applyHeadlessSwitch only reports a coercion for an
+      // explicit `false`), so editing model or effort while the switch is
+      // off does not quietly rewrite the mode field. An explicit flip *to*
+      // headless is saved as tmux instead of refused, and a flip back to
+      // tmux was always legal.
+      let patchUseTmux = body.data.useTmux
+      let patchCoerced = false
+      if (patchUseTmux !== undefined) {
+        const applied = applyHeadlessSwitch(patchUseTmux, headlessEnabled)
+        patchCoerced = applied.coerced
+        patchUseTmux = applied.useTmux
+        if (patchCoerced) {
+          req.log.info(
+            { sessionUuid: uuid, requestedUseTmux: false, effectiveUseTmux: true },
+            `coerced useTmux=false to true (${HEADLESS_COERCED_REASON})`,
+          )
+        }
       }
       try {
         const updated = await manager.updateMetadata(uuid, {
           model: body.data.model,
           effort: body.data.effort as import('@agent-hq-orchestron/shared').EffortLevel | '' | undefined,
-          useTmux: body.data.useTmux,
+          useTmux: patchUseTmux,
         })
-        return updated
+        const coerced = headlessCoercion(patchCoerced)
+        return coerced ? { ...updated, coerced } : updated
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''
         if (msg.includes('not found')) return reply.code(404).send({ error: msg })
@@ -955,28 +973,56 @@ export function sessionsPlugin(
       useTmux: z.boolean().optional(),
     })
 
-    /** The same kill-switch rule the spawn route applies: an explicit request
-     *  for headless while the global switch is off is a 400, because quietly
-     *  running it in tmux would be a lie about what the button did. Moving a
-     *  session back TO tmux stays legal so records can be unwound while the
-     *  switch is off. Returns a reply when it refused, else null. */
-    function refuseHeadlessIfDisabled(useTmux: boolean | undefined, reply: FastifyReply) {
-      if (headlessEnabled || useTmux !== false) return null
-      return reply.code(400).send({
-        error: HEADLESS_DISABLED_ERROR,
-        hint: HEADLESS_DISABLED_HINT,
-      })
+    /**
+     * The kill switch as it applies to a revival action, in the same masking
+     * flavour the spawn and patch routes use: nothing is rejected, a headless
+     * outcome is quietly turned into tmux, and the caller is told it happened
+     * so the UI can raise the notice.
+     *
+     * Takes both the body's override and the record's own mode, because
+     * either can be the thing that would have produced headless — an
+     * untouched dialog on a headless session coerces just as much as an
+     * explicitly unticked box does.
+     *
+     * Returns the value to hand the manager: `true` when coerced (an explicit
+     * override, because the point is to force tmux) and otherwise the body's
+     * value UNCHANGED, including `undefined`. That last part matters —
+     * `undefined` means "keep the session's mode" downstream, and collapsing
+     * it to a boolean here would turn every untouched checkbox into a
+     * deliberate mode change.
+     */
+    function revivalMode(
+      requested: boolean | undefined,
+      existingUseTmux: boolean | undefined,
+      req: { log: { info: (o: unknown, m: string) => void } },
+      uuid: string,
+      action: string,
+    ): { useTmux: boolean | undefined; coerced: boolean } {
+      const { coerced } = applyHeadlessSwitch(requested ?? existingUseTmux, headlessEnabled)
+      if (coerced) {
+        req.log.info(
+          { sessionUuid: uuid, action, requestedUseTmux: false, effectiveUseTmux: true },
+          `coerced useTmux=false to true (${HEADLESS_COERCED_REASON})`,
+        )
+      }
+      return { useTmux: coerced ? true : requested, coerced }
     }
 
-    // Reopen a terminal session — same UUID + same Claude session, fresh tmux.
-    // Session comes back to `idle` after Claude TUI boots with --resume.
-    // Body { model?, effort? } lets the user override for this reopen.
+    // Reopen a terminal session — same UUID + same harness session, revived
+    // in whichever mode the caller picks. Body { model?, effort?, useTmux? }.
+    //
+    // This IS a coerce site for enableHeadlessMode now. The earlier reasoning
+    // for exempting it was that reopening a headless record was refused
+    // outright, on the theory that cross-mode resume might not work for
+    // codex — measured since on codex-cli 0.153.4, where `exec` and the TUI
+    // both write the rollout JSONL and the thread_history SQLite, so a
+    // thread started either way resumes as the other. With the refusal gone
+    // there is no gate for a coercion to slip past, and reopen is just
+    // another place a session can end up headless.
     app.post('/api/sessions/:uuid/reopen', async (req, reply) => {
       const { uuid } = req.params as { uuid: string }
       const body = revivalBody.safeParse(req.body ?? {})
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
-      const refused = refuseHeadlessIfDisabled(body.data.useTmux, reply)
-      if (refused) return refused
 
       const sessions = await manager.list()
       const existing = sessions.find(s => s.id === uuid)
@@ -991,13 +1037,15 @@ export function sessionsPlugin(
       const configDir = project.agentType === 'codex'
         ? project.agentConfig?.env?.['CODEX_HOME']
         : project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
+      const mode = revivalMode(body.data.useTmux, existing.useTmux, req, uuid, 'reopen')
       try {
         const updated = await manager.reopen(
           uuid, project.path, configDir,
           project.defaultModel, project.defaultEffort,
-          { model: body.data.model, effort: body.data.effort, useTmux: body.data.useTmux },
+          { model: body.data.model, effort: body.data.effort, useTmux: mode.useTmux },
         )
-        return updated
+        const coerced = headlessCoercion(mode.coerced)
+        return coerced ? { ...updated, coerced } : updated
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''
         if (msg.includes('Cannot reopen')) return reply.code(409).send({ error: msg })
@@ -1014,8 +1062,6 @@ export function sessionsPlugin(
       const { uuid } = req.params as { uuid: string }
       const body = revivalBody.safeParse(req.body ?? {})
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
-      const refused = refuseHeadlessIfDisabled(body.data.useTmux, reply)
-      if (refused) return refused
 
       const sessions = await manager.list()
       const existing = sessions.find(s => s.id === uuid)
@@ -1030,15 +1076,23 @@ export function sessionsPlugin(
       const configDir = project.agentType === 'codex'
         ? project.agentConfig?.env?.['CODEX_HOME']
         : project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
+      // Respawn takes the dialog's mode, else inherits the record's own.
+      // With the switch off either of those becoming headless is coerced to
+      // tmux — this is where an existing headless record actually gets
+      // migrated out of headless. session-manager coerces again at the
+      // spawn boundary; the route's copy is what tells the UI it happened,
+      // and it reads the record before respawn rewrites it.
+      const mode = revivalMode(body.data.useTmux, existing.useTmux, req, uuid, 'respawn')
       try {
         // In-place respawn — returns the SAME session id, updated record.
         // 200 OK (not 201) since no new resource was created.
         const fresh = await manager.respawn(
           uuid, project.path, configDir,
           project.defaultModel, project.defaultEffort,
-          { model: body.data.model, effort: body.data.effort, useTmux: body.data.useTmux },
+          { model: body.data.model, effort: body.data.effort, useTmux: mode.useTmux },
         )
-        return fresh
+        const coerced = headlessCoercion(mode.coerced)
+        return coerced ? { ...fresh, coerced } : fresh
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''
         if (msg.includes('Cannot respawn')) return reply.code(409).send({ error: msg })
@@ -1054,8 +1108,6 @@ export function sessionsPlugin(
       const { uuid } = req.params as { uuid: string }
       const body = revivalBody.extend({ prompt: z.string().optional() }).safeParse(req.body ?? {})
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
-      const refused = refuseHeadlessIfDisabled(body.data.useTmux, reply)
-      if (refused) return refused
 
       const sessions = await manager.list()
       const existing = sessions.find(s => s.id === uuid)
@@ -1070,6 +1122,7 @@ export function sessionsPlugin(
       const configDir = project.agentType === 'codex'
         ? project.agentConfig?.env?.['CODEX_HOME']
         : project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
+      const mode = revivalMode(body.data.useTmux, existing.useTmux, req, uuid, 'fork')
 
       try {
         const cloned = await manager.clone(
@@ -1077,9 +1130,10 @@ export function sessionsPlugin(
           { workspace: project.path, configDir },
           body.data.prompt,
           project.defaultModel, project.defaultEffort,
-          { model: body.data.model, effort: body.data.effort, useTmux: body.data.useTmux },
+          { model: body.data.model, effort: body.data.effort, useTmux: mode.useTmux },
         )
-        return reply.code(201).send(cloned)
+        const coerced = headlessCoercion(mode.coerced)
+        return reply.code(201).send(coerced ? { ...cloned, coerced } : cloned)
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''
         if (msg.includes('Session pool is full')) return reply.code(429).send({ error: msg })

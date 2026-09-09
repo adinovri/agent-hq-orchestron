@@ -33,7 +33,8 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
   Reopen, Fork and Respawn each carry a *Use tmux* checkbox, so a session
   can cross between modes in either direction without losing context.
   `"enableHeadlessMode": false` in `~/.orchestron/config.json` is the
-  fleet-wide off switch. See
+  fleet-wide off switch — it hides the toggle and coerces headless
+  requests to tmux rather than failing them. See
   [Headless mode](docs/USAGE.md#headless-mode-no-tmux).
 - **Sleep on idle** — sessions unused for 15 min go to `sleeping`
   (tmux released, no resources held). Sending input auto-wakes them

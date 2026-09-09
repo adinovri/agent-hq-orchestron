@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import type { AgentType, EffortLevel } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
-import { useHeadlessEnabled, HEADLESS_DISABLED_TOOLTIP } from '@/lib/server-config'
+import { useHeadlessEnabled } from '@/lib/server-config'
 
 const KEEP: { value: ''; label: string } = { value: '', label: '— Default / keep' }
 
@@ -144,35 +144,36 @@ export function SessionActionDialog({
             </select>
           </div>
 
-          {/* Run mode. Same control as the spawn dialog, defaulted to this
-            * session's mode rather than the project's. */}
-          <div>
-            <label
-              className={headlessEnabled ? 'flex items-start gap-2 cursor-pointer' : 'flex items-start gap-2 cursor-not-allowed'}
-              title={headlessEnabled ? undefined : HEADLESS_DISABLED_TOOLTIP}
-            >
-              <input
-                type="checkbox"
-                checked={headlessEnabled ? useTmux : true}
-                disabled={pending || !headlessEnabled}
-                onChange={(e) => setUseTmux(e.target.checked)}
-                className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600 disabled:opacity-60"
-              />
-              <span>
-                <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
-                <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
-                  {!headlessEnabled
-                    ? HEADLESS_DISABLED_TOOLTIP
-                    : meta.modeHint(useTmux, agentType === 'codex' ? 'codex exec' : 'claude -p')}
-                  {headlessEnabled && useTmux !== sessionUseTmux && (
-                    <span className="block italic">
-                      Switches this session from {sessionUseTmux ? 'tmux to headless' : 'headless to tmux'}.
-                    </span>
-                  )}
+          {/* Run mode. Same control as the spawn dialog, and hidden on the
+            * same rule: with headless disabled globally there is one mode
+            * left, and the session comes back in tmux whatever this said.
+            * The server raises a toast when that coercion happens, so the
+            * outcome is still announced — just not pre-announced by a
+            * control offering a choice with no consequence. */}
+          {headlessEnabled && (
+            <div>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useTmux}
+                  disabled={pending}
+                  onChange={(e) => setUseTmux(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600 disabled:opacity-60"
+                />
+                <span>
+                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
+                  <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
+                    {meta.modeHint(useTmux, agentType === 'codex' ? 'codex exec' : 'claude -p')}
+                    {useTmux !== sessionUseTmux && (
+                      <span className="block italic">
+                        Switches this session from {sessionUseTmux ? 'tmux to headless' : 'headless to tmux'}.
+                      </span>
+                    )}
+                  </span>
                 </span>
-              </span>
-            </label>
-          </div>
+              </label>
+            </div>
+          )}
 
           {meta.showPrompt && (
             <div>
@@ -201,8 +202,8 @@ export function SessionActionDialog({
               // Send it only when it actually differs. Omitted means "keep
               // the session's mode" server-side, so an unchanged checkbox
               // must not look like a deliberate override — and while the
-              // global switch is off the box is display-forced to checked,
-              // which must not rewrite a headless record to tmux.
+              // switch is off the control is not rendered at all, so there
+              // is nothing to send and the server does the coercing.
               useTmux: headlessEnabled && useTmux !== sessionUseTmux ? useTmux : undefined,
             })}
             disabled={pending}

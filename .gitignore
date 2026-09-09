@@ -19,3 +19,4 @@ apps/web/public/swe-worker-*.js
 # handoff summaries, batch implementation scripts). Not production docs.
 scratchpad/
 scripts/*.md
+*.tsbuildinfo

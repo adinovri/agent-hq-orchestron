@@ -7,6 +7,8 @@ import { writeJson, readJson, listDir } from '@agent-hq-orchestron/file-store'
 import type { SessionMetadata, SessionStatus, SpawnConfig, TmuxHandle, HeadlessResult } from '@agent-hq-orchestron/shared'
 import {
   resolveUseTmux,
+  applyHeadlessSwitch,
+  HEADLESS_COERCED_REASON,
   parseHeadlessResultDocument,
   DEFAULT_HEADLESS_STRUCTURED_OUTPUT,
   ORCHESTRON_RESULT_SCHEMA_FILENAME,
@@ -451,6 +453,15 @@ export interface SessionManagerConfig {
    *  question. Defaults to on; see `headlessStructuredOutput` in the server
    *  config for why an operator might turn it off. Ignored for tmux. */
   headlessStructuredOutput?: boolean
+  /** Global headless kill switch, masking flavour. `false` coerces every
+   *  headless spawn decision back to tmux at the boundary where argv is
+   *  built — so a session record that still says `useTmux: false` runs in
+   *  tmux on its next spawn without the record being rewritten behind the
+   *  operator's back. Routes coerce too; this is the layer that catches
+   *  spawn paths which never see a request body (respawn, wake-from-sleep,
+   *  anything internal). Omitted means enabled, so existing callers and
+   *  every unit test keep the pre-flag behaviour. */
+  enableHeadlessMode?: boolean
 }
 
 export class SessionManager {
@@ -463,6 +474,7 @@ export class SessionManager {
   private readonly sharedMemoryDir: string
   private readonly sharedCodexMemoryDir: string
   private readonly headlessStructuredOutput: boolean
+  private readonly headlessEnabled: boolean
   // Optional — needed only for the wake-up path (sleeping → spawning). Kept
   // optional so unit tests don't have to construct a ProjectRegistry.
   private projectResolver: ((projectId: string) => Promise<{ path: string; defaultModel?: string; defaultEffort?: import('@agent-hq-orchestron/shared').EffortLevel }>) | null = null
@@ -496,6 +508,35 @@ export class SessionManager {
     this.sharedMemoryDir = config.sharedMemoryDir ?? ''
     this.sharedCodexMemoryDir = config.sharedCodexMemoryDir ?? ''
     this.headlessStructuredOutput = config.headlessStructuredOutput ?? DEFAULT_HEADLESS_STRUCTURED_OUTPUT
+    // Unset means enabled — see SessionManagerConfig.
+    this.headlessEnabled = config.enableHeadlessMode ?? true
+  }
+
+  /**
+   * Resolve the mode a spawn will actually run in, applying the global
+   * headless switch on the way.
+   *
+   * Every spawn path funnels through here instead of calling resolveUseTmux
+   * directly, so a path added later cannot forget the switch. Logs when it
+   * overrides, because "I set useTmux:false and got a tmux" needs to be
+   * answerable from the log alone.
+   *
+   * `context` names the caller (spawn / respawn / …) so the log line says
+   * which lifecycle action was masked.
+   */
+  private resolveUseTmuxMasked(
+    requested: boolean | undefined | null,
+    context: string,
+    sessionUuid?: string,
+  ): boolean {
+    const { useTmux, coerced } = applyHeadlessSwitch(requested ?? undefined, this.headlessEnabled)
+    if (coerced) {
+      console.info(
+        `[session-manager] ${context}${sessionUuid ? ` ${sessionUuid.slice(0, 8)}` : ''}: ` +
+        `coerced useTmux=false to true (${HEADLESS_COERCED_REASON})`,
+      )
+    }
+    return useTmux
   }
 
   /**
@@ -794,8 +835,10 @@ export class SessionManager {
       : spawnConfig.configDir
     // Resolve once, here, and persist the resolved boolean — downstream code
     // then never has to re-derive it from a project record that may since
-    // have been edited. `?? true` via resolveUseTmux.
-    const useTmux = resolveUseTmux(spawnConfig.useTmux)
+    // have been edited. `?? true` via resolveUseTmux, then the global
+    // headless switch on top (the route coerces too; this catches internal
+    // callers that never went through a request body).
+    const useTmux = this.resolveUseTmuxMasked(spawnConfig.useTmux, 'spawn', uuid)
     // Same-harness model check: project defaults might carry a Claude model
     // that Codex would reject at spawn. Drop the model if it looks like the
     // wrong family; adapter will fall back to its own default (gpt-6-astra
@@ -1944,8 +1987,14 @@ export class SessionManager {
     // Mode: the dialog's checkbox wins, else the session keeps its own.
     // A headless respawn is a real operation again now that the session
     // lands in `idle` and accepts follow-ups, so there is no reason to
-    // steer the user anywhere.
-    const useTmux = overrides?.useTmux ?? resolveUseTmux(session.useTmux)
+    // steer the user anywhere — unless the global headless switch is off,
+    // in which case resolveUseTmuxMasked is where an existing headless
+    // record gets migrated to tmux. The record's stored `useTmux` is
+    // overwritten with the resolved value below, which is the point:
+    // respawn genuinely re-spawns, so the session really is tmux now.
+    const useTmux = this.resolveUseTmuxMasked(
+      overrides?.useTmux ?? session.useTmux, 'respawn', uuid,
+    )
     const outputSchemaPath = await this.ensureOutputSchemaPath(useTmux)
 
     const handle = await adapter.spawn({
@@ -2225,8 +2274,12 @@ export class SessionManager {
     // by `-p` and interactive. Both directions round-trip with full context —
     // measured, not assumed; see scratchpad/headless-phase2-verification.md.
     //
-    // So no JSONL synthesis, no id rewriting: reopen just picks the mode.
-    const targetUseTmux = overrides?.useTmux ?? resolveUseTmux(session.useTmux)
+    // So no JSONL synthesis, no id rewriting: reopen just picks the mode —
+    // through the masked resolver, so the global switch reaches this path
+    // too and a reopen while it is off comes back in tmux either way.
+    const targetUseTmux = this.resolveUseTmuxMasked(
+      overrides?.useTmux ?? session.useTmux, 'reopen', uuid,
+    )
 
     // Refuse when the underlying transcript doesn't exist — happens when the
     // original spawn failed before the agent wrote its first turn.
@@ -2430,8 +2483,11 @@ export class SessionManager {
     // Fork inherits the source conversation by resuming it, so it picks a
     // mode the same way reopen does — and, like reopen, is no longer gated
     // on the source's mode now that cross-mode resume is verified on both
-    // harnesses. The fork's mode is the dialog's choice, else the source's.
-    const targetUseTmux = overrides?.useTmux ?? resolveUseTmux(original.useTmux)
+    // harnesses. The fork's mode is the dialog's choice, else the source's,
+    // masked by the global switch like every other spawn decision.
+    const targetUseTmux = this.resolveUseTmuxMasked(
+      overrides?.useTmux ?? original.useTmux, 'fork', uuid,
+    )
 
     // Refuse when the source has no transcript to fork from — harness-aware
     // (mirrors the reopen check).

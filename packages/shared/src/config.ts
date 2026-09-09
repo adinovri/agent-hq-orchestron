@@ -26,6 +26,11 @@ const RAM_PER_SUBPROCESS_MB = 800
  * `useTmux` toggles decide. Set `enableHeadlessMode: false` in
  * ~/.orchestron/config.json to disable headless fleet-wide without
  * touching a single session record.
+ *
+ * The switch *masks* rather than *guards*: with it off, a headless request
+ * is silently coerced to tmux and the spawn succeeds. Nothing 400s and no
+ * stored preference is rewritten, so flipping the switch back on restores
+ * every project and session to the mode it actually asked for.
  */
 export const DEFAULT_ENABLE_HEADLESS_MODE = true
 
@@ -54,11 +59,12 @@ export const ConfigSchema = z.object({
   /** Milliseconds a session may stay idle/needs_input before its tmux is
    *  released (transition to 'sleeping'). 0 disables the sweeper. */
   idleTimeoutMs: z.number().int().min(0).default(15 * 60 * 1000),
-  /** Global kill switch for headless mode. `false` makes the API refuse
-   *  every explicit `useTmux: false` request and coerces headless project
-   *  defaults back to tmux — an operator escape hatch for when a headless
-   *  bug is loose in production. Default `true`: the per-session and
-   *  per-project toggles behave exactly as they did before this flag. */
+  /** Global kill switch for headless mode. `false` coerces every headless
+   *  request — explicit `useTmux: false`, a headless project default, a
+   *  headless session record — back to tmux, and hides the toggle in the
+   *  UI. An operator escape hatch for when a headless bug is loose in
+   *  production. Default `true`: the per-session and per-project toggles
+   *  behave exactly as they did before this flag. */
   enableHeadlessMode: z.boolean().default(DEFAULT_ENABLE_HEADLESS_MODE),
   /** Whether headless runs are given the structured-output schema that
    *  carries the `inquiry` field. `true` (default) is what lets a headless
@@ -110,12 +116,58 @@ export function isHeadless(
   return !resolveUseTmux(sessionOrSpawn, projectDefault)
 }
 
-/** Body the API returns when a caller explicitly asks for headless while
- *  the global switch is off. Exported so route, tests and docs cannot
- *  drift from each other. */
-export const HEADLESS_DISABLED_ERROR = 'headless mode disabled globally'
-export const HEADLESS_DISABLED_HINT =
-  'set enableHeadlessMode: true in ~/.orchestron/config.json'
+/**
+ * Machine-readable reason attached to a coerced response and logged
+ * alongside it. Exported so route, session-manager and tests cannot drift
+ * from each other.
+ *
+ * This is a wire value, not display copy — nobody is shown this string.
+ * The toast wording lives in `apps/web/lib/notice.ts` with the rest of the
+ * app's UI copy, because importing a runtime value from this module into a
+ * client component pulls `node:fs` (via loadConfig below) into the browser
+ * bundle.
+ */
+export const HEADLESS_COERCED_REASON = 'headless disabled globally'
+
+/**
+ * Advertised on a mutation response whose `useTmux` the server changed on
+ * the caller's behalf. Absent when nothing was coerced, so a client can
+ * treat presence alone as "show the notice".
+ *
+ * `useTmux` is always `true` — tmux is the only direction this switch
+ * coerces — but it is spelled out rather than implied so the payload reads
+ * the same as the field it is talking about.
+ */
+export interface HeadlessCoercion {
+  useTmux: true
+  reason: typeof HEADLESS_COERCED_REASON
+}
+
+/** The coercion payload, or `undefined` when nothing needed coercing.
+ *  Single constructor so every route emits an identical shape. */
+export function headlessCoercion(coerced: boolean): HeadlessCoercion | undefined {
+  return coerced ? { useTmux: true, reason: HEADLESS_COERCED_REASON } : undefined
+}
+
+/**
+ * The masking rule itself, in one place.
+ *
+ * Takes the mode a caller (or a stored record) asked for and the state of
+ * the global switch, and returns the mode that will actually run plus
+ * whether that involved overriding the request.
+ *
+ * `requested` is deliberately `boolean | undefined`: `undefined` means
+ * "nobody expressed a preference", which resolves to tmux and is *not* a
+ * coercion — only an explicit `false` that got turned into `true` counts,
+ * because that is the only case worth telling the operator about.
+ */
+export function applyHeadlessSwitch(
+  requested: boolean | undefined,
+  headlessEnabled: boolean,
+): { useTmux: boolean; coerced: boolean } {
+  if (headlessEnabled) return { useTmux: resolveUseTmux(requested), coerced: false }
+  return { useTmux: true, coerced: requested === false }
+}
 
 export function isLoopback(host: string): boolean {
   return LOOPBACK_HOSTS.has(host)

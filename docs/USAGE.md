@@ -539,29 +539,82 @@ see [DEPLOY.md](DEPLOY.md#option-b-config-file) for the restart command
 on your host). It defaults to `true`; omit the field entirely and
 headless behaves exactly as documented above.
 
+The switch **masks** rather than blocks. Nothing returns an error: a
+headless request is quietly run as tmux, and the response says so. The
+UI removes the choice instead of showing one it cannot honour.
+
 With the switch off:
 
 | Action | Result |
 |---|---|
-| Spawn with **Use tmux** unticked | `400 {"error": "headless mode disabled globally", "hint": "set enableHeadlessMode: true in ~/.orchestron/config.json"}` |
-| Spawn in a project whose default is headless | runs in **tmux**, no error — a 400 there would brick every spawn in that project |
-| Pencil → untick **Use tmux** | same `400` |
-| Reopen / Fork / Respawn with **Use tmux** unticked | same `400` |
-| Pencil, or any revival dialog, → tick **Use tmux** on a headless session | allowed, so records can be unwound while the switch is off |
-| Already-running headless session | keeps running; the switch only gates new turns and spawns |
+| Spawn with `useTmux: false` | runs in **tmux**, `201` — response carries `coerced` |
+| Spawn in a project whose default is headless | runs in **tmux**, `201` — response carries `coerced` |
+| `PATCH /api/sessions/:uuid` with `useTmux: false` | saved as **tmux**, `200` — response carries `coerced` |
+| `PATCH` with `useTmux: true` on a headless record | allowed, so records can be unwound while the switch is off |
+| `PATCH` of model or effort only | mode field untouched — a headless record stays headless on disk |
+| **Reopen** / **Fork** / **Respawn** with **Use tmux** unticked | comes back in **tmux** — response carries `coerced` |
+| **Reopen** / **Fork** / **Respawn** with no mode given | comes back in **tmux** whatever the record says |
+| Already-running headless session | keeps running; a live process cannot be converted mid-flight |
+| A headless session's next turn | runs in **tmux**? No — a turn resumes an existing conversation rather than spawning, so it stays headless until the session is respawned or reopened |
 
-In the web UI the **Use tmux** checkbox renders checked and disabled in
-the spawn dialog, the project dialog, the session pencil and the
-Reopen / Fork / Respawn dialog, with
-*"Headless disabled globally. Enable via ~/.orchestron/config.json"* as
-its tooltip. Settings → Server Info shows the current state.
+Every coercion also logs at info level on the API, with the requested and
+effective values, so "I asked for headless and got tmux" is answerable
+from the log alone.
 
-Only the *display* is forced in the project and session dialogs — a
-project or session whose stored preference is headless keeps that value
-on record and picks it up again when the flag is turned back on. The
-**Headless** badge on session cards and headers is likewise untouched:
-sessions spawned before the switch went off still show what they
-actually are.
+##### The `coerced` field
+
+A mutation the server overrode returns an extra field alongside the
+session:
+
+```json
+{
+  "id": "…",
+  "useTmux": true,
+  "coerced": { "useTmux": true, "reason": "headless disabled globally" }
+}
+```
+
+It is **absent** when nothing was coerced, so a client can treat its
+presence as the whole signal. The web UI raises a toast on it —
+*"Headless mode is disabled globally — this session runs in tmux."* —
+which is what keeps the masking from being silent. Spawning an ordinary
+tmux session while the switch is off returns no `coerced` field and no
+toast.
+
+##### In the web UI
+
+The **Use tmux** checkbox is **hidden entirely** in the spawn dialog, the
+project dialog, the session pencil and the Reopen / Fork / Respawn dialog.
+With headless unavailable there is one mode left and nothing to choose, so
+a checked-and-disabled box would only invite the question. Settings → Server Info shows the current state
+and, when off, notes that existing headless sessions get coerced on their
+next spawn.
+
+Nothing rewrites a stored preference. A project whose `defaultUseTmux` is
+`false`, or a session record whose `useTmux` is `false`, keeps that value
+on disk and picks it up again when the flag is turned back on — so
+editing a project's model during an outage does not silently convert it
+to tmux. The exceptions are the actions that genuinely relaunch the
+session — **Respawn**, and **Reopen** into tmux — because the record each
+rewrites really is a tmux session afterwards.
+
+The **Headless** badge follows the same masking, split by liveness. A
+*live* headless session keeps its badge — including one resting in `idle`
+between turns, since its next turn really will be headless and the user
+needs to know why there is no TUI to attach to. Once the session reaches a
+terminal state (`succeeded` / `failed` / `killed`) the badge comes off,
+because it would otherwise describe a mode the user can no longer pick,
+sitting next to Reopen and Respawn buttons that will not produce it. With
+the switch on, the badge always shows.
+
+##### Reopen and Fork coerce too
+
+They used to be exempt, because reopening a headless record was refused
+outright and a coercion would have slipped past that gate without making
+the resume any safer. The refusal is gone — cross-mode resume is verified
+on both harnesses now — so there is nothing left to slip past, and both
+are ordinary places a session could end up headless. With the switch off
+they come back in tmux and say so, like every other coerce site.
 
 **What is different.** Headless is not a cheaper tmux — it is a different
 shape of session:

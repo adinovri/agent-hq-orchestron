@@ -71,6 +71,10 @@ const sessionManager = new SessionManager({
   // still ask the user something. Off means headless keeps its Phase 1
   // behaviour: prose in finalResponse, and no way to raise a question.
   headlessStructuredOutput: config.headlessStructuredOutput,
+  // Global headless kill switch. The routes coerce request bodies; this
+  // makes the manager itself coerce at the spawn boundary, which is what
+  // catches respawn and any other path that never sees a body.
+  enableHeadlessMode: config.enableHeadlessMode,
   // Every claude spawn/reopen/clone/respawn ensures the per-workspace
   // memory dir is a symlink to this shared pool. Matches the manual layout
   // Adi already uses for CLI sessions. Set env ORCHESTRON_SHARED_MEMORY_DIR=''
@@ -233,9 +237,9 @@ fastify.get('/api/health/detail', async () => {
     // include uid so the launchctl gui/<uid> selector is exact per host.
     platform: process.platform,
     uid: typeof process.getuid === 'function' ? process.getuid() : null,
-    // Global headless kill switch. The web dialogs read this to lock the
-    // "Use tmux" checkbox instead of letting the user submit something the
-    // API is going to 400.
+    // Global headless kill switch. The web dialogs read this to hide the
+    // "Use tmux" checkbox entirely — with the switch off there is no choice
+    // left to present, so showing a disabled control would just be noise.
     enableHeadlessMode: config.enableHeadlessMode,
     headlessStructuredOutput: config.headlessStructuredOutput,
   }

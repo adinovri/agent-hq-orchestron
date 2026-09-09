@@ -14,6 +14,7 @@ import { InquiryCard } from '@/components/InquiryCard'
 import { DeleteRecordDialog } from '@/components/DeleteRecordDialog'
 import { SessionMetadataEditDialog } from '@/components/SessionMetadataEditDialog'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
+import { noticeIfCoerced } from '@/lib/notice'
 import type { SessionMetadata, DelegationEdges, ProjectMetadata } from '@agent-hq-orchestron/shared'
 
 interface PageProps {
@@ -112,13 +113,19 @@ export default function SessionDetailPage({ params }: PageProps) {
   const [actionDialog, setActionDialog] = useState<SessionActionKind | null>(null)
 
   const reopenMutation = useMutation({
-    mutationFn: (opts: { model?: string; effort?: EffortLevel; useTmux?: boolean } = {}) =>
-      apiFetch(`/api/sessions/${uuid}/reopen`, {
+    mutationFn: async (opts: { model?: string; effort?: EffortLevel; useTmux?: boolean } = {}) => {
+      const res = await apiFetch(`/api/sessions/${uuid}/reopen`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(opts),
-      }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      return res.json() as Promise<SessionMetadata>
+    },
     onMutate: () => setReopening(true),
+    // Reopening a headless session while the switch is off brings it back in
+    // tmux — worth saying, since the dialog did not offer the choice.
+    onSuccess: (data) => noticeIfCoerced(data),
     onSettled: () => {
       setReopening(false)
       qc.invalidateQueries({ queryKey: ['session', uuid] })
@@ -138,6 +145,7 @@ export default function SessionDetailPage({ params }: PageProps) {
     },
     onMutate: () => setCloning(true),
     onSuccess: (data) => {
+      noticeIfCoerced(data)
       qc.invalidateQueries({ queryKey: ['sessions'] })
       // Navigate to the new session
       router.push(`/session/${data.id}`)
@@ -155,7 +163,10 @@ export default function SessionDetailPage({ params }: PageProps) {
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
       return res.json() as Promise<SessionMetadata>
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // Saved as tmux when the global headless switch is off — say so
+      // rather than letting the record silently disagree with the request.
+      noticeIfCoerced(data)
       setEditMetaOpen(false)
       qc.invalidateQueries({ queryKey: ['session', uuid] })
       qc.invalidateQueries({ queryKey: ['sessions'] })
@@ -174,7 +185,11 @@ export default function SessionDetailPage({ params }: PageProps) {
       return res.json() as Promise<SessionMetadata>
     },
     onMutate: () => setRespawning(true),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      // Respawn is the lifecycle action that migrates a headless record to
+      // tmux while the switch is off, so it is the one most likely to
+      // surprise someone who set the session up headless.
+      noticeIfCoerced(data)
       // Respawn is now in-place — same session id, just refresh queries so
       // the header + transcript pick up the new claudeSessionUuid + status.
       qc.invalidateQueries({ queryKey: ['session', uuid] })

@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button'
 import { apiFetch, fetchJson } from '@/lib/fetcher'
 import { X, Paperclip, FileText, Image as ImageIcon, FileCode, File as FileIcon } from 'lucide-react'
 import { modelsFor, effortsFor, implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
-import { useHeadlessEnabled, HEADLESS_DISABLED_TOOLTIP } from '@/lib/server-config'
+import { useHeadlessEnabled } from '@/lib/server-config'
+import { noticeIfCoerced } from '@/lib/notice'
 
 interface AttachedFile {
   id: string
@@ -87,8 +88,9 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
   const headlessEnabled = useHeadlessEnabled()
   const projectDefaultUseTmux = currentProject?.defaultUseTmux ?? true
   // With the global switch off, tmux is the only reachable value — force it
-  // over both the user's override and a headless project default, so the
-  // checkbox never shows a state the API would 400.
+  // over both the user's override and a headless project default. The
+  // checkbox is hidden in that state, so this only feeds the helper text
+  // and (via the payload below) what gets submitted.
   const useTmux = headlessEnabled ? (useTmuxOverride ?? projectDefaultUseTmux) : true
   const [vars, setVars] = useState<Record<string, string>>({})
   const [attachments, setAttachments] = useState<AttachedFile[]>([])
@@ -178,7 +180,16 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
         // Send only when it differs from the project default, so the
         // project stays the single place to change the default later.
         // Must not use `||` anywhere near this — false is the payload.
-        useTmux: useTmux === projectDefaultUseTmux ? undefined : useTmux,
+        //
+        // With the switch off, send nothing at all rather than an explicit
+        // `true`. The project default may itself be headless, and letting
+        // the server do that coercion is what puts `coerced` on the
+        // response — which is how the user finds out the mode they had
+        // configured was overridden. Forcing `true` here would spawn the
+        // identical session and say nothing.
+        useTmux: !headlessEnabled || useTmux === projectDefaultUseTmux
+          ? undefined
+          : useTmux,
       }
       let res: Response
       if (attachments.length > 0) {
@@ -195,7 +206,9 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
         })
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
-      await res.json()
+      // The dialog closes right after this, so the notice has to be raised
+      // from the app-level toast stack rather than shown inline here.
+      noticeIfCoerced(await res.json())
       // Clear + close
       setPrompt('')
       setTemplate('')
@@ -373,35 +386,34 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
             </div>
           </div>
 
-          {/* Run mode */}
-          <div>
-            <label
-              className={headlessEnabled ? 'flex items-start gap-2 cursor-pointer' : 'flex items-start gap-2 cursor-not-allowed'}
-              title={headlessEnabled ? undefined : HEADLESS_DISABLED_TOOLTIP}
-            >
-              <input
-                type="checkbox"
-                checked={useTmux}
-                disabled={!headlessEnabled}
-                onChange={(e) => setUseTmuxOverride(e.target.checked)}
-                className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600 disabled:opacity-60"
-              />
-              <span>
-                <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
-                <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
-                  {useTmux
-                    ? 'Interactive session — live transcript, attach to the TUI, sleeps when idle.'
-                    : `Headless — each turn runs as its own ${selectedAgentType === 'codex' ? 'codex exec' : 'claude -p'} process, then the session waits in idle for the next one. Takes follow-up input; no live TUI and no sleeping.`}
-                  {headlessEnabled && useTmux !== projectDefaultUseTmux && (
-                    <span className="italic"> Overrides the project default.</span>
-                  )}
-                  {!headlessEnabled && (
-                    <span className="block italic">{HEADLESS_DISABLED_TOOLTIP}</span>
-                  )}
+          {/* Run mode. Hidden outright while the global switch is off — with
+              headless unavailable there is exactly one mode left, and a
+              checked-and-disabled box just asks the user to wonder what it
+              would have done. The surrounding stack is `space-y`, so the
+              row collapsing takes its gap with it. */}
+          {headlessEnabled && (
+            <div>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useTmux}
+                  onChange={(e) => setUseTmuxOverride(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600"
+                />
+                <span>
+                  <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
+                  <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
+                    {useTmux
+                      ? 'Interactive session — live transcript, attach to the TUI, sleeps when idle.'
+                      : `Headless — each turn runs as its own ${selectedAgentType === 'codex' ? 'codex exec' : 'claude -p'} process, then the session waits in idle for the next one. Takes follow-up input; no live TUI and no sleeping.`}
+                    {useTmux !== projectDefaultUseTmux && (
+                      <span className="italic"> Overrides the project default.</span>
+                    )}
+                  </span>
                 </span>
-              </span>
-            </label>
-          </div>
+              </label>
+            </div>
+          )}
 
           {/* Attachments */}
           <div

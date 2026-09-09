@@ -12,7 +12,7 @@ import {
 import { fetchJson } from '@/lib/fetcher'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
-import { useHeadlessEnabled, HEADLESS_DISABLED_TOOLTIP } from '@/lib/server-config'
+import { useHeadlessEnabled } from '@/lib/server-config'
 
 interface Props {
   open: boolean
@@ -255,41 +255,32 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
             </div>
           </div>
 
-          {/* While the global switch is off this renders checked because that
-              is what new sessions in this project will actually do — the
-              spawn route coerces a headless project default back to tmux.
-              The stored value is deliberately NOT rewritten on save, so the
-              operator's real preference survives and comes back when the
-              flag flips. */}
-          <div>
-            <label
-              className={headlessEnabled ? 'flex items-start gap-2 cursor-pointer' : 'flex items-start gap-2 cursor-not-allowed'}
-              title={headlessEnabled ? undefined : HEADLESS_DISABLED_TOOLTIP}
-            >
-              <input
-                type="checkbox"
-                checked={headlessEnabled ? form.defaultUseTmux : true}
-                disabled={!headlessEnabled}
-                onChange={(e) => set('defaultUseTmux', e.target.checked)}
-                className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600 disabled:opacity-60"
-              />
-              <span>
-                <span className="text-sm font-medium">Use tmux by default</span>
-                <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
-                  {!headlessEnabled
-                    ? HEADLESS_DISABLED_TOOLTIP
-                    : form.defaultUseTmux
+          {/* Hidden while the global switch is off — there is no default to
+              choose between when only one mode can run. `form.defaultUseTmux`
+              is left untouched rather than rewritten to `true`, so a project
+              configured for headless keeps that on record and gets it back
+              when the flag flips; saving model or path during an outage must
+              not quietly convert the project to tmux. */}
+          {headlessEnabled && (
+            <div>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.defaultUseTmux}
+                  onChange={(e) => set('defaultUseTmux', e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600"
+                />
+                <span>
+                  <span className="text-sm font-medium">Use tmux by default</span>
+                  <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
+                    {form.defaultUseTmux
                       ? 'New sessions run interactively in tmux. Individual spawns can still opt into headless.'
                       : `New sessions run headless — each turn its own ${form.agentType === 'codex' ? 'codex exec' : 'claude -p'} process — unless the spawn dialog says otherwise.`}
-                  {!headlessEnabled && !form.defaultUseTmux && (
-                    <span className="block italic">
-                      Saved preference for this project is headless — kept on record, re-applies when the flag is turned back on.
-                    </span>
-                  )}
+                  </span>
                 </span>
-              </span>
-            </label>
-          </div>
+              </label>
+            </div>
+          )}
 
           {/* Harness-specific config-dir env — only the one matching the
               selected agent type is shown. Values persist independently so
