@@ -5,7 +5,7 @@ import os from 'node:os'
 import Database from 'better-sqlite3'
 import { writeJson, readJson, listDir } from '@agent-hq-orchestron/file-store'
 import type { SessionMetadata, SessionStatus, SpawnConfig, TmuxHandle, HeadlessResult } from '@agent-hq-orchestron/shared'
-import { resolveUseTmux } from '@agent-hq-orchestron/shared'
+import { resolveUseTmux, applyHeadlessSwitch, HEADLESS_COERCED_REASON } from '@agent-hq-orchestron/shared'
 import type { AdapterRegistry } from '../adapters/registry.js'
 import { TranscriptTailer } from '../streaming/transcript-tailer.js'
 
@@ -435,6 +435,15 @@ export interface SessionManagerConfig {
     token: string
     mcpServerPath: string   // absolute path to dist/mcp-server.js
   }
+  /** Global headless kill switch, masking flavour. `false` coerces every
+   *  headless spawn decision back to tmux at the boundary where argv is
+   *  built — so a session record that still says `useTmux: false` runs in
+   *  tmux on its next spawn without the record being rewritten behind the
+   *  operator's back. Routes coerce too; this is the layer that catches
+   *  spawn paths which never see a request body (respawn, wake-from-sleep,
+   *  anything internal). Omitted means enabled, so existing callers and
+   *  every unit test keep the pre-flag behaviour. */
+  enableHeadlessMode?: boolean
 }
 
 export class SessionManager {
@@ -446,6 +455,7 @@ export class SessionManager {
   private readonly idleTimeoutMs: number
   private readonly sharedMemoryDir: string
   private readonly sharedCodexMemoryDir: string
+  private readonly headlessEnabled: boolean
   // Optional — needed only for the wake-up path (sleeping → spawning). Kept
   // optional so unit tests don't have to construct a ProjectRegistry.
   private projectResolver: ((projectId: string) => Promise<{ path: string; defaultModel?: string; defaultEffort?: import('@agent-hq-orchestron/shared').EffortLevel }>) | null = null
@@ -472,6 +482,35 @@ export class SessionManager {
     this.idleTimeoutMs = config.idleTimeoutMs ?? 15 * 60 * 1000
     this.sharedMemoryDir = config.sharedMemoryDir ?? ''
     this.sharedCodexMemoryDir = config.sharedCodexMemoryDir ?? ''
+    // Unset means enabled — see SessionManagerConfig.
+    this.headlessEnabled = config.enableHeadlessMode ?? true
+  }
+
+  /**
+   * Resolve the mode a spawn will actually run in, applying the global
+   * headless switch on the way.
+   *
+   * Every spawn path funnels through here instead of calling resolveUseTmux
+   * directly, so a path added later cannot forget the switch. Logs when it
+   * overrides, because "I set useTmux:false and got a tmux" needs to be
+   * answerable from the log alone.
+   *
+   * `context` names the caller (spawn / respawn / …) so the log line says
+   * which lifecycle action was masked.
+   */
+  private resolveUseTmuxMasked(
+    requested: boolean | undefined | null,
+    context: string,
+    sessionUuid?: string,
+  ): boolean {
+    const { useTmux, coerced } = applyHeadlessSwitch(requested ?? undefined, this.headlessEnabled)
+    if (coerced) {
+      console.info(
+        `[session-manager] ${context}${sessionUuid ? ` ${sessionUuid.slice(0, 8)}` : ''}: ` +
+        `coerced useTmux=false to true (${HEADLESS_COERCED_REASON})`,
+      )
+    }
+    return useTmux
   }
 
   /**
@@ -723,8 +762,10 @@ export class SessionManager {
       : spawnConfig.configDir
     // Resolve once, here, and persist the resolved boolean — downstream code
     // then never has to re-derive it from a project record that may since
-    // have been edited. `?? true` via resolveUseTmux.
-    const useTmux = resolveUseTmux(spawnConfig.useTmux)
+    // have been edited. `?? true` via resolveUseTmux, then the global
+    // headless switch on top (the route coerces too; this catches internal
+    // callers that never went through a request body).
+    const useTmux = this.resolveUseTmuxMasked(spawnConfig.useTmux, 'spawn', uuid)
     // Same-harness model check: project defaults might carry a Claude model
     // that Codex would reject at spawn. Drop the model if it looks like the
     // wrong family; adapter will fall back to its own default (gpt-6-astra
@@ -1598,8 +1639,12 @@ export class SessionManager {
     const effectiveModel = overrides?.model ?? session.model ?? fallbackModel
     const effectiveEffort = overrides?.effort ?? session.effort ?? fallbackEffort
     // Respawn keeps the session's own mode — a headless session respawns
-    // headless, a tmux session respawns into tmux.
-    const useTmux = resolveUseTmux(session.useTmux)
+    // headless, a tmux session respawns into tmux — unless the global
+    // headless switch is off, in which case this is where an existing
+    // headless record gets migrated to tmux. The record's stored `useTmux`
+    // is overwritten with the resolved value below, which is the point:
+    // respawn genuinely re-spawns, so the session really is tmux now.
+    const useTmux = this.resolveUseTmuxMasked(session.useTmux, 'respawn', uuid)
 
     const handle = await adapter.spawn({
       projectId: session.projectId,
