@@ -10,6 +10,7 @@ export interface CreateProjectInput {
   agentType?: ProjectMetadata['agentType']
   defaultModel?: ProjectMetadata['defaultModel']
   defaultEffort?: ProjectMetadata['defaultEffort']
+  defaultUseTmux?: ProjectMetadata['defaultUseTmux']
   group?: string | null
   tags?: string[]
   agentConfig?: ProjectMetadata['agentConfig']
@@ -64,6 +65,11 @@ export class ProjectRegistry {
       agentType: input.agentType ?? 'claude',
       defaultModel: input.defaultModel,
       defaultEffort: input.defaultEffort,
+      // Left undefined when unset rather than defaulted to true — an absent
+      // field already means tmux via resolveUseTmux, and storing an explicit
+      // default here would make a later change of the global default invisible
+      // to projects created before it.
+      defaultUseTmux: input.defaultUseTmux,
       group: input.group ?? null,
       tags: input.tags ?? [],
       agentConfig: input.agentConfig,
