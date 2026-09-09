@@ -140,6 +140,7 @@ scaffolds subdirs, not the config file itself):
   "maxConcurrent": 8,
   "logLevel": "info",
   "idleTimeoutMs": 900000,
+  "enableHeadlessMode": true,
   "remoteToken": "<48-char-hex>",
   "adapters": {
     "claude": true,
@@ -170,6 +171,7 @@ Schema (from `packages/shared/src/config.ts`):
 | `adapters.opencode` | bool | `false` | — |
 | `logLevel` | `error \| warn \| info \| debug` | `info` | `ORCHESTRON_LOG_LEVEL` |
 | `idleTimeoutMs` | int ≥ 0 | `900000` (15 min) | `ORCHESTRON_IDLE_TIMEOUT_MS` |
+| `enableHeadlessMode` | bool | `true` | — |
 
 Fields **not** in `config.json` (env-only): `ORCHESTRON_SHARED_MEMORY_DIR`,
 `ORCHESTRON_SHARED_CODEX_MEMORY_DIR` — set on the API service unit
@@ -184,6 +186,15 @@ released, wake on next `--resume`) and terminal states (`succeeded` /
 days used to trip the cap even with zero live tmux; that's fixed —
 sleeping is cheap, keep them around for reopen/adopt without worrying
 about pool pressure.
+
+**Headless kill switch (`enableHeadlessMode`)**: default `true`. Set it
+to `false` and the API refuses every explicit `useTmux: false` on
+`POST /api/sessions` and `PATCH /api/sessions/:uuid` with a `400`, and
+coerces headless *project defaults* back to tmux instead of failing the
+spawn. Running headless sessions are not touched — this gates new
+spawns only. Config-file only (no env override) and read at boot, so
+restart the API after changing it. See
+[USAGE.md § Headless mode](USAGE.md#headless-mode-no-tmux).
 
 **Idle sweeper (`idleTimeoutMs`)**: default 900000 (15 min). Sessions in
 `idle` or `needs_input` beyond this go to `sleeping` (tmux killed,

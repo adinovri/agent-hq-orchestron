@@ -461,6 +461,46 @@ The pencil is gated exactly like model and effort: editable only when
 the session is terminal or sleeping. The mode is baked into the process
 arguments at spawn, so it cannot change mid-flight.
 
+#### Disabling it globally
+
+All three toggles above sit under one server-side switch. Set
+`enableHeadlessMode` to `false` in `~/.orchestron/config.json` and no
+session can be spawned headless, whatever the project or spawn dialog
+says:
+
+```json
+{
+  "enableHeadlessMode": false
+}
+```
+
+Restart the API for it to take effect (the config is read once at boot —
+see [DEPLOY.md](DEPLOY.md#option-b-config-file) for the restart command
+on your host). It defaults to `true`; omit the field entirely and
+headless behaves exactly as documented above.
+
+With the switch off:
+
+| Action | Result |
+|---|---|
+| Spawn with **Use tmux** unticked | `400 {"error": "headless mode disabled globally", "hint": "set enableHeadlessMode: true in ~/.orchestron/config.json"}` |
+| Spawn in a project whose default is headless | runs in **tmux**, no error — a 400 there would brick every spawn in that project |
+| Pencil → untick **Use tmux** | same `400` |
+| Pencil → tick **Use tmux** on a headless session | allowed, so records can be unwound while the switch is off |
+| Already-running headless session | keeps running; the switch only gates new spawns |
+
+In the web UI the **Use tmux** checkbox renders checked and disabled in
+the spawn dialog, the project dialog and the session pencil, with
+*"Headless disabled globally. Enable via ~/.orchestron/config.json"* as
+its tooltip. Settings → Server Info shows the current state.
+
+Only the *display* is forced in the project and session dialogs — a
+project or session whose stored preference is headless keeps that value
+on record and picks it up again when the flag is turned back on. The
+**Headless** badge on session cards and headers is likewise untouched:
+sessions spawned before the switch went off still show what they
+actually are.
+
 **What you give up.** Headless is not a cheaper tmux — it is a different
 shape of session:
 

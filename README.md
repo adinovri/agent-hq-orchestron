@@ -27,7 +27,9 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
   project default) and the session runs as a one-shot `claude -p` /
   `codex exec` child process instead of an interactive TUI: no tmux, no
   live attach, no sleeping, no follow-up input. Good for batch, cron and
-  fire-and-forget work; tmux stays the default for everything else. See
+  fire-and-forget work; tmux stays the default for everything else.
+  `"enableHeadlessMode": false` in `~/.orchestron/config.json` is the
+  fleet-wide off switch. See
   [Headless mode](docs/USAGE.md#headless-mode-no-tmux).
 - **Sleep on idle** — sessions unused for 15 min go to `sleeping`
   (tmux released, no resources held). Sending input auto-wakes them
