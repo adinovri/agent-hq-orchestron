@@ -11,8 +11,9 @@ import { existsSync } from 'node:fs'
 import {
   SpawnSessionBodySchema,
   DEFAULT_ENABLE_HEADLESS_MODE,
-  HEADLESS_DISABLED_ERROR,
-  HEADLESS_DISABLED_HINT,
+  HEADLESS_COERCED_REASON,
+  applyHeadlessSwitch,
+  headlessCoercion,
 } from '@agent-hq-orchestron/shared'
 import { resolveClaudeTranscriptPath } from '../adapters/claude.js'
 import { SessionManager } from '../domain/session-manager.js'
@@ -486,24 +487,26 @@ export function sessionsPlugin(
       }
       const agentType = project.agentType
 
-      // Global headless kill switch. Two distinct cases, deliberately
-      // handled differently:
-      //   * the caller explicitly asked for headless  → 400, because
-      //     silently running it in tmux would be a lie about what was
-      //     spawned;
-      //   * only the *project default* is headless    → coerce to tmux,
-      //     because 400-ing here would brick every spawn in that project
-      //     the moment an operator flips the switch — the opposite of
-      //     what an emergency kill switch is for.
-      let effectiveUseTmux = body.data.useTmux ?? project.defaultUseTmux
-      if (!headlessEnabled && effectiveUseTmux === false) {
-        if (body.data.useTmux === false) {
-          return reply.code(400).send({
-            error: HEADLESS_DISABLED_ERROR,
-            hint: HEADLESS_DISABLED_HINT,
-          })
-        }
-        effectiveUseTmux = true
+      // Global headless kill switch, masking flavour: with it off, every
+      // headless request — whether the caller typed `useTmux: false` or
+      // only the project default is headless — quietly becomes tmux and
+      // the spawn succeeds. Rejecting instead would brick every spawn in
+      // a headless project the moment an operator flips the switch, which
+      // is the opposite of what an emergency kill switch is for; and the
+      // UI hides the toggle while the switch is off, so a caller who still
+      // sends `false` is a script or an older client, not someone staring
+      // at a checkbox.
+      const requestedUseTmux = body.data.useTmux ?? project.defaultUseTmux
+      const { useTmux: effectiveUseTmux, coerced: useTmuxCoerced } =
+        applyHeadlessSwitch(requestedUseTmux, headlessEnabled)
+      if (useTmuxCoerced) {
+        // info, not warn: this is the switch working as configured, but it
+        // still has to be greppable when someone asks why their headless
+        // spawn came up in tmux.
+        req.log.info(
+          { projectId, requestedUseTmux, effectiveUseTmux },
+          `coerced useTmux=false to true (${HEADLESS_COERCED_REASON})`,
+        )
       }
 
       const session = await manager.spawn({
@@ -533,7 +536,12 @@ export function sessionsPlugin(
       // Async post-spawn notification
       hookRunner.fire('post-transcript-chunk', { event: 'post-transcript-chunk', sessionUuid: session.id }).catch(() => {})
 
-      return reply.code(201).send(session)
+      // `coerced` rides along only when something actually was coerced, so
+      // the client can treat its presence as "raise the notice" without
+      // inspecting values. Additive to the session body — clients that
+      // ignore it keep working.
+      const coerced = headlessCoercion(useTmuxCoerced)
+      return reply.code(201).send(coerced ? { ...session, coerced } : session)
     })
 
     app.get('/api/sessions', async (req) => {
@@ -840,23 +848,33 @@ export function sessionsPlugin(
         useTmux: z.boolean().optional(),
       }).safeParse(req.body ?? {})
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
-      // Same kill switch as spawn. Only an explicit flip *to* headless is
-      // refused — patches that leave useTmux alone, or move a session back
-      // to tmux, stay legal so an operator can unwind existing records
-      // while the switch is off.
-      if (!headlessEnabled && body.data.useTmux === false) {
-        return reply.code(400).send({
-          error: HEADLESS_DISABLED_ERROR,
-          hint: HEADLESS_DISABLED_HINT,
-        })
+      // Same masking rule as spawn. A patch that leaves useTmux alone stays
+      // untouched (applyHeadlessSwitch only reports a coercion for an
+      // explicit `false`), so editing model or effort while the switch is
+      // off does not quietly rewrite the mode field. An explicit flip *to*
+      // headless is saved as tmux instead of refused, and a flip back to
+      // tmux was always legal.
+      let patchUseTmux = body.data.useTmux
+      let patchCoerced = false
+      if (patchUseTmux !== undefined) {
+        const applied = applyHeadlessSwitch(patchUseTmux, headlessEnabled)
+        patchCoerced = applied.coerced
+        patchUseTmux = applied.useTmux
+        if (patchCoerced) {
+          req.log.info(
+            { sessionUuid: uuid, requestedUseTmux: false, effectiveUseTmux: true },
+            `coerced useTmux=false to true (${HEADLESS_COERCED_REASON})`,
+          )
+        }
       }
       try {
         const updated = await manager.updateMetadata(uuid, {
           model: body.data.model,
           effort: body.data.effort as import('@agent-hq-orchestron/shared').EffortLevel | '' | undefined,
-          useTmux: body.data.useTmux,
+          useTmux: patchUseTmux,
         })
-        return updated
+        const coerced = headlessCoercion(patchCoerced)
+        return coerced ? { ...updated, coerced } : updated
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''
         if (msg.includes('not found')) return reply.code(404).send({ error: msg })
@@ -946,6 +964,16 @@ export function sessionsPlugin(
     // Reopen a terminal session — same UUID + same Claude session, fresh tmux.
     // Session comes back to `idle` after Claude TUI boots with --resume.
     // Body { model?, effort? } lets the user override for this reopen.
+    //
+    // Deliberately NOT a coerce site for enableHeadlessMode. Reopen resumes
+    // an *existing* conversation, and session-manager refuses that for a
+    // headless record because cross-mode resume is unverified for codex
+    // (exec writes a rollout file, the TUI reads thread_history SQLite).
+    // Coercing the mode flag here would slip past that gate without making
+    // the resume any safer — turning the safety switch off would unlock a
+    // riskier path, which is backwards. Respawn, which starts a fresh
+    // conversation from the same prompt, is the lifecycle action that
+    // migrates a headless record to tmux; the 409 already points there.
     app.post('/api/sessions/:uuid/reopen', async (req, reply) => {
       const { uuid } = req.params as { uuid: string }
       const body = z.object({
@@ -1007,6 +1035,18 @@ export function sessionsPlugin(
       const configDir = project.agentType === 'codex'
         ? project.agentConfig?.env?.['CODEX_HOME']
         : project.agentConfig?.env?.['CLAUDE_CONFIG_DIR']
+      // Respawn normally inherits the record's own mode. With the switch
+      // off, session-manager coerces that to tmux at the spawn boundary —
+      // this is where an existing headless record actually gets migrated
+      // out of headless. The route only needs to notice it happened so the
+      // UI can say so; the record is read before respawn rewrites it.
+      const respawnCoerced = !headlessEnabled && existing.useTmux === false
+      if (respawnCoerced) {
+        req.log.info(
+          { sessionUuid: uuid, requestedUseTmux: false, effectiveUseTmux: true },
+          `coerced useTmux=false to true (${HEADLESS_COERCED_REASON})`,
+        )
+      }
       try {
         // In-place respawn — returns the SAME session id, updated record.
         // 200 OK (not 201) since no new resource was created.
@@ -1015,7 +1055,8 @@ export function sessionsPlugin(
           project.defaultModel, project.defaultEffort,
           { model: body.data.model, effort: body.data.effort },
         )
-        return fresh
+        const coerced = headlessCoercion(respawnCoerced)
+        return coerced ? { ...fresh, coerced } : fresh
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''
         if (msg.includes('Cannot respawn')) return reply.code(409).send({ error: msg })
@@ -1027,6 +1068,9 @@ export function sessionsPlugin(
     // Clone/fork — new orchestron session, inherits the source's Claude
     // conversation via --resume. Optional { prompt } to seed the fork with
     // a new user turn (else just re-enters the shared context idle).
+    //
+    // Same cross-mode resume as reopen, so same reasoning: not a coerce
+    // site for enableHeadlessMode. See the note on the reopen route.
     app.post('/api/sessions/:uuid/clone', async (req, reply) => {
       const { uuid } = req.params as { uuid: string }
       const body = z.object({
