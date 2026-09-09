@@ -1302,6 +1302,12 @@ export function sessionsPlugin(
             transcriptFormat: 'codex-tui-sqlite',
             sourceUuid: harnessUuid,
             sourceWorkspace: project?.path ?? null,
+            // Travels with the bundle so an import on another host can
+            // restore the session in the mode it was running in. Advisory
+            // only — the importer may override it, and the transcript reads
+            // the same either way. `?? true` because a record predating the
+            // toggle has no field and was a tmux session.
+            useTmux: session.useTmux ?? true,
             exportedAt: new Date().toISOString(),
           }
           await writeFile(path.join(stage, 'metadata.json'), JSON.stringify(metadata, null, 2))
@@ -1341,6 +1347,12 @@ export function sessionsPlugin(
     // and rewrites the transcript content before persisting, then adopts.
     app.post('/api/sessions/import', async (req, reply) => {
       let projectIdField = ''
+      // Tri-state, like the revival routes but against the BUNDLE rather
+      // than a stored record: absent means "restore the mode the bundle
+      // recorded", which is not the same as `true`. Only a `.tar.gz` bundle
+      // carries that metadata; a raw `.jsonl` is the transcript and nothing
+      // else, so absent falls through to tmux there.
+      let useTmuxField: boolean | undefined
       let fileBuf: Buffer | null = null
       let fileName = ''
       let fileMime = ''
@@ -1354,6 +1366,15 @@ export function sessionsPlugin(
             fileBuf = await part.toBuffer()
           } else if (part.type === 'field' && part.fieldname === 'projectId') {
             projectIdField = String(part.value ?? '')
+          } else if (part.type === 'field' && part.fieldname === 'useTmux') {
+            // Multipart carries no types — everything is a string. Accept
+            // only the two spellings a form produces and reject the rest
+            // rather than letting `Boolean('false')` say true.
+            const raw = String(part.value ?? '').trim().toLowerCase()
+            if (raw !== 'true' && raw !== 'false') {
+              return reply.code(400).send({ error: `useTmux must be "true" or "false", got ${JSON.stringify(raw)}` })
+            }
+            useTmuxField = raw === 'true'
           }
         }
       } catch (err: unknown) {
@@ -1380,6 +1401,28 @@ export function sessionsPlugin(
         || fileName.endsWith('.tgz')
         || fileMime === 'application/gzip'
         || fileMime === 'application/x-gzip'
+
+      /**
+       * Settle the imported session's mode and run it through the global
+       * switch, in one place so the jsonl and tar.gz branches cannot drift.
+       *
+       * Precedence: the form field, then whatever the bundle recorded, then
+       * tmux. `bundleUseTmux` is only ever defined for a tar.gz — the raw
+       * jsonl format has nowhere to put it — so a jsonl import with an
+       * untouched checkbox lands in tmux, which is what it did before the
+       * field existed.
+       */
+      const resolveImportMode = (bundleUseTmux?: boolean) => {
+        const requested = useTmuxField ?? bundleUseTmux
+        const applied = applyHeadlessSwitch(requested, headlessEnabled)
+        if (applied.coerced) {
+          req.log.info(
+            { projectId: project.id, source: useTmuxField === undefined ? 'bundle' : 'request', requestedUseTmux: false, effectiveUseTmux: true },
+            `coerced useTmux=false to true (${HEADLESS_COERCED_REASON})`,
+          )
+        }
+        return applied
+      }
 
       const { existsSync } = await import('node:fs')
       const { readFile, rm } = await import('node:fs/promises')
@@ -1471,6 +1514,8 @@ export function sessionsPlugin(
         await mkdir(path.dirname(destPath), { recursive: true })
         await writeFile(destPath, content, { mode: 0o600 })
 
+        // A raw jsonl records no mode, so there is nothing to inherit.
+        const { useTmux: jsonlUseTmux, coerced: jsonlCoerced } = resolveImportMode()
         try {
           const session = await manager.adopt({
             projectId: project.id,
@@ -1480,12 +1525,15 @@ export function sessionsPlugin(
             model: project.defaultModel,
             effort: project.defaultEffort,
             harnessSessionId: destUuid,
+            useTmux: jsonlUseTmux,
           })
+          const coerced = headlessCoercion(jsonlCoerced)
           return reply.code(201).send({
             ...session,
             importedFromUuid: sourceUuid,
             regeneratedUuid: collided,
             transcriptPath: destPath,
+            ...(coerced ? { coerced } : {}),
           })
         } catch (err: unknown) {
           return reply.code(500).send({ error: `bundle written to ${redactHome(destPath)} but adopt failed: ${(err as Error).message}` })
@@ -1633,6 +1681,11 @@ export function sessionsPlugin(
           return reply.code(500).send({ error: `SQLite insert failed: ${(err as Error).message}` })
         }
 
+        // Bundles written before the field, and any hand-rolled one, simply
+        // have no `useTmux` — anything that is not a boolean is treated as
+        // absent rather than coerced through Boolean().
+        const bundleUseTmux = typeof meta.useTmux === 'boolean' ? meta.useTmux : undefined
+        const { useTmux: bundleMode, coerced: bundleCoerced } = resolveImportMode(bundleUseTmux)
         try {
           const session = await manager.adopt({
             projectId: project.id,
@@ -1642,12 +1695,15 @@ export function sessionsPlugin(
             model: project.defaultModel,
             effort: project.defaultEffort,
             harnessSessionId: destUuid,
+            useTmux: bundleMode,
           })
+          const coerced = headlessCoercion(bundleCoerced)
           return reply.code(201).send({
             ...session,
             importedFromUuid: sourceUuid,
             regeneratedUuid: collided,
             transcriptPath: dbPath,
+            ...(coerced ? { coerced } : {}),
           })
         } catch (err) {
           return reply.code(500).send({ error: `bundle imported to SQLite but adopt failed: ${(err as Error).message}` })

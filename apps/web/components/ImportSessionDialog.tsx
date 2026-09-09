@@ -5,6 +5,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { apiFetch } from '@/lib/fetcher'
 import { Button } from '@/components/ui/button'
+import { useHeadlessEnabled } from '@/lib/server-config'
+import { noticeIfCoerced } from '@/lib/notice'
 import { X, Loader2, AlertTriangle, Upload, FileArchive, FileText } from 'lucide-react'
 
 interface ProjectSummary {
@@ -39,11 +41,21 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
   const [projectId, setProjectId] = useState<string>('')
   const [file, setFile] = useState<File | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Shown checked, but only SENT once the user touches it. A `.tar.gz`
+  // bundle records the mode its session was running in and the server
+  // restores that when the field is absent — which the dialog cannot read
+  // without unpacking a gzip in the browser, so the choice is deferred
+  // rather than guessed. Touch the box and it becomes an explicit override.
+  const [useTmux, setUseTmux] = useState(true)
+  const [modeTouched, setModeTouched] = useState(false)
+  const headlessEnabled = useHeadlessEnabled()
 
   useEffect(() => {
     if (open) {
       setProjectId(eligible[0]?.id ?? '')
       setFile(null)
+      setUseTmux(true)
+      setModeTouched(false)
       if (inputRef.current) inputRef.current.value = ''
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -72,6 +84,10 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
       const fd = new FormData()
       fd.append('projectId', projectId)
       fd.append('file', file, file.name)
+      // Omitted unless the user actually chose, so an untouched dialog lets
+      // the bundle's own mode win. Omitted outright while the switch is off:
+      // the control is not rendered, so there is no choice to transmit.
+      if (headlessEnabled && modeTouched) fd.append('useTmux', String(useTmux))
       const res = await apiFetch(`/api/sessions/import`, { method: 'POST', body: fd })
       if (!res.ok) {
         const text = await res.text()
@@ -82,7 +98,9 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
           throw new Error(text || `HTTP ${res.status}`)
         }
       }
-      return res.json() as Promise<ImportResult>
+      const imported = await res.json() as ImportResult
+      noticeIfCoerced(imported)
+      return imported
     },
     onSuccess: (session) => {
       qc.invalidateQueries({ queryKey: ['sessions'] })
@@ -192,6 +210,38 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
               </div>
             )}
           </div>
+
+          {/* Run mode. Hidden while the global switch is off, on the same
+              rule as every other "Use tmux" control. The hint changes with
+              the bundle format because what "leave it alone" means changes
+              with it: a tar.gz carries the source mode, a raw jsonl does
+              not. */}
+          {headlessEnabled && (
+            <div>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useTmux}
+                  disabled={importMutation.isPending}
+                  onChange={(e) => { setUseTmux(e.target.checked); setModeTouched(true) }}
+                  className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-sky-600 disabled:opacity-60"
+                />
+                <span>
+                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
+                  <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
+                    {useTmux
+                      ? 'Restores into an interactive tmux session — live transcript, attach, sleeps when idle.'
+                      : `Restores headless: nothing starts until you send a message, and each turn then runs as its own ${currentProject?.agentType === 'codex' ? 'codex exec' : 'claude -p'} process.`}
+                    {!modeTouched && (
+                      parsedHint?.format === 'tar.gz'
+                        ? <span className="block italic">Untouched, a bundle that recorded its own mode is restored in that one instead.</span>
+                        : <span className="block italic">A .jsonl bundle records no mode, so this is the choice that applies.</span>
+                    )}
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
 
           {harnessMismatch && (
             <div className="rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-2">
