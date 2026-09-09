@@ -754,6 +754,21 @@ compromised or misbehaving child agent can observe peer work across
 project boundaries. Do not run untrusted prompts on a host that also
 runs sensitive sessions.
 
+**Prompt-injection exposure via MCP tool args.** Arguments to
+`spawn_session`, `send_input`, and `note_set` are executed by the model
+as instructions the moment the LLM decides to call them. If a
+downstream document, URL, or file the agent reads instructs it to
+"call spawn_session with projectId X" or "write note Y with content Z",
+the agent may comply — orchestron cannot distinguish operator-authored
+prompts from injected content in the middle of a transcript. The
+per-parent spawn guardrails (max 10 children, 5 spawns/min, depth 5)
+cap blast radius, and the global rate limit (600 req/min per bearer)
+caps flood attempts, but they do not prevent a single malicious note
+write or a targeted `send_input` into a sibling session. Treat every
+tool argument as untrusted data; if you feed the agent third-party
+content, expect the notes store to be reachable as a lateral staging
+channel.
+
 ---
 
 ## 6. Dashboard tour

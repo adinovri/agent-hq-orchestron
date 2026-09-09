@@ -838,6 +838,9 @@ Data schema is additive (Zod schema evolution) — old JSON files always readabl
 | Boot guard error `refusing to bind` | Non-loopback + no token | Set `ORCHESTRON_REMOTE_TOKEN` env |
 | `401 Unauthorized` | Missing/wrong Bearer header | Verify token, check WS uses `?token=` param (or `?ticket=` from `POST /api/sse-ticket`) |
 | `413 Payload Too Large` on `/transcript` | Session transcript exceeded the 50MB in-memory cap | Use `GET /api/sessions/:uuid/export` — it streams the file instead of buffering |
+| `413 Payload Too Large` on `/api/sessions/import` | Bundle decompresses past the 200MB tar-bomb cap | Confirm the bundle is a legitimate export; if legitimate but oversized, split it |
+| `429 Too Many Requests` | Global rate limit hit (600 req/min per bearer, loopback exempted) | Back off; check for a polling loop or an MCP agent in a tight spawn cycle |
+| `/api/health` body is only `{ok:true}` where scripts expected full detail | Verbose fields moved to `/api/health/detail` to stop unauth path/host fingerprinting | Update scripts to hit `/api/health/detail` with the Bearer token |
 | `[orchestron] SECURITY:` on boot | `~/.orchestron/config.json` is group/world-readable | `chmod 600 ~/.orchestron/config.json` |
 | Sessions stuck `spawning` (Claude) | tmux marker not detected | Check `claude` CLI authenticated; run `claude` manually to verify |
 | Sessions stuck `spawning` (Codex) | Ready marker (`>_ OpenAI Codex` banner) not detected, or trust prompt blocking | Run `codex` manually in the workspace dir once to accept the trust prompt (persists in `~/.codex/config.toml`); check `codex login` status; confirm `CODEX_HOME` (if set) points to the same dir orchestron passes via `--config-dir` |
