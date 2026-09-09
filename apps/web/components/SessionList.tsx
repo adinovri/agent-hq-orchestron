@@ -7,27 +7,36 @@ import { useEffect, useMemo, useState } from 'react'
 
 /** Derive the parent→children map + a short human label per parent from
  *  the flat session list. Used to surface list-level tree hints
- *  (`⑃ N` on parents, `⑃ parent: X` on children) without hitting the
- *  delegation endpoint per card. */
+ *  (`⑃ N` on parents, `⑃ parent: <id>` on children) without hitting
+ *  the delegation endpoint per card.
+ *
+ *  Parent label is the 8-char id slice — matches the id chip already
+ *  shown on each card, so users can cross-reference by eye. The
+ *  parent's prompt preview surfaces on hover via SessionCard's
+ *  `parentTitle`. */
 function buildDelegationMaps(sessions: SessionMetadata[]): {
   descendantCount: Map<string, number>
   parentLabel: Map<string, string>
+  parentTitle: Map<string, string>
 } {
   const descendantCount = new Map<string, number>()
   const parentLabel = new Map<string, string>()
+  const parentTitle = new Map<string, string>()
   const byId = new Map(sessions.map(s => [s.id, s]))
   for (const s of sessions) {
     if (!s.parentSessionId) continue
     descendantCount.set(s.parentSessionId, (descendantCount.get(s.parentSessionId) ?? 0) + 1)
+    parentLabel.set(s.id, s.parentSessionId.slice(0, 8))
     const parent = byId.get(s.parentSessionId)
-    if (parent) {
-      const label = (parent.initialPrompt ?? '').trim().slice(0, 28) || parent.id.slice(0, 8)
-      parentLabel.set(s.id, label)
-    } else {
-      parentLabel.set(s.id, s.parentSessionId.slice(0, 8))
-    }
+    const promptPreview = (parent?.initialPrompt ?? '').trim().slice(0, 100)
+    parentTitle.set(
+      s.id,
+      promptPreview
+        ? `Child of parent session ${s.parentSessionId.slice(0, 8)} — "${promptPreview}${promptPreview.length >= 100 ? '…' : ''}"`
+        : `Child of parent session ${s.parentSessionId.slice(0, 8)}`,
+    )
   }
-  return { descendantCount, parentLabel }
+  return { descendantCount, parentLabel, parentTitle }
 }
 
 interface Props {
@@ -49,6 +58,7 @@ function renderCard(
   projectDefaults?: Map<string, { model?: string; effort?: string }>,
   descendantCount?: Map<string, number>,
   parentLabel?: Map<string, string>,
+  parentTitle?: Map<string, string>,
 ) {
   const defs = projectDefaults?.get(s.projectId)
   return (
@@ -62,12 +72,13 @@ function renderCard(
       projectDefaultEffort={defs?.effort}
       descendantCount={descendantCount?.get(s.id)}
       parentLabel={parentLabel?.get(s.id)}
+      parentTitle={parentTitle?.get(s.id)}
     />
   )
 }
 
 export function SessionList({ sessions, killingIds, onKill, projectNames, projectDefaults, groupBy }: Props) {
-  const { descendantCount, parentLabel } = useMemo(() => buildDelegationMaps(sessions), [sessions])
+  const { descendantCount, parentLabel, parentTitle } = useMemo(() => buildDelegationMaps(sessions), [sessions])
 
   if (sessions.length === 0) {
     return (
@@ -80,7 +91,7 @@ export function SessionList({ sessions, killingIds, onKill, projectNames, projec
   if (groupBy !== 'project') {
     return (
       <div className="flex flex-col gap-3">
-        {sessions.map((s) => renderCard(s, killingIds, onKill, projectNames, projectDefaults, descendantCount, parentLabel))}
+        {sessions.map((s) => renderCard(s, killingIds, onKill, projectNames, projectDefaults, descendantCount, parentLabel, parentTitle))}
       </div>
     )
   }
@@ -113,6 +124,7 @@ export function SessionList({ sessions, killingIds, onKill, projectNames, projec
           onKill={onKill}
           descendantCount={descendantCount}
           parentLabel={parentLabel}
+          parentTitle={parentTitle}
         />
       ))}
     </div>
@@ -146,9 +158,10 @@ interface ProjectGroupProps {
   onKill: (id: string) => void
   descendantCount?: Map<string, number>
   parentLabel?: Map<string, string>
+  parentTitle?: Map<string, string>
 }
 
-function ProjectGroup({ projectId, items, projectNames, projectDefaults, killingIds, onKill, descendantCount, parentLabel }: ProjectGroupProps) {
+function ProjectGroup({ projectId, items, projectNames, projectDefaults, killingIds, onKill, descendantCount, parentLabel, parentTitle }: ProjectGroupProps) {
   const [collapsed, setCollapsed] = useState<boolean>(false)
   // Hydrate collapsed state from localStorage after mount (avoids SSR mismatch).
   useEffect(() => {
@@ -207,7 +220,7 @@ function ProjectGroup({ projectId, items, projectNames, projectDefaults, killing
       </button>
       {!collapsed && (
         <div id={`project-group-${projectId}`} className="flex flex-col gap-3">
-          {items.map((s) => renderCard(s, killingIds, onKill, projectNames, projectDefaults, descendantCount, parentLabel))}
+          {items.map((s) => renderCard(s, killingIds, onKill, projectNames, projectDefaults, descendantCount, parentLabel, parentTitle))}
         </div>
       )}
     </section>

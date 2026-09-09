@@ -20,9 +20,12 @@ interface Props {
    *  card so the list-level tree is visible. Computed by the caller from
    *  the full session list. */
   descendantCount?: number
-  /** Short label for the parent (usually first N chars of parent prompt
-   *  or uuid slice) — surfaced as a `⑃ parent: X` chip on child cards. */
+  /** 8-char id slice of parent (matches the id-chip convention on
+   *  every card) — surfaced as a `⑃ parent: <id>` chip on child cards. */
   parentLabel?: string
+  /** Hover-title override for the parent chip. When set, shows the
+   *  parent's prompt preview on hover for context. */
+  parentTitle?: string
 }
 
 const AGENT_ICON: Record<string, React.ReactNode> = {
@@ -31,7 +34,7 @@ const AGENT_ICON: Record<string, React.ReactNode> = {
   opencode: <Terminal className="w-4 h-4" />,
 }
 
-export function SessionCard({ session, onKill, killing, projectName, projectDefaultModel, projectDefaultEffort, descendantCount, parentLabel }: Props) {
+export function SessionCard({ session, onKill, killing, projectName, projectDefaultModel, projectDefaultEffort, descendantCount, parentLabel, parentTitle }: Props) {
   const harnessDefaultModel = implicitDefaultModel(session.agentType)
   const harnessDefaultEffort = implicitDefaultEffort(session.agentType)
   const model = session.model ?? projectDefaultModel ?? harnessDefaultModel
@@ -88,7 +91,7 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
             {parentLabel && (
               <span
                 className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
-                title={`Child of parent session ${parentLabel}`}
+                title={parentTitle ?? `Child of parent session ${parentLabel}`}
               >
                 <GitBranch className="w-3 h-3 rotate-180" />
                 parent: {parentLabel}
