@@ -178,6 +178,12 @@ Fields **not** in `config.json` (env-only): `ORCHESTRON_SHARED_MEMORY_DIR`,
 Precedence (highest wins): env > config file > built-in defaults.
 
 **Auto-detected default `maxConcurrent`**: `floor(totalmem_MB / 800)`, capped at 20. Overrideable.
+The cap counts **live tmux only** — sessions in `sleeping` (tmux
+released, wake on next `--resume`) and terminal states (`succeeded` /
+`failed` / `killed`) don't count. Accumulated sleeping records over
+days used to trip the cap even with zero live tmux; that's fixed —
+sleeping is cheap, keep them around for reopen/adopt without worrying
+about pool pressure.
 
 **Idle sweeper (`idleTimeoutMs`)**: default 900000 (15 min). Sessions in
 `idle` or `needs_input` beyond this go to `sleeping` (tmux killed,
@@ -842,6 +848,8 @@ Data schema is additive (Zod schema evolution) — old JSON files always readabl
 | `429 Too Many Requests` | Global rate limit hit (600 req/min per bearer, loopback exempted) | Back off; check for a polling loop or an MCP agent in a tight spawn cycle |
 | `/api/health` body is only `{ok:true}` where scripts expected full detail | Verbose fields moved to `/api/health/detail` to stop unauth path/host fingerprinting | Update scripts to hit `/api/health/detail` with the Bearer token |
 | `[orchestron] SECURITY:` on boot | `~/.orchestron/config.json` is group/world-readable | `chmod 600 ~/.orchestron/config.json` |
+| `Session pool is full` when 0 live tmux | Legacy — cap counted sleeping records. Fixed in 481855e; sleeping and terminal states no longer count against `maxConcurrent` | Update to that commit or later |
+| Forgot the restart command for this host | Open **Settings** page — Configuration section shows both Linux (`systemctl`) and macOS (`launchctl … $(id -u) …`) restart commands with a `THIS HOST` chip on the applicable one. Copy button included | — |
 | Sessions stuck `spawning` (Claude) | tmux marker not detected | Check `claude` CLI authenticated; run `claude` manually to verify |
 | Sessions stuck `spawning` (Codex) | Ready marker (`>_ OpenAI Codex` banner) not detected, or trust prompt blocking | Run `codex` manually in the workspace dir once to accept the trust prompt (persists in `~/.codex/config.toml`); check `codex login` status; confirm `CODEX_HOME` (if set) points to the same dir orchestron passes via `--config-dir` |
 | Codex session shows `agentType: codex` but never captures a session id | Interactive TUI mode does NOT write rollout JSONL — orchestron scans `$CODEX_HOME/sessions/YYYY/MM/DD/` for a NEW rollout newer than spawn time | Check the rollout dir date subfolders exist and are writable; watch API log for `[adapter:codex] rollout scan` warnings |

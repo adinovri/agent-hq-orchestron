@@ -279,8 +279,18 @@ Bundles carry conversation state, not credentials.
 ### Session detail page
 
 Header shows: status pill, project chip (blue), harness chip (violet
-uppercase — `CLAUDE` / `CODEX` / `OPENCODE`), model, effort, delegation
-count. Buttons (based on state):
+uppercase — `CLAUDE` / `CODEX` / `OPENCODE`), model, effort, and (when
+applicable) two delegation chips:
+
+- **`⑃ N`** on parent sessions — count of direct children, hover
+  shows detail + points to menu Graph for the tree view
+- **`⑃ parent: <8-char>`** on child sessions — links to the parent's
+  detail page; hover title shows a preview of the parent's initialPrompt
+
+Same chips appear on dashboard SessionCards so the tree structure is
+visible at both list and detail level without opening Graph.
+
+Action buttons (based on state):
 
 | Icon | Action | Available when |
 |---|---|---|
@@ -742,6 +752,18 @@ pointers back through storage. Spawn calls from the same parent are
 serialized in-process (per-parent mutex) so parallel `spawn_session`
 calls can't TOCTOU-race the guardrail check.
 
+**Auto-allowlist for the 10 orchestron MCP tools.** Orchestron passes
+`--allowedTools mcp__orchestron__…` to every claude spawn, so agents
+under a managed policy that overrides `--permission-mode
+bypassPermissions` (e.g. Nanovest Team plan's
+`disableBypassPermissionsMode: "disable"`) don't freeze on a
+per-invocation approval modal for `spawn_session` / `note_set` /
+`send_input`. The allowlist is bounded to first-party orchestron tools
+only — user-defined MCP servers you add later stay gated normally.
+The MCP-shape approval modal is also parsed by `sweepAskUserPrompts`
+now, so if some allowlist path is bypassed the modal still surfaces
+as a `PendingPromptBanner`.
+
 **Trust boundary — orchestron is single-tenant.** MCP tools that take
 an arbitrary `sessionId` argument (`read_transcript`, `get_status`,
 `send_input`, `list_sessions`) resolve the target globally, not scoped
@@ -800,6 +822,21 @@ naturally because status transitions update timestamps.
 **Filter bar:** status multi-select, project dropdown (shows names, not
 uuids), tag multi-select, date range, fuzzy search on prompt or session
 id.
+
+**Delegation chips** (dashboard cards + session-detail header):
+- Parent cards get `⑃ N` — count of direct children spawned via
+  `spawn_session`. Deeper subtrees are visible in the Graph page.
+- Child cards get `⑃ parent: <8-char>` — the 8-char slice matches the
+  parent's id chip elsewhere in the list, so cross-reference by eye
+  works. Hover title shows the parent's prompt preview.
+- Sessions without a parent/children stay uncluttered.
+
+**Delegation Graph** (menu Graph) — React Flow + Dagre tree of a
+session and its descendants. Follows the active app theme: on
+`Orchestron` / `Tycho` dark, chrome (Controls, MiniMap, background
+dots) renders dark to match the app ground; on `Light`, chrome and
+dots flip to a light palette. Node fill color per status matches the
+StatusPill palette used on the dashboard.
 
 ---
 
