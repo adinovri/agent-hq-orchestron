@@ -254,6 +254,72 @@ const PERMISSION_HINT_RE = /(Do\s+you\s+want\s+to\s+proceed\??|Do\s+you\s+want\s
  *
  *    Enter to select · ↑/↓ to navigate · Esc to cancel   <- footer
  */
+/** MCP tool-approval modal has a different shape than the native
+ *  Claude tool-approval modal — no ☐ header, no "↑/↓ to navigate" /
+ *  "Enter to select" footer. Instead:
+ *
+ *      About the <server> — <ToolName> Tool:
+ *      │ description lines... │
+ *      (ctrl+o to expand description)
+ *
+ *       Do you want to proceed?
+ *       ❯ 1. Yes
+ *         2. No
+ *
+ *       Esc to cancel · Tab to amend
+ *
+ *  Detected by "Do you want to proceed?" + "Esc to cancel" + a MCP
+ *  header line. Options parsed with the same OPTION_LINE_RE (❯ 1. Yes /
+ *  2. No matches). Kicks in on top of the native selector detector
+ *  below so both modal families surface as PendingPromptBanner. */
+const MCP_MODAL_HEADER_RE = /^\s*About\s+the\s+(\S+)\s+[—–-]\s+(.+?)\s+Tool:\s*$/i
+const MCP_MODAL_QUESTION_RE = /Do\s+you\s+want\s+to\s+proceed\??/i
+const MCP_MODAL_FOOTER_RE = /Esc\s+to\s+cancel(?:.*Tab\s+to\s+amend)?/i
+
+function parseMcpToolModal(pane: string): import('@agent-hq-orchestron/shared').PendingPrompt | null {
+  if (!MCP_MODAL_QUESTION_RE.test(pane) || !MCP_MODAL_FOOTER_RE.test(pane)) return null
+  const lines = pane.split(/\r?\n/)
+  const headerIdx = lines.findIndex((l) => MCP_MODAL_HEADER_RE.test(l))
+  const questionIdx = lines.findIndex((l) => MCP_MODAL_QUESTION_RE.test(l))
+  const footerIdx = lines.findIndex((l) => MCP_MODAL_FOOTER_RE.test(l))
+  if (headerIdx === -1 || questionIdx === -1 || footerIdx === -1) return null
+  if (headerIdx >= questionIdx || questionIdx >= footerIdx) return null
+
+  const headerMatch = (lines[headerIdx] ?? '').match(MCP_MODAL_HEADER_RE)
+  const server = headerMatch?.[1] ?? 'MCP'
+  const tool = headerMatch?.[2]?.trim() ?? 'tool'
+
+  const options: string[] = []
+  for (let i = questionIdx + 1; i < footerIdx; i++) {
+    const m = (lines[i] ?? '').match(OPTION_LINE_RE)
+    if (m) {
+      const num = Number.parseInt(m[1] ?? '0', 10)
+      const label = (m[2] ?? '').trim()
+      if (num > 0 && label) options.push(label)
+    }
+  }
+  if (options.length === 0) return null
+
+  // Description = lines between header and question with the │ box
+  // prefix trimmed; skip separators and the "(ctrl+o to expand)" hint.
+  const detailLines: string[] = []
+  for (let i = headerIdx + 1; i < questionIdx; i++) {
+    const line = (lines[i] ?? '').replace(/^\s*│\s?|\s*│\s*$/g, '').trim()
+    if (!line || SEPARATOR_RE.test(line)) continue
+    if (/\(ctrl\+o\s+to\s+expand/i.test(line)) continue
+    detailLines.push(line)
+  }
+  const detail = detailLines.join(' ')
+
+  return {
+    kind: 'permission',
+    title: `${server} · ${tool}`,
+    detail: detail || undefined,
+    options,
+    capturedAt: new Date().toISOString(),
+  }
+}
+
 function parseSelectorModal(pane: string): import('@agent-hq-orchestron/shared').PendingPrompt | null {
   if (!MODAL_FOOTER_RE.test(pane) || !MODAL_SELECT_RE.test(pane)) return null
 
@@ -1262,7 +1328,10 @@ export class SessionManager {
       if (!s.tmuxName) continue
       try {
         const pane = await tmux.capturePane(s.tmuxName)
-        const prompt = parseSelectorModal(pane)
+        // Try native selector modal first (Bash/WebFetch/etc. approval);
+        // fall back to MCP tool approval modal (different shape — see
+        // parseMcpToolModal). Either result exposes as PendingPromptBanner.
+        const prompt = parseSelectorModal(pane) ?? parseMcpToolModal(pane)
         if (prompt) {
           if (s.status === 'running') {
             await this.reconcilePendingUserQuestion(s.id).catch(() => {})

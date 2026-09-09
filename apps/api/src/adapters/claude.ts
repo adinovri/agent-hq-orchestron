@@ -67,6 +67,26 @@ function buildArgv(opts: {
   if (opts.mcpConfigPath) argv.push('--mcp-config', opts.mcpConfigPath)
   argv.push('--permission-mode', 'bypassPermissions')
 
+  // Auto-allow the 10 orchestron MCP tools so an agent under a managed
+  // policy that overrides bypassPermissions (e.g. Nanovest Team plan's
+  // `disableBypassPermissionsMode: "disable"`) doesn't freeze on every
+  // spawn_session / note_set call waiting for approval. These tools all
+  // route through the orchestron API which enforces its own guardrails
+  // (rate limits, max children, depth, per-parent mutex) so first-party
+  // orchestron trust is warranted; user-defined MCP servers stay gated.
+  argv.push('--allowedTools', [
+    'mcp__orchestron__spawn_session',
+    'mcp__orchestron__wait_for_idle',
+    'mcp__orchestron__send_input',
+    'mcp__orchestron__get_status',
+    'mcp__orchestron__read_transcript',
+    'mcp__orchestron__list_projects',
+    'mcp__orchestron__list_sessions',
+    'mcp__orchestron__note_get',
+    'mcp__orchestron__note_set',
+    'mcp__orchestron__note_list',
+  ].join(','))
+
   if (opts.sessionMode.type === 'new') {
     argv.push('--session-id', opts.sessionMode.uuid)
   } else {
