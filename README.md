@@ -24,10 +24,14 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
   while the model is thinking. Each of those three actions opens a
   dialog with per-call model + effort override.
 - **Headless mode (opt-in)** — untick *Use tmux* on a spawn (or set the
-  project default) and the session runs as a one-shot `claude -p` /
-  `codex exec` child process instead of an interactive TUI: no tmux, no
-  live attach, no sleeping, no follow-up input. Good for batch, cron and
-  fire-and-forget work; tmux stays the default for everything else.
+  project default) and the session runs without an interactive TUI: each
+  turn is its own `claude -p --resume` / `codex exec resume` child process,
+  and the session rests in `idle` between them. Still multi-turn, still
+  interruptible, still forkable — what you give up is the live TUI to
+  attach to and sleep-on-idle. An agent with no pane asks questions through
+  a structured `inquiry` field that the session page renders as a form.
+  Reopen, Fork and Respawn each carry a *Use tmux* checkbox, so a session
+  can cross between modes in either direction without losing context.
   `"enableHeadlessMode": false` in `~/.orchestron/config.json` is the
   fleet-wide off switch. See
   [Headless mode](docs/USAGE.md#headless-mode-no-tmux).

@@ -104,9 +104,9 @@ away without crowding the header on mobile. The dialog:
   isn't a leap of faith.
 - **Initial prompt** — the first user turn Claude receives.
 - **Use tmux** — checked by default. Unchecking runs the session
-  headless (one-shot `claude -p` / `codex exec`, no tmux). The checkbox
-  starts on the project's default and the helper text under it spells
-  out what each mode gives up; see
+  headless: one `claude -p` / `codex exec` process per turn, no tmux. The
+  checkbox starts on the project's default and the helper text under it
+  spells out what each mode gives up; see
   [Headless mode](#headless-mode-no-tmux).
 - **Attachments** — drag/drop files (or paperclip button, or paste
   images). Saved to `/tmp/orchestron/uploads/pending/<hex>/` with
@@ -115,7 +115,8 @@ away without crowding the header on mobile. The dialog:
 Click **Spawn** and you'll land on the session detail page. Status
 progresses: `spawning` → `running` (once TUI is ready + prompt paste
 lands) → `needs_input` / `idle` / `succeeded`. A headless session skips
-the TUI wait entirely: `spawning` → `running` → `succeeded` / `failed`.
+the TUI wait entirely: `spawning` → `running` → `idle`, then waits there
+for the next turn.
 
 ### Adopt an existing harness session
 
@@ -427,16 +428,29 @@ any active state ──▶ killed  (X button)
 any state       ──▶ failed  (crash)
 ```
 
-Headless sessions take a shorter path — the child process runs the whole
-turn and exits, so there is no TUI to wait for and no idle state to
-linger in:
+Headless sessions follow the same shape with two differences: there is no
+TUI to wait for, so no `waiting`; and nothing is held between turns, so no
+`sleeping`. The child process is what is ephemeral — the session is not.
 
 ```
-spawning ──▶ running ──▶ succeeded   (exit 0)
-                     └─▶ failed      (non-zero exit / signal / spawn error)
+spawning ──▶ running ──▶ idle ──▶ (send input) ──▶ running ──▶ …
+                  │        │
+                  │        └──▶ succeeded  (archive)
+                  ├──▶ needs_input  (turn returned a structured inquiry)
+                  │        │
+                  │        └──▶ (answer) ──▶ running ──▶ …
+                  └──▶ failed  (non-zero exit / signal / spawn error)
 
 running ──▶ killed  (X button — SIGTERM to the child)
+
+(terminal) ──▶ (reopen into headless) ──▶ spawning ──▶ idle
 ```
+
+Two edges exist only for headless. `spawning → running` skips the `waiting`
+phase, because the prompt is already in argv and the turn starts at launch.
+`spawning → idle` is the reopen-into-headless path, which brings a record
+back to life without running anything — see
+[Reopen, Fork and Respawn across modes](#reopen-fork-and-respawn-across-modes).
 
 The API enforces `ALLOWED_TRANSITIONS` in `SessionManager`; illegal
 transitions throw `InvalidTransitionError`.
@@ -444,9 +458,19 @@ transitions throw `InvalidTransitionError`.
 ### Headless mode (no tmux)
 
 By default every session runs an interactive harness TUI inside its own
-tmux window. Unticking **Use tmux** runs it headless instead: orchestron
-launches a single `claude -p <prompt>` (or `codex exec <prompt>`) child
-process, the agent works through the whole turn, and the process exits.
+tmux window. Unticking **Use tmux** runs it headless instead: each turn is
+a single `claude -p` (or `codex exec`) child process that works through the
+turn and exits.
+
+**One process per turn, not one process per session.** A headless session
+is multi-turn like any other: it comes to rest in `idle` when a turn ends,
+and the next thing you send starts a fresh `claude -p --resume <id>` /
+`codex exec resume <id>` child against the same conversation. It reaches a
+terminal state only when you Kill or Archive it.
+
+> Phase 1 of this feature really was single-shot — a finished run went
+> straight to `succeeded` and refused follow-up input, Reopen and Fork.
+> If you are reading older notes that say so, they are out of date.
 
 **Where to set it**, in increasing precedence:
 
@@ -455,15 +479,51 @@ process, the agent works through the whole turn, and the process exits.
 | Nothing set | tmux — the default, and what every pre-existing session is |
 | Project → **Use tmux by default** | applies to new spawns in that project, including scheduled ones |
 | Spawn dialog → **Use tmux** | this session only |
-| Session detail → ✎ (pencil) | changes the mode the session will use on its next Respawn |
+| Reopen / Fork / Respawn dialog → **Use tmux** | the mode the session comes back in — see below |
+| Session detail → ✎ (pencil) | changes the mode the session will use on its next spawn |
 
-The pencil is gated exactly like model and effort: editable only when
-the session is terminal or sleeping. The mode is baked into the process
-arguments at spawn, so it cannot change mid-flight.
+The mode is baked into the process arguments when a turn starts, so it
+cannot change mid-flight. The pencil is editable whenever nothing live is
+bound to the current values: terminal or sleeping for a tmux session, and
+also `idle` / `needs_input` for a headless one, which holds no process
+between turns.
+
+#### Reopen, Fork and Respawn across modes
+
+All three revival dialogs carry the same **Use tmux** checkbox, defaulted
+to the session's *current* mode — the neutral choice being the one that
+changes nothing, exactly as the model and effort pickers default to the
+session's own values. Tick or untick it to move a session across the
+boundary.
+
+| Action | **Use tmux** ticked | unticked |
+|---|---|---|
+| **Reopen** | resumes the conversation in a fresh tmux session | brings the record back to `idle` with **no process at all** — nothing runs until you send a turn |
+| **Fork** | new session id, inherits the conversation, runs in tmux | new session id, inherits the conversation, rests in `idle`; a prompt in the dialog becomes its first turn |
+| **Respawn** | fresh conversation from the original prompt, in tmux | fresh conversation from the original prompt, headless |
+
+Reopening *into* headless deliberately runs nothing. There is no process to
+bring up, so "reopen" there means exactly "make this session live again,
+ready for input" — spending a `-p --resume` invocation on an empty prompt
+would burn a turn to accomplish nothing you asked for.
+
+A conversion sticks: reopening a headless session into tmux writes
+`useTmux: true` to the record, so a later Kill + Reopen does not silently
+drop back to headless.
+
+**No context is lost crossing the boundary, in either direction.** Both
+harnesses resume the same conversation from either mode — Claude's `-p` and
+interactive TUI share one JSONL store and scan it identically, and
+codex-cli writes both the rollout JSONL and the `thread_history` SQLite
+whichever mode produced the thread. There is no file copying or session-id
+rewriting involved; it is the harness's own resume.
+
+(Earlier notes describe Reopen and Fork as unavailable for headless
+sessions. That was a conservative gate from Phase 1, since removed.)
 
 #### Disabling it globally
 
-All three toggles above sit under one server-side switch. Set
+Every toggle above sits under one server-side switch. Set
 `enableHeadlessMode` to `false` in `~/.orchestron/config.json` and no
 session can be spawned headless, whatever the project or spawn dialog
 says:
@@ -486,11 +546,13 @@ With the switch off:
 | Spawn with **Use tmux** unticked | `400 {"error": "headless mode disabled globally", "hint": "set enableHeadlessMode: true in ~/.orchestron/config.json"}` |
 | Spawn in a project whose default is headless | runs in **tmux**, no error — a 400 there would brick every spawn in that project |
 | Pencil → untick **Use tmux** | same `400` |
-| Pencil → tick **Use tmux** on a headless session | allowed, so records can be unwound while the switch is off |
-| Already-running headless session | keeps running; the switch only gates new spawns |
+| Reopen / Fork / Respawn with **Use tmux** unticked | same `400` |
+| Pencil, or any revival dialog, → tick **Use tmux** on a headless session | allowed, so records can be unwound while the switch is off |
+| Already-running headless session | keeps running; the switch only gates new turns and spawns |
 
 In the web UI the **Use tmux** checkbox renders checked and disabled in
-the spawn dialog, the project dialog and the session pencil, with
+the spawn dialog, the project dialog, the session pencil and the
+Reopen / Fork / Respawn dialog, with
 *"Headless disabled globally. Enable via ~/.orchestron/config.json"* as
 its tooltip. Settings → Server Info shows the current state.
 
@@ -501,29 +563,37 @@ on record and picks it up again when the flag is turned back on. The
 sessions spawned before the switch went off still show what they
 actually are.
 
-**What you give up.** Headless is not a cheaper tmux — it is a different
+**What is different.** Headless is not a cheaper tmux — it is a different
 shape of session:
 
 | | tmux (default) | headless |
 |---|---|---|
 | Live transcript | yes, streams as the turn runs | yes — the harness writes the same JSONL |
-| Attach to the live TUI | yes (`tmux attach`) | no process to attach to |
-| Follow-up input | yes, queued mid-turn | no — one prompt, one run |
-| Interrupt a turn | yes (Escape) | no — Kill is the only stop |
-| Sleep / wake on idle | yes | n/a — nothing is held between runs |
-| Reopen / Fork | yes | no (see below) |
-| Respawn | yes | yes — re-runs the same prompt headless |
+| Attach to the live TUI | yes (`tmux attach`) | no long-lived process to attach to |
+| Follow-up input | yes, and queueable mid-turn | yes, but **not** mid-turn — one turn at a time |
+| Interrupt a turn | yes (Escape) | yes (SIGTERM); session returns to `idle` |
+| Ask the user a question | selector modal in the pane | structured `inquiry` — see below |
+| Sleep / wake on idle | yes | n/a — nothing is held between turns |
+| Reopen / Fork / Respawn | yes | yes, and either mode can be the target |
 | `wait_for_idle` MCP tool | available | withheld — see below |
-| Pool cap slot | held until sleep or terminal | released when the run ends |
+| Pool cap slot | held until sleep or terminal | held only while a turn is in flight |
+
+The one input restriction is real and worth understanding: a tmux TUI
+buffers a pasted prompt and runs it as the next turn, so you can queue
+while the model is thinking. A headless child has no stdin at all, and
+launching a second `--resume` against a live one would put two processes on
+the same transcript. So the input box greys out during a headless turn.
+Interrupt if you need to get in front of it.
 
 **When it is the right choice**
 
-- Batch work: fan out N independent one-shot tasks without N tmux
-  windows competing for the pool cap.
+- Batch work: fan out N independent tasks without N tmux windows
+  competing for the pool cap — an idle headless session holds no slot.
 - Scheduled / cron runs where nobody is watching a TUI and the result is
   read after the fact.
-- Fire-and-forget tasks with a self-contained prompt and no expected
-  back-and-forth.
+- Fire-and-forget tasks with a self-contained prompt, where you may still
+  want to come back and ask a follow-up later.
+- Hosts where tmux is inconvenient or absent.
 
 Stay on tmux when you expect to steer the session, answer a question
 mid-run, or attach to watch it work.
@@ -546,17 +616,79 @@ mid-run, or attach to watch it work.
   has no turn boundary to release it and no way to interrupt, so the run
   would simply hang. The other nine orchestron MCP tools are available.
   Async delegation for headless parents is future work.
-- *Reopen and Fork are unavailable.* Both resume the conversation into an
-  interactive tmux, which is a cross-mode jump. For Claude the two modes
-  do share one JSONL store so it would likely work, but `codex exec`
-  writes a rollout file while the interactive TUI reads `thread_history`
-  SQLite — so rather than ship a button that silently works for one
-  harness and not the other, both are gated until cross-mode resume is
-  tested per harness. **Respawn** works and re-runs the prompt headless.
+- *An idle headless session does not occupy a pool-cap slot.* Between
+  turns it holds no tmux, no pty and no pid, so counting it would let a
+  pile of finished one-shots block new spawns for nothing. It counts again
+  the moment a turn is in flight.
+- *An API restart mid-turn lands the session in `idle`, not `failed`.* The
+  turn is owned by an in-memory promise that dies with the process, so
+  nothing would ever land it. The turn's output is already in the harness's
+  transcript and the conversation is still resumable, so the session is
+  made live again with an explanatory `failureReason`; read the transcript,
+  then send the next turn.
 - *Failures carry a reason.* A non-zero exit records the child's stderr
   tail on the session as `failureReason`, so a headless run that dies at
   launch (bad model name, expired credentials) says why instead of just
-  going red.
+  going red. A later successful turn clears it.
+
+#### How a headless agent asks you a question
+
+A tmux agent that needs input opens a selector modal in its pane, and
+orchestron scrapes it into the approval banner. A headless agent has no
+pane — and by the time you would see the question, no process either. So
+it uses structured output instead.
+
+Every headless invocation is handed a small JSON schema whose final
+response looks like this:
+
+```json
+{
+  "summary": "Stopped before deploying; need the target confirmed.",
+  "inquiry": {
+    "message": "Which environment and region should I deploy to?",
+    "fields": [
+      { "name": "environment", "label": "Target environment",
+        "type": "choice", "options": ["dev", "stg", "prd"] },
+      { "name": "region", "label": "GCP region", "type": "text", "options": null }
+    ]
+  }
+}
+```
+
+`inquiry` is `null` on a turn that needs nothing, and the session lands in
+`idle` as usual. When it is populated, the session lands in `needs_input`
+and the session page renders the fields as a form. Submitting it sends your
+answers as ordinary input, which starts the next turn — the agent resumes
+with them in context.
+
+Three consequences worth knowing:
+
+- **`finalResponse` becomes the model's summary of its answer**, not the
+  answer's prose. The full text is still in the transcript, which is what
+  the session page shows; only the one-line field on the record changes.
+  If you have a workflow reading `finalResponse` as the deliverable, that
+  is the reason to turn this off.
+- **It is a request to the model, not a guarantee.** A response that comes
+  back as plain prose is treated as the summary with no inquiry, so nothing
+  is lost when a model ignores the schema.
+- **The schema is strict-mode** — `additionalProperties: false` on every
+  object and every property listed in `required`, with optionality
+  expressed as `type: ["object", "null"]`. Codex rejects a schema that
+  isn't; Claude accepts one that is. One document serves both, though they
+  take it differently: Claude's `--json-schema` wants it inline and errors
+  on a path, Codex's `--output-schema` wants a file.
+
+To turn it off, set `headlessStructuredOutput` to `false` in
+`~/.orchestron/config.json` and restart the API:
+
+```json
+{
+  "headlessStructuredOutput": false
+}
+```
+
+Headless then behaves as it did before: prose in `finalResponse`, and no
+way for the agent to raise a question. Defaults to `true`.
 
 ### Sleep / wake-up (idle sweeper)
 

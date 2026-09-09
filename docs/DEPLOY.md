@@ -141,6 +141,7 @@ scaffolds subdirs, not the config file itself):
   "logLevel": "info",
   "idleTimeoutMs": 900000,
   "enableHeadlessMode": true,
+  "headlessStructuredOutput": true,
   "remoteToken": "<48-char-hex>",
   "adapters": {
     "claude": true,
@@ -172,6 +173,7 @@ Schema (from `packages/shared/src/config.ts`):
 | `logLevel` | `error \| warn \| info \| debug` | `info` | `ORCHESTRON_LOG_LEVEL` |
 | `idleTimeoutMs` | int ≥ 0 | `900000` (15 min) | `ORCHESTRON_IDLE_TIMEOUT_MS` |
 | `enableHeadlessMode` | bool | `true` | — |
+| `headlessStructuredOutput` | bool | `true` | — |
 
 Fields **not** in `config.json` (env-only): `ORCHESTRON_SHARED_MEMORY_DIR`,
 `ORCHESTRON_SHARED_CODEX_MEMORY_DIR` — set on the API service unit
@@ -180,21 +182,35 @@ Fields **not** in `config.json` (env-only): `ORCHESTRON_SHARED_MEMORY_DIR`,
 Precedence (highest wins): env > config file > built-in defaults.
 
 **Auto-detected default `maxConcurrent`**: `floor(totalmem_MB / 800)`, capped at 20. Overrideable.
-The cap counts **live tmux only** — sessions in `sleeping` (tmux
-released, wake on next `--resume`) and terminal states (`succeeded` /
-`failed` / `killed`) don't count. Accumulated sleeping records over
+The cap counts **live processes only** — sessions in `sleeping` (tmux
+released, wake on next `--resume`), terminal states (`succeeded` /
+`failed` / `killed`), and headless sessions resting between turns
+(`idle` / `needs_input`, which hold no tmux and no pid) don't count. Accumulated sleeping records over
 days used to trip the cap even with zero live tmux; that's fixed —
 sleeping is cheap, keep them around for reopen/adopt without worrying
 about pool pressure.
 
 **Headless kill switch (`enableHeadlessMode`)**: default `true`. Set it
-to `false` and the API refuses every explicit `useTmux: false` on
-`POST /api/sessions` and `PATCH /api/sessions/:uuid` with a `400`, and
-coerces headless *project defaults* back to tmux instead of failing the
-spawn. Running headless sessions are not touched — this gates new
-spawns only. Config-file only (no env override) and read at boot, so
+to `false` and the API refuses every explicit `useTmux: false` — on
+`POST /api/sessions`, `PATCH /api/sessions/:uuid`, and the reopen /
+respawn / clone routes — with a `400`, and coerces headless *project
+defaults* back to tmux instead of failing the spawn. Moving a session back
+TO tmux stays allowed, so records can be unwound while the switch is off.
+Running headless sessions are not touched — this gates new spawns and
+turns only. Config-file only (no env override) and read at boot, so
 restart the API after changing it. See
 [USAGE.md § Headless mode](USAGE.md#headless-mode-no-tmux).
+
+**Headless structured output (`headlessStructuredOutput`)**: default
+`true`. Hands every headless invocation a JSON schema carrying an
+`inquiry` field, which is how an agent with no TUI asks the user a
+question — the session lands in `needs_input` and the web UI renders a
+form. The cost is that a turn's `finalResponse` becomes the model's
+*summary* of its answer rather than the answer's prose (the full text is
+still in the transcript). Set it to `false` if a workflow reads
+`finalResponse` as the deliverable; headless then loses the ability to
+raise a question. Config-file only, read at boot. See
+[USAGE.md § How a headless agent asks you a question](USAGE.md#how-a-headless-agent-asks-you-a-question).
 
 **Idle sweeper (`idleTimeoutMs`)**: default 900000 (15 min). Sessions in
 `idle` or `needs_input` beyond this go to `sleeping` (tmux killed,
