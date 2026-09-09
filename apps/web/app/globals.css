@@ -1,6 +1,13 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+/* Typography plugin — wires up `.prose` classes used by
+ * TranscriptPanePoll's <ReactMarkdown> wrapper. Without this the prose
+ * classes are dead: markdown tables (GFM via remark-gfm) render as
+ * <table><tr><td> HTML with browser defaults, i.e. no borders, no
+ * padding, and lines that read like plain text. Add per-theme table
+ * overrides right after this if the plugin defaults don't match. */
+@plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
 
