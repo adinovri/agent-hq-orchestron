@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   ReactFlow,
@@ -126,6 +126,28 @@ export function DelegationGraph({ sessions, delegationEdges, rootUuid }: Props) 
     router.push(`/session/${node.id}`)
   }, [router])
 
+  // Track the active app theme (orchestron/tycho/light) so React Flow's
+  // Controls/MiniMap/Background pick the right palette. ThemeSwitcher
+  // sets `data-theme` on <html>; watch that attribute for changes so a
+  // live theme toggle re-styles the graph without a reload.
+  const [isLight, setIsLight] = useState(false)
+  useEffect(() => {
+    const html = document.documentElement
+    const detect = () => setIsLight(html.getAttribute('data-theme') === 'light')
+    detect()
+    const obs = new MutationObserver(detect)
+    obs.observe(html, { attributes: true, attributeFilter: ['data-theme'] })
+    return () => obs.disconnect()
+  }, [])
+  const dotColor = isLight ? 'rgba(20,22,28,0.10)' : 'rgba(255,255,255,0.08)'
+  const chromeStyle = {
+    background: 'var(--card)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    color: 'var(--card-foreground)',
+  } as const
+  const miniMaskColor = isLight ? 'rgba(20,22,28,0.06)' : 'rgba(20,22,28,0.6)'
+
   if (rawNodes.length === 0) {
     return (
       <div className="flex items-center justify-center h-64 text-zinc-400 text-sm">
@@ -146,29 +168,18 @@ export function DelegationGraph({ sessions, delegationEdges, rootUuid }: Props) 
         fitViewOptions={{ padding: 0.2 }}
         minZoom={0.2}
         maxZoom={2}
-        // Dark theme — React Flow's Controls / MiniMap / Background pull
-        // their palette from this. Without it, buttons + minimap render
-        // pure white on the app's dark ground → glaring white boxes in
-        // bottom-left/bottom-right. See @xyflow/react docs § colorMode.
-        colorMode="dark"
+        // Theme-aware — orchestron/tycho are dark, light is light.
+        // Without this, React Flow's chrome renders in its default
+        // palette (white boxes on a dark app ground, or vice versa on
+        // the light theme). See @xyflow/react docs § colorMode.
+        colorMode={isLight ? 'light' : 'dark'}
       >
-        <Background gap={20} size={1} color="rgba(255,255,255,0.08)" />
-        <Controls
-          className="react-flow__controls-dark"
-          style={{
-            background: 'rgba(20, 22, 28, 0.85)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: 6,
-          }}
-        />
+        <Background gap={20} size={1} color={dotColor} />
+        <Controls style={chromeStyle} />
         <MiniMap
           nodeColor={(n) => (n.style as { background?: string })?.background ?? '#71717a'}
-          maskColor="rgba(20, 22, 28, 0.6)"
-          style={{
-            background: 'rgba(20, 22, 28, 0.85)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: 6,
-          }}
+          maskColor={miniMaskColor}
+          style={chromeStyle}
         />
       </ReactFlow>
     </div>
