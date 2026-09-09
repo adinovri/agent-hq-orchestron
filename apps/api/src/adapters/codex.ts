@@ -1,5 +1,18 @@
 /**
- * Codex CLI adapter — interactive tmux mode, mirrors ClaudeAdapter architecture.
+ * Codex CLI adapter — interactive tmux (default) and headless.
+ *
+ * HEADLESS MODE (`useTmux === false`): one-shot `codex exec` child process.
+ * Unlike Claude there is no `--session-id` to pre-assign, so codex mints the
+ * thread id itself and announces it on the first `--json` line
+ * (`{"type":"thread.started","thread_id":...}`). The adapter parses that and
+ * reports it back through HeadlessResult.sessionId so the session-manager can
+ * patch the record — without it, resume and transcript lookup are both dead.
+ *
+ * `codex exec` DOES write a rollout JSONL (unlike the interactive TUI, which
+ * only writes SQLite), at the usual
+ * <CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<ts>-<thread_id>.jsonl — verified
+ * on codex-cli 0.153.4. That file is the transcript SSOT; orchestron drains
+ * stdout for the thread id and final message but tees nothing to disk.
  *
  * DESIGN DECISIONS (2026-09-06):
  * - Interactive TUI (not `codex exec`) — live mid-turn streaming + no cold-
@@ -32,7 +45,11 @@ import crypto from 'node:crypto'
 import path from 'node:path'
 import os from 'node:os'
 import Database from 'better-sqlite3'
-import type { AgentAdapter, SpawnConfig, ResumeConfig, TmuxHandle } from '@agent-hq-orchestron/shared'
+import { spawn as spawnProcess, type ChildProcess } from 'node:child_process'
+import type {
+  AgentAdapter, SpawnConfig, ResumeConfig, TmuxHandle, HeadlessResult, TokenUsage,
+} from '@agent-hq-orchestron/shared'
+import { resolveUseTmux } from '@agent-hq-orchestron/shared'
 import * as tmux from './tmux.js'
 
 // Ready marker: codex TUI banner shows `>_ OpenAI Codex (v0.x.y)` in a box
@@ -147,10 +164,107 @@ function buildArgv(opts: {
   return argv
 }
 
+/** Keep at most this many bytes of the child's stderr for `failureReason`. */
+const STDERR_TAIL_BYTES = 8 * 1024
+
+/** Build argv for a headless `codex exec` run, or for resuming one.
+ *
+ *  Codex's terminology differs from Claude's: the resumable id is a
+ *  `thread_id`, and the resume form is the `resume` SUBCOMMAND of `exec`
+ *  (`codex exec resume <thread_id> <prompt>`), not a flag. */
+export function buildCodexExecArgv(opts: {
+  prompt: string
+  model?: string
+  effort?: string
+  mcpConfigInline?: string[]
+  sessionMode?: { type: 'new' } | { type: 'resume'; threadId: string }
+}): string[] {
+  const argv: string[] = ['codex', 'exec']
+  if (opts.sessionMode?.type === 'resume') argv.push('resume', opts.sessionMode.threadId)
+
+  // MCP inline overrides must precede other flags so codex sees them at
+  // config-parse time (same ordering rule as the tmux path).
+  if (opts.mcpConfigInline && opts.mcpConfigInline.length > 0) argv.push(...opts.mcpConfigInline)
+
+  if (opts.model) argv.push('--model', opts.model)
+  // Codex has no --effort flag; reasoning effort is a config override.
+  if (opts.effort) argv.push('-c', `model_reasoning_effort="${opts.effort}"`)
+
+  // Analogue of claude's --permission-mode bypassPermissions.
+  argv.push('--dangerously-bypass-approvals-and-sandbox')
+  // JSONL events on stdout — the only channel that carries the thread id.
+  argv.push('--json')
+  // Workspaces are not always git repos; the tmux path relies on the trust
+  // prompt auto-dismiss, which `exec` has no equivalent for.
+  argv.push('--skip-git-repo-check')
+
+  // NOTE: `--output-schema` is deliberately absent. Structured
+  // inquiry/needs_input output is Phase 2.
+
+  argv.push('--', opts.prompt)
+  return argv
+}
+
+/** CODEX_HOME override for a spawn, or undefined when the effective home is
+ *  the harness default. Same keychain reasoning as buildClaudeEnv — passing
+ *  CODEX_HOME=~/.codex explicitly selects a hashed keychain entry the user
+ *  never authenticated, and codex re-prompts for OAuth. */
+export function buildCodexEnv(configDir: string | undefined): NodeJS.ProcessEnv | undefined {
+  const defaultDir = path.join(os.homedir(), '.codex')
+  const expanded = configDir ? expandHome(configDir) : undefined
+  return expanded && expanded !== defaultDir ? { CODEX_HOME: expanded } : undefined
+}
+
+/** Parse one `codex exec --json` event line. Three of them matter:
+ *   thread.started  → thread_id (the resumable session id)
+ *   item.completed  → agent_message text (final response; last one wins)
+ *   turn.completed  → usage totals */
+function parseCodexExecLine(line: string): Partial<HeadlessResult> | null {
+  let ev: {
+    type?: string
+    thread_id?: string
+    item?: { type?: string; text?: string }
+    usage?: {
+      input_tokens?: number
+      output_tokens?: number
+      cached_input_tokens?: number
+      cache_write_input_tokens?: number
+    }
+  }
+  try { ev = JSON.parse(line) } catch { return null }
+
+  if (ev.type === 'thread.started' && ev.thread_id) return { sessionId: ev.thread_id }
+  if (ev.type === 'item.completed' && ev.item?.type === 'agent_message' && ev.item.text) {
+    return { finalResponse: ev.item.text }
+  }
+  if (ev.type === 'turn.completed' && ev.usage) {
+    const usage: TokenUsage = {
+      input: ev.usage.input_tokens ?? 0,
+      output: ev.usage.output_tokens ?? 0,
+    }
+    if (ev.usage.cached_input_tokens != null) usage.cacheRead = ev.usage.cached_input_tokens
+    if (ev.usage.cache_write_input_tokens != null) usage.cacheCreation = ev.usage.cache_write_input_tokens
+    return { tokenUsage: usage }
+  }
+  return null
+}
+
+interface HeadlessProc {
+  proc: ChildProcess
+  exit: Promise<HeadlessResult>
+}
+
 export class CodexAdapter implements AgentAdapter {
   readonly name = 'codex'
 
+  /** Live headless children keyed by the synthetic handle name. See the
+   *  matching field on ClaudeAdapter for lifetime rules. */
+  private readonly headless = new Map<string, HeadlessProc>()
+
   async spawn(config: SpawnConfig): Promise<TmuxHandle> {
+    // `?? true` — a spawn payload without the field is a tmux spawn.
+    if (!resolveUseTmux(config.useTmux)) return this.spawnHeadless(config)
+
     // Codex assigns the session UUID (v7 timestamp-prefixed). We generate a
     // temporary tmux name using a random tag, then reconcile the real
     // codexSessionId after TUI is ready by scanning the rollout directory.
@@ -165,20 +279,8 @@ export class CodexAdapter implements AgentAdapter {
       mcpConfigInline: config.mcpConfigInline,
     })
 
-    // Skip CODEX_HOME when it resolves to the harness default (~/.codex).
-    // Codex on macOS stores OAuth tokens in the Keychain under a service
-    // name derived from the CODEX_HOME value — bare-run (env unset) hits
-    // the default entry, explicit CODEX_HOME=~/.codex hits a hashed one
-    // that doesn't exist unless the user logged in with the env
-    // explicitly set. Passing env when the value equals the default
-    // forces a keychain mismatch and orchestron-spawned codex re-prompts
-    // for OAuth. Same fix + same reasoning as claude.ts.
-    const defaultDir = path.join(os.homedir(), '.codex')
-    const expandedConfigDir = config.configDir ? expandHome(config.configDir) : undefined
-    const env: NodeJS.ProcessEnv | undefined =
-      expandedConfigDir && expandedConfigDir !== defaultDir
-        ? { CODEX_HOME: expandedConfigDir }
-        : undefined
+    // See buildCodexEnv for why the default home is left inherited.
+    const env = buildCodexEnv(config.configDir)
 
     const [cmd, ...args] = argv
     await tmux.newSession(tmuxName, [cmd!, ...args], config.workspace, env)
@@ -187,6 +289,95 @@ export class CodexAdapter implements AgentAdapter {
     // waitTuiReady to populate the real claudeUuid + jsonlPath. Placeholder
     // values here are best-effort; downstream code should treat as pending.
     return { tmuxName, claudeUuid: '', jsonlPath: '' }
+  }
+
+  /**
+   * Headless spawn: one-shot `codex exec`. Starts immediately (prompt is in
+   * argv) — no TUI wait, no paste.
+   *
+   * `claudeUuid` and `jsonlPath` come back empty because codex only reveals
+   * its thread id once the process starts streaming. The session-manager
+   * fills them in from HeadlessResult.sessionId when the run finishes.
+   */
+  private spawnHeadless(config: SpawnConfig): TmuxHandle {
+    const handleName = `headless-codex-${crypto.randomBytes(4).toString('hex')}`
+    const argv = buildCodexExecArgv({
+      prompt: config.initialPrompt,
+      model: config.model,
+      effort: config.effort,
+      mcpConfigInline: config.mcpConfigInline,
+      sessionMode: { type: 'new' },
+    })
+
+    const handle: TmuxHandle = { tmuxName: handleName, claudeUuid: '', jsonlPath: '', headless: true }
+    this.startHeadless(handle, argv, config.workspace, config.configDir)
+    return handle
+  }
+
+  /** Launch the child and register the promise that settles on its exit. */
+  private startHeadless(
+    handle: TmuxHandle,
+    argv: string[],
+    workspace: string,
+    configDir: string | undefined,
+  ): void {
+    const [cmd, ...args] = argv
+    const override = buildCodexEnv(configDir)
+    const proc = spawnProcess(cmd!, args, {
+      cwd: expandHome(workspace),
+      env: override ? { ...process.env, ...override } : process.env,
+      // stdin closed — otherwise `codex exec` waits on it ("Reading
+      // additional input from stdin..."). stdout/stderr drained below.
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+
+    const exit = new Promise<HeadlessResult>((resolve) => {
+      const collected: Partial<HeadlessResult> = {}
+      let stdoutTail = ''
+      let stderrTail = ''
+
+      proc.stdout?.setEncoding('utf8')
+      proc.stdout?.on('data', (chunk: string) => {
+        stdoutTail += chunk
+        const lines = stdoutTail.split('\n')
+        stdoutTail = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.trim()) continue
+          const parsed = parseCodexExecLine(line)
+          if (parsed) Object.assign(collected, parsed)
+        }
+      })
+      proc.stderr?.setEncoding('utf8')
+      proc.stderr?.on('data', (chunk: string) => {
+        stderrTail = (stderrTail + chunk).slice(-STDERR_TAIL_BYTES)
+      })
+
+      const settle = (exitCode: number | null) => {
+        if (stdoutTail.trim()) {
+          const parsed = parseCodexExecLine(stdoutTail)
+          if (parsed) Object.assign(collected, parsed)
+        }
+        resolve({ ...collected, exitCode, stderr: stderrTail.trim() || undefined })
+      }
+
+      proc.on('close', (code) => settle(code))
+      proc.on('error', (err) => {
+        stderrTail = (stderrTail + `\n${err.message}`).slice(-STDERR_TAIL_BYTES)
+        settle(null)
+      })
+    })
+
+    this.headless.set(handle.tmuxName, { proc, exit })
+  }
+
+  /** Resolve when the headless child for `handle` exits. See the Claude
+   *  adapter's implementation for the no-race rationale. */
+  async awaitHeadlessExit(handle: TmuxHandle): Promise<HeadlessResult> {
+    const entry = this.headless.get(handle.tmuxName)
+    if (!entry) return { exitCode: null }
+    const result = await entry.exit
+    this.headless.delete(handle.tmuxName)
+    return result
   }
 
   /**
@@ -284,20 +475,8 @@ export class CodexAdapter implements AgentAdapter {
       mcpConfigInline: config.mcpConfigInline,
     })
 
-    // Skip CODEX_HOME when it resolves to the harness default (~/.codex).
-    // Codex on macOS stores OAuth tokens in the Keychain under a service
-    // name derived from the CODEX_HOME value — bare-run (env unset) hits
-    // the default entry, explicit CODEX_HOME=~/.codex hits a hashed one
-    // that doesn't exist unless the user logged in with the env
-    // explicitly set. Passing env when the value equals the default
-    // forces a keychain mismatch and orchestron-spawned codex re-prompts
-    // for OAuth. Same fix + same reasoning as claude.ts.
-    const defaultDir = path.join(os.homedir(), '.codex')
-    const expandedConfigDir = config.configDir ? expandHome(config.configDir) : undefined
-    const env: NodeJS.ProcessEnv | undefined =
-      expandedConfigDir && expandedConfigDir !== defaultDir
-        ? { CODEX_HOME: expandedConfigDir }
-        : undefined
+    // See buildCodexEnv for why the default home is left inherited.
+    const env = buildCodexEnv(config.configDir)
 
     const [cmd, ...args] = argv
     await tmux.newSession(tmuxName, [cmd!, ...args], config.workspace, env)
@@ -309,6 +488,8 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async waitTuiReady(handle: TmuxHandle, timeoutMs: number): Promise<void> {
+    // Headless has no TUI and no trust prompt — `exec` skips both.
+    if (handle.headless) return
     // Same skeleton as ClaudeAdapter.waitTuiReady — regexes TBD per codex TUI.
     const deadline = Date.now() + timeoutMs
     let lastDismissAt = 0
@@ -341,6 +522,10 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async sendPrompt(handle: TmuxHandle, prompt: string): Promise<void> {
+    if (handle.headless) {
+      // The prompt travelled in argv; Phase 1 headless is single-turn.
+      throw new Error('Headless session does not accept follow-up input — respawn or reopen instead')
+    }
     // Paste-buffer + wait-for-echo + Enter, then VERIFY submission and retry
     // Enter if codex TUI swallowed the keystroke.
     //
@@ -381,6 +566,14 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async kill(handle: TmuxHandle): Promise<void> {
+    if (handle.headless) {
+      const entry = this.headless.get(handle.tmuxName)
+      if (entry) {
+        entry.proc.kill('SIGTERM')
+        this.headless.delete(handle.tmuxName)
+      }
+      return
+    }
     await tmux.killSession(handle.tmuxName)
   }
 }
