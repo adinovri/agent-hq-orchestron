@@ -44,14 +44,26 @@ function layoutDagre(
   }
 }
 
+// Aligned with StatusPill (apps/web/lib/status.ts) so the graph reads
+// the same as dashboard chips. Covers all 9 states of state-machine v2
+// (2026-09-05 removed `completing`/`completed`). Colors picked to read
+// on both dark themes (orchestron zinc + tycho warm) and the light
+// theme — saturated fills + white text works on both grounds.
 const STATUS_COLORS: Record<string, string> = {
-  running: '#22c55e',
-  spawning: '#3b82f6',
-  completing: '#eab308',
-  waiting: '#eab308',
-  completed: '#a1a1aa',
-  failed: '#ef4444',
-  killed: '#a1a1aa',
+  spawning: '#0284c7',      // sky-600
+  waiting: '#ca8a04',       // yellow-600
+  running: '#059669',       // emerald-600 (bright — active)
+  needs_input: '#d97706',   // amber-600 (attention)
+  idle: '#71717a',          // zinc-500 (calm neutral)
+  sleeping: '#6366f1',      // indigo-500 (dormant, distinctive)
+  succeeded: '#15803d',     // emerald-700 (calmer, done)
+  failed: '#dc2626',        // red-600
+  killed: '#52525b',        // zinc-600 (muted terminal)
+}
+// Slightly stronger border to lift each node against the dot-grid bg.
+function borderFor(status?: string): string {
+  const base = STATUS_COLORS[status ?? 'idle'] ?? '#71717a'
+  return base
 }
 
 interface Props {
@@ -82,13 +94,22 @@ export function DelegationGraph({ sessions, delegationEdges, rootUuid }: Props) 
         position: { x: 0, y: 0 },
         data: { label: id.slice(0, 8) + (s ? `\n${s.status}` : '') },
         style: {
-          background: STATUS_COLORS[s?.status ?? 'waiting'] ?? '#a1a1aa',
+          background: STATUS_COLORS[s?.status ?? 'idle'] ?? '#71717a',
           color: '#fff',
-          borderRadius: 8,
+          borderRadius: 10,
           fontSize: 12,
+          fontWeight: 500,
           width: NODE_W,
           height: NODE_H,
-          border: id === rootUuid ? '2px solid #fff' : '1px solid rgba(255,255,255,0.2)',
+          // Root gets a bright white ring so it's distinct in a tree.
+          // Non-root nodes get a subtle same-hue border so the fill has
+          // a lift against the dot-grid, without competing with the fill.
+          border: id === rootUuid
+            ? '2px solid #fff'
+            : `1px solid ${borderFor(s?.status)}`,
+          boxShadow: id === rootUuid
+            ? '0 0 0 3px rgba(255,255,255,0.15)'
+            : '0 1px 3px rgba(0,0,0,0.35)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
