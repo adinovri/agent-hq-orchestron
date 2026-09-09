@@ -160,3 +160,98 @@ describe('SessionManager — list', () => {
     expect(sessions).toHaveLength(2)
   })
 })
+
+describe('SessionManager — enableHeadlessMode masking', () => {
+  function makeMaskedManager(adapter: AgentAdapter, enableHeadlessMode: boolean) {
+    const registry = new AdapterRegistry()
+    registry.register('claude', adapter)
+    registry.register('mock', adapter)
+    return new SessionManager(
+      { dataDir: tmpDir, maxConcurrent: 3, enableHeadlessMode },
+      registry,
+    )
+  }
+
+  /**
+   * Wait for the detached post-spawn work to finish.
+   *
+   * spawn() returns as soon as the record is written and lets completeSpawn
+   * (waitTuiReady → sendPrompt → transition 'running') run on its own. Kill
+   * that session while completeSpawn is still in flight and the transition
+   * lands afterwards, putting a killed session back into `running` — and
+   * respawn() then refuses it for not being terminal.
+   *
+   * So this waits for `running` *before* the kill rather than for terminal
+   * after it: once completeSpawn has landed there is nothing left to
+   * resurrect the record. Under a single-file run the mock adapter wins
+   * that race anyway; under the full suite it loses often enough to matter.
+   */
+  async function awaitSpawnComplete(mgr: SessionManager, id: string): Promise<void> {
+    const SETTLED = ['running', 'idle', 'needs_input', 'succeeded', 'failed', 'killed']
+    for (let i = 0; i < 200; i++) {
+      const rec = (await mgr.list()).find(x => x.id === id)
+      if (rec && SETTLED.includes(rec.status)) return
+      await new Promise(r => setTimeout(r, 10))
+    }
+    throw new Error(`session ${id} never finished spawning`)
+  }
+
+  /** The manager is its own enforcement layer, not just a pass-through for
+   *  a route that already coerced. Asserted here directly so a regression
+   *  where only the route coerces cannot hide behind the route tests. */
+  it('coerces a headless spawn to tmux at the spawn boundary', async () => {
+    const adapter = makeAdapter()
+    const mgr = makeMaskedManager(adapter, false)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    expect(s.useTmux).toBe(true)
+    expect((adapter.spawn as ReturnType<typeof vi.fn>).mock.calls[0]![0].useTmux).toBe(true)
+  })
+
+  it('leaves a headless spawn alone when the switch is on', async () => {
+    const adapter = makeAdapter()
+    const mgr = makeMaskedManager(adapter, true)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    expect(s.useTmux).toBe(false)
+    expect((adapter.spawn as ReturnType<typeof vi.fn>).mock.calls[0]![0].useTmux).toBe(false)
+  })
+
+  it('treats an omitted enableHeadlessMode as enabled', async () => {
+    // Every call site that predates the flag, and most of this file.
+    const mgr = makeManager(makeAdapter())
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    expect(s.useTmux).toBe(false)
+  })
+
+  it('does not disturb a spawn that never asked for headless', async () => {
+    const adapter = makeAdapter()
+    const mgr = makeMaskedManager(adapter, false)
+    const s = await mgr.spawn(baseSpawn)
+    expect(s.useTmux).toBe(true)
+  })
+
+  it('coerces a headless record on respawn', async () => {
+    // The path a route body never reaches: respawn reads the mode off the
+    // record. This is where an existing headless session gets migrated.
+    const adapter = makeAdapter()
+    const permissive = makeMaskedManager(adapter, true)
+    const s = await permissive.spawn({ ...baseSpawn, useTmux: false })
+    expect(s.useTmux).toBe(false)
+    await awaitSpawnComplete(permissive, s.id)
+    await permissive.kill(s.id)
+
+    // Same dataDir, switch now off.
+    const masked = makeMaskedManager(adapter, false)
+    const fresh = await masked.respawn(s.id, '/tmp/ws', undefined)
+    expect(fresh.useTmux).toBe(true)
+  })
+
+  it('keeps a headless record headless on respawn while the switch is on', async () => {
+    const adapter = makeAdapter()
+    const mgr = makeMaskedManager(adapter, true)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    await awaitSpawnComplete(mgr, s.id)
+    await mgr.kill(s.id)
+    const fresh = await mgr.respawn(s.id, '/tmp/ws', undefined)
+    expect(fresh.useTmux).toBe(false)
+  })
+})
