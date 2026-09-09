@@ -29,6 +29,14 @@ const RAM_PER_SUBPROCESS_MB = 800
  */
 export const DEFAULT_ENABLE_HEADLESS_MODE = true
 
+/**
+ * Global default for structured headless output (the `inquiry` schema).
+ *
+ * On, because an agent that cannot ask a question is the single biggest gap
+ * between a headless session and a tmux one.
+ */
+export const DEFAULT_HEADLESS_STRUCTURED_OUTPUT = true
+
 export const ConfigSchema = z.object({
   bindHost: z.string().default('127.0.0.1'),
   port: z.number().int().min(1).max(65535).default(8080),
@@ -52,6 +60,17 @@ export const ConfigSchema = z.object({
    *  bug is loose in production. Default `true`: the per-session and
    *  per-project toggles behave exactly as they did before this flag. */
   enableHeadlessMode: z.boolean().default(DEFAULT_ENABLE_HEADLESS_MODE),
+  /** Whether headless runs are given the structured-output schema that
+   *  carries the `inquiry` field. `true` (default) is what lets a headless
+   *  agent ask the user a question and land in `needs_input`.
+   *
+   *  Turning it off is the escape hatch for the one real cost: with the
+   *  schema on, a turn's `finalResponse` is the model's *summary* of its
+   *  answer rather than the answer's prose. The full text is still in the
+   *  transcript, but a workflow that reads `finalResponse` as the deliverable
+   *  wants this off. Headless then behaves as it did in Phase 1 — minus the
+   *  ability to raise an inquiry. */
+  headlessStructuredOutput: z.boolean().default(DEFAULT_HEADLESS_STRUCTURED_OUTPUT),
 })
 
 export type Config = z.infer<typeof ConfigSchema>

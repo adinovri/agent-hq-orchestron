@@ -50,6 +50,20 @@ export const SessionMetadataSchema = z.object({
   configDir: z.string().optional(),
   cwdSlug: z.string().optional(),
   useTmux: z.boolean().optional(),
+  pendingInquiry: z
+    .object({
+      message: z.string(),
+      fields: z.array(
+        z.object({
+          name: z.string(),
+          label: z.string(),
+          type: z.enum(['text', 'choice', 'boolean']),
+          options: z.array(z.string()).nullable(),
+        }),
+      ),
+    })
+    .nullable()
+    .optional(),
   failureReason: z.string().optional(),
   metadata: z.record(z.unknown()),
 })

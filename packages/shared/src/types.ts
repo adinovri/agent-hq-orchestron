@@ -76,6 +76,44 @@ export interface SessionMetadata {
    *  by SessionManager.sweepAskUserPrompts and cleared when the modal is
    *  answered. Frontend renders it as an approval banner in session detail. */
   pendingPrompt?: PendingPrompt | null
+  /** Structured question raised by the last headless turn, parsed from the
+   *  agent's schema-constrained final response. Set alongside the
+   *  `needs_input` transition and cleared when the next turn starts.
+   *
+   *  Distinct from `pendingPrompt`, which is scraped off a live tmux pane and
+   *  is answered by a keystroke. An inquiry is answered by text, which starts
+   *  a whole new `-p --resume` turn. */
+  pendingInquiry?: Inquiry | null
+}
+
+/** One field of a structured inquiry raised by a headless agent.
+ *
+ *  Shape is dictated by the strict-mode JSON schema handed to the harness
+ *  (see `ORCHESTRON_RESULT_SCHEMA`), which is why `options` is present and
+ *  nullable rather than optional: Codex/OpenAI strict mode requires every
+ *  property to appear in `required`, so "absent" has to be spelled `null`. */
+export interface InquiryField {
+  name: string
+  label: string
+  type: 'text' | 'choice' | 'boolean'
+  /** Choices for `type: 'choice'`. `null` for every other type. */
+  options: string[] | null
+}
+
+/** A headless agent's request for user input, parsed out of the structured
+ *  final response. Presence of one is what moves a finished headless turn to
+ *  `needs_input` instead of `idle`. */
+export interface Inquiry {
+  message: string
+  fields: InquiryField[]
+}
+
+/** The whole structured document a headless turn returns when
+ *  `headlessStructuredOutput` is on. `inquiry` is null on a turn that needs
+ *  nothing from the user. */
+export interface HeadlessResultDocument {
+  summary: string
+  inquiry: Inquiry | null
 }
 
 /** Snapshot of an interactive selector modal captured from the tmux pane.
@@ -227,6 +265,16 @@ export interface SpawnConfig {
    *  Passed as a pre-serialized list of key=value strings suitable for
    *  concatenation into argv. Adapter-specific; claude ignores. */
   mcpConfigInline?: string[]
+  /** Path to the structured-output JSON schema on disk. Headless only.
+   *
+   *  Only Codex reads the path — its `--output-schema` flag takes a FILE.
+   *  Claude's `--json-schema` takes the schema INLINE as a JSON string and
+   *  rejects a path outright, so the Claude adapter serialises the shared
+   *  schema object itself and ignores this field. Same split as
+   *  mcpConfigPath (claude, file) vs mcpConfigInline (codex, flags).
+   *
+   *  Unset disables structured output for the run. */
+  outputSchemaPath?: string
 }
 
 export interface ResumeConfig {
@@ -240,6 +288,19 @@ export interface ResumeConfig {
    *  Passed as a pre-serialized list of key=value strings suitable for
    *  concatenation into argv. Adapter-specific; claude ignores. */
   mcpConfigInline?: string[]
+  /** See SpawnConfig.outputSchemaPath. */
+  outputSchemaPath?: string
+  /** When false, resume headless: one `claude -p --resume <id>` /
+   *  `codex exec resume <id>` child process for this turn instead of an
+   *  interactive tmux. Unset means tmux, exactly as on SpawnConfig.
+   *
+   *  `prompt` is required in that case — a headless invocation has nothing to
+   *  do without one, unlike a tmux resume which just re-enters the session
+   *  and waits. */
+  useTmux?: boolean
+  /** The turn's prompt. Headless resume only; the tmux path pastes prompts
+   *  through `sendPrompt` after the TUI is up. */
+  prompt?: string
 }
 
 export interface TmuxHandle {

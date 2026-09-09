@@ -5,7 +5,7 @@ import os from 'node:os'
 import Database from 'better-sqlite3'
 import { writeJson, readJson, listDir } from '@agent-hq-orchestron/file-store'
 import type { SessionMetadata, SessionStatus, SpawnConfig, TmuxHandle, HeadlessResult } from '@agent-hq-orchestron/shared'
-import { resolveUseTmux } from '@agent-hq-orchestron/shared'
+import { resolveUseTmux, parseHeadlessResultDocument } from '@agent-hq-orchestron/shared'
 import type { AdapterRegistry } from '../adapters/registry.js'
 import { TranscriptTailer } from '../streaming/transcript-tailer.js'
 
@@ -457,6 +457,12 @@ export class SessionManager {
   private readonly idleSweepers = new Map<string, NodeJS.Timeout>()
   // Safety-net sweep interval — catches sessions whose per-session timer
   // was lost (e.g. server crash, dropped notification).
+  /** Sessions whose in-flight headless turn was interrupted by the user.
+   *  The SIGTERM shows up as a signal exit in finishHeadlessTurn, which would
+   *  otherwise read as a failure; this marker says "that was deliberate, land
+   *  on idle". Consumed exactly once by the turn that was interrupted. */
+  private readonly headlessInterrupts = new Set<string>()
+
   private safetyNetSweep: NodeJS.Timeout | null = null
   // AskUserQuestion pane-scan sweep — catches modals that current Claude
   // buffers out of JSONL (writes flushed only when the turn ends).
@@ -870,17 +876,25 @@ export class SessionManager {
   }
 
   /**
-   * Headless lifecycle: `spawning → running → succeeded | failed`.
+   * Headless spawn lifecycle: `spawning → running → idle | needs_input`.
    *
-   * Differences from the tmux path, all of them because the process is
+   * A headless session is NOT single-shot any more. The child process is
+   * ephemeral — one process per turn — but the *session* persists, exactly as
+   * a tmux one does, and comes to rest in `idle` ready for the next
+   * `-p --resume` turn. Phase 1 landed a finished run in `succeeded`, which
+   * conflated "the process exited" with "the user is done with this session";
+   * `succeeded` is now reached only through Archive, same as tmux.
+   *
+   * Differences from the tmux path that remain, all because the process is
    * ephemeral rather than long-lived:
    *  - no waitTuiReady / interstitial dismissal — `-p` and `exec` have no TUI
-   *  - no sendPrompt — the prompt was in argv
+   *  - no sendPrompt — the prompt is in argv, one prompt per child
    *  - no turn watcher — the harness emits no `turn_duration` in headless
    *    mode; process exit IS the turn boundary
-   *  - no idle/sleeping — there is no live process to release, so the idle
-   *    sweeper is never armed (transition() only arms on idle/needs_input)
-   *  - pool cap decrements naturally when the run reaches a terminal state
+   *  - no sleeping — nothing is held between turns, so there is nothing for
+   *    the idle sweeper to release (armIdleSweeper skips headless)
+   *  - an idle headless session costs nothing, so it does not occupy a pool
+   *    cap slot (see countActiveSessions)
    */
   private async completeHeadlessSpawn(
     uuid: string,
@@ -888,7 +902,27 @@ export class SessionManager {
     handle: TmuxHandle,
   ): Promise<void> {
     await this.transition(uuid, 'running')
+    await this.finishHeadlessTurn(uuid, adapter, handle)
+  }
 
+  /**
+   * Await one headless child's exit and land the session.
+   *
+   * Shared by the initial spawn and by every follow-up turn from sendInput,
+   * so a turn is reconciled identically however it was started. Assumes the
+   * session is already in `running`.
+   *
+   * Landing rules:
+   *   exit 0 + structured inquiry  → `needs_input` (+ pendingInquiry set)
+   *   exit 0                       → `idle`
+   *   interrupted by the user      → `idle` (the turn was cut short on purpose)
+   *   anything else                → `failed` (+ failureReason from stderr)
+   */
+  private async finishHeadlessTurn(
+    uuid: string,
+    adapter: import('@agent-hq-orchestron/shared').AgentAdapter,
+    handle: TmuxHandle,
+  ): Promise<void> {
     const result: HeadlessResult = adapter.awaitHeadlessExit
       ? await adapter.awaitHeadlessExit(handle)
       : { exitCode: null, stderr: `adapter '${adapter.name}' does not support headless mode` }
@@ -897,9 +931,20 @@ export class SessionManager {
     // importantly a user Kill, which already put it in a terminal state.
     // Transitioning again would throw InvalidTransitionError.
     const rec = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
-    if (!rec) return
+    if (!rec) {
+      this.headlessInterrupts.delete(uuid)
+      return
+    }
     const TERMINAL: SessionStatus[] = ['succeeded', 'failed', 'killed']
-    if (TERMINAL.includes(rec.status)) return
+    if (TERMINAL.includes(rec.status)) {
+      this.headlessInterrupts.delete(uuid)
+      return
+    }
+
+    // An interrupt SIGTERMs the child, which surfaces here as a non-zero /
+    // signal exit. That is a user decision, not a failure, so consume the
+    // marker and land on idle with whatever the turn managed to produce.
+    const interrupted = this.headlessInterrupts.delete(uuid)
 
     const patched: SessionMetadata = { ...rec }
 
@@ -914,19 +959,32 @@ export class SessionManager {
       }
     }
 
-    if (result.finalResponse != null) patched.finalResponse = result.finalResponse
+    // With structured output on, finalResponse is a JSON document rather than
+    // prose. parseHeadlessResultDocument is forgiving by design — a plain
+    // string comes back as `{summary: <that string>, inquiry: null}` — so this
+    // is safe to run unconditionally, including when the flag is off or the
+    // model ignored the schema.
+    const doc = parseHeadlessResultDocument(result.finalResponse)
+    if (result.finalResponse != null) patched.finalResponse = doc.summary
     if (result.tokenUsage) patched.tokenUsage = result.tokenUsage
     if (result.costUsd != null) patched.costUsd = result.costUsd
 
-    const ok = result.exitCode === 0
+    const ok = result.exitCode === 0 || interrupted
+    // An inquiry from a turn that then failed is not actionable — the process
+    // died, so there is nothing to resume into. Only honour it on a clean run.
+    const inquiry = result.exitCode === 0 ? doc.inquiry : null
+    patched.pendingInquiry = inquiry
     if (!ok) {
       patched.failureReason = result.stderr
         ? `headless exit ${result.exitCode ?? 'signal'}: ${result.stderr}`
         : `headless exit ${result.exitCode ?? 'signal'}`
+    } else {
+      // A turn that succeeded clears a stale reason from an earlier one.
+      patched.failureReason = undefined
     }
 
     await writeJson(this.sessionPath(uuid), patched)
-    await this.transition(uuid, ok ? 'succeeded' : 'failed')
+    await this.transition(uuid, !ok ? 'failed' : inquiry ? 'needs_input' : 'idle')
   }
 
   async sendInput(uuid: string, prompt: string): Promise<SessionMetadata> {
@@ -1051,6 +1109,10 @@ export class SessionManager {
   async reconcileTurnEnd(uuid: string, lastAssistantText: string): Promise<void> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session || session.status !== 'running') return
+    // Headless turns end when the child exits, full stop. A transcript-driven
+    // reconcile here would race finishHeadlessTurn and could flip the session
+    // to idle while its process is still working.
+    if (!resolveUseTmux(session.useTmux)) return
     const next: SessionStatus = textAsksQuestion(lastAssistantText) ? 'needs_input' : 'idle'
     if (ALLOWED_TRANSITIONS[session.status].includes(next)) {
       await this.transition(uuid, next).catch(() => {})
@@ -1094,11 +1156,29 @@ export class SessionManager {
       throw new Error(`Cannot interrupt session in ${session.status} state`)
     }
 
-    // Interrupt is an Escape keystroke into a TUI — a headless child has no
-    // TUI and no mid-turn boundary to fall back to. Kill is the only way to
-    // stop one, and it reports the run as `killed` rather than `idle`.
+    // Headless: there is no TUI to send Escape to, but there IS a child
+    // process, and now that a headless session survives its turn, stopping
+    // one turn has to be possible without ending the session. SIGTERM the
+    // child and mark the interrupt so finishHeadlessTurn reads the resulting
+    // signal exit as deliberate and lands on `idle` instead of `failed`.
+    //
+    // Between turns there is no child at all, so an interrupt is a no-op on
+    // an already-idle session — same as pressing Escape at a tmux prompt.
     if (!resolveUseTmux(session.useTmux)) {
-      throw new Error('Cannot interrupt a headless session — no TUI to signal. Kill it instead.')
+      if (session.status !== 'running') return session
+      this.headlessInterrupts.add(uuid)
+      const adapter = this.registry.getOrThrow(session.agentType)
+      try {
+        await adapter.kill(handleFor(session))
+      } catch (err) {
+        // Nothing was signalled, so nothing will consume the marker.
+        this.headlessInterrupts.delete(uuid)
+        throw err
+      }
+      // finishHeadlessTurn owns the transition — it is already awaiting the
+      // exit promise and will land the session once the child is reaped.
+      // Racing it with a transition here would throw on the second write.
+      return session
     }
 
     const handle = handleFor(session)
@@ -1307,9 +1387,10 @@ export class SessionManager {
 
     await writeJson(this.sessionPath(uuid), updated)
 
-    // Sweeper arming based on target state.
+    // Sweeper arming based on target state. `updated` is passed so the
+    // sweeper can see the session's mode without a second read.
     if (IDLE_STATES.includes(newStatus)) {
-      this.armIdleSweeper(uuid)
+      this.armIdleSweeper(uuid, updated)
     } else {
       this.clearIdleSweeper(uuid)
     }
@@ -1319,9 +1400,17 @@ export class SessionManager {
 
   // ── Idle sweeper (warm-shutdown after inactivity) ─────────────────
 
-  /** Arm a per-session warm-shutdown timer. No-op when idleTimeoutMs = 0. */
-  private armIdleSweeper(uuid: string): void {
+  /** Arm a per-session warm-shutdown timer. No-op when idleTimeoutMs = 0,
+   *  and no-op for headless sessions.
+   *
+   *  Warm-shutdown exists to release a tmux window that an idle session is
+   *  still holding. A headless session between turns holds nothing — the
+   *  child exited when the turn ended — so `sleeping` would be a state with
+   *  no resource behind it, and waking would be a no-op that only makes the
+   *  next send slower to reason about. Idle IS the resting state there. */
+  private armIdleSweeper(uuid: string, session?: SessionMetadata): void {
     if (this.idleTimeoutMs <= 0) return
+    if (session && !resolveUseTmux(session.useTmux)) return
     // Cancel any existing timer so we don't accumulate.
     this.clearIdleSweeper(uuid)
     const t = setTimeout(() => {
@@ -1353,6 +1442,10 @@ export class SessionManager {
     if (!session) return
     const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
     if (!IDLE_STATES.includes(session.status)) return
+    // Defence in depth: nothing should arm a sweeper for a headless session,
+    // but a stale timer surviving a mode flip must not push it to `sleeping`
+    // — a state it can never be woken out of, since wake-up resumes a tmux.
+    if (!resolveUseTmux(session.useTmux)) return
     const adapter = this.registry.getOrThrow(session.agentType)
     await adapter.kill(handleFor(session)).catch(() => { /* tmux may already be dead */ })
     // Close any dangling watcher.
@@ -1369,6 +1462,8 @@ export class SessionManager {
     const now = Date.now()
     for (const s of sessions) {
       if (!IDLE_STATES.includes(s.status)) continue
+      // Headless sessions never sleep — see armIdleSweeper.
+      if (!resolveUseTmux(s.useTmux)) continue
       const since = s.idleSince ? Date.parse(s.idleSince) : Date.parse(s.endedAt ?? s.startedAt)
       const idleFor = now - since
       if (idleFor >= this.idleTimeoutMs) {
@@ -1428,6 +1523,10 @@ export class SessionManager {
       // select) is a universal TUI convention and matches both harnesses'
       // selector shape when it does appear. Opencode is not scanned yet.
       if (s.agentType !== 'claude' && s.agentType !== 'codex') continue
+      // Headless has no pane to capture — its `tmuxName` is a synthetic
+      // handle key, so capturePane would just fail into the catch below on
+      // every tick. Its needs_input comes from the structured inquiry.
+      if (!resolveUseTmux(s.useTmux)) continue
       if (!s.tmuxName) continue
       try {
         const pane = await tmux.capturePane(s.tmuxName)
@@ -1503,8 +1602,20 @@ export class SessionManager {
   ): Promise<SessionMetadata> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
+    // Editable whenever no live process is bound to the current values.
+    // For tmux that means terminal or sleeping — an idle tmux session still
+    // has a claude bound to its model, so an edit there would silently not
+    // take effect until the next spawn.
+    //
+    // A headless session between turns has no process at all: `idle` and
+    // `needs_input` are its resting states and the next turn re-reads the
+    // record from scratch. Editing there is both safe and the only moment a
+    // multi-turn headless session is ever editable, so it is allowed.
     const EDITABLE: SessionStatus[] = ['succeeded', 'killed', 'failed', 'sleeping']
-    if (!EDITABLE.includes(session.status)) {
+    const HEADLESS_AT_REST: SessionStatus[] = ['idle', 'needs_input']
+    const headlessAtRest =
+      !resolveUseTmux(session.useTmux) && HEADLESS_AT_REST.includes(session.status)
+    if (!EDITABLE.includes(session.status) && !headlessAtRest) {
       throw new Error(
         `Cannot edit metadata on active session (status: ${session.status}). ` +
         `Kill it or let it sleep first — metadata edits only apply on next spawn.`,
@@ -1535,6 +1646,7 @@ export class SessionManager {
     const now = Date.now()
     for (const s of sessions) {
       if (!IDLE_STATES.includes(s.status)) continue
+      if (!resolveUseTmux(s.useTmux)) continue     // headless never sleeps
       if (this.idleSweepers.has(s.id)) continue    // covered by primary timer
       const since = s.idleSince ? Date.parse(s.idleSince) : Date.parse(s.endedAt ?? s.startedAt)
       if (now - since >= this.idleTimeoutMs) {
@@ -2291,9 +2403,31 @@ export class SessionManager {
     // Re-read after migration
     const fresh = await this.list()
     for (const s of fresh) {
-      if (s.status === 'running') {
+      // Headless has no turn_duration event to watch for, and its `running`
+      // sessions are handled as boot orphans just below.
+      if (s.status === 'running' && resolveUseTmux(s.useTmux)) {
         this.watchForTurnEnd(s.id, s.jsonlPath, { fromStart: true })
       }
+    }
+
+    // Headless boot orphans. A headless turn is owned by an in-memory exit
+    // promise inside the adapter; when the API process dies that promise dies
+    // with it, and nothing will ever land the turn — the record would sit at
+    // `running` forever. The child itself is not detached, so it is normally
+    // gone too. Land the session in `idle` rather than `failed`: the turn's
+    // output is already in the harness's own transcript, the conversation is
+    // still resumable, and the user can just send the next turn.
+    for (const s of fresh) {
+      if (s.status !== 'running' || resolveUseTmux(s.useTmux)) continue
+      console.warn(`[session-manager] boot orphan-scan: headless session ${s.id.slice(0, 8)} was mid-turn at prior shutdown, landing idle`)
+      try {
+        await this.transition(s.id, 'idle')
+        const rec = await readJson<SessionMetadata | null>(this.sessionPath(s.id), null)
+        if (rec) {
+          rec.failureReason = 'orchestron API restarted while a headless turn was in flight; the turn was not observed to completion. Check the transcript, then send the next turn.'
+          await writeJson(this.sessionPath(s.id), rec)
+        }
+      } catch { /* best-effort */ }
     }
     // Orphan cleanup: sessions marked `spawning` or `waiting` at API boot
     // time got orphaned by the previous process. Their in-flight
@@ -2306,6 +2440,7 @@ export class SessionManager {
     // effort kill the tmux to release resources.
     for (const s of fresh) {
       if (s.status === 'spawning' || s.status === 'waiting') {
+        const headless = !resolveUseTmux(s.useTmux)
         console.warn(`[session-manager] boot orphan-scan: session ${s.id.slice(0, 8)} was ${s.status} at prior shutdown, marking failed`)
         try {
           if (s.tmuxName) {
@@ -2317,7 +2452,9 @@ export class SessionManager {
           await this.transition(s.id, 'failed').catch(() => {})
           const failed = await readJson<SessionMetadata | null>(this.sessionPath(s.id), null)
           if (failed) {
-            failed.failureReason = `orchestron API restarted while session was still ${s.status}; tmux orphaned. Delete this record and spawn a fresh one.`
+            failed.failureReason = headless
+              ? `orchestron API restarted while the session was still ${s.status}; the headless child was never observed. Respawn to run the prompt again.`
+              : `orchestron API restarted while session was still ${s.status}; tmux orphaned. Delete this record and spawn a fresh one.`
             await writeJson(this.sessionPath(s.id), failed)
           }
         } catch { /* best-effort */ }
@@ -2386,6 +2523,16 @@ export class SessionManager {
     // how many sleeping sessions the user ends up reopening at once,
     // which in practice is small enough not to need its own cap.
     const NON_LIVE: SessionStatus[] = ['succeeded', 'failed', 'killed', 'sleeping']
-    return all.filter((s) => !NON_LIVE.includes(s.status)).length
+    // A headless session at rest is the same kind of cheap. Between turns its
+    // child process is gone — `idle` / `needs_input` there holds no tmux, no
+    // pty and no pid, so counting it would let a pile of finished one-shots
+    // block new spawns for nothing. It counts again the moment a turn is
+    // actually in flight (`spawning` / `running`).
+    const HEADLESS_AT_REST: SessionStatus[] = ['idle', 'needs_input']
+    return all.filter((s) => {
+      if (NON_LIVE.includes(s.status)) return false
+      if (!resolveUseTmux(s.useTmux) && HEADLESS_AT_REST.includes(s.status)) return false
+      return true
+    }).length
   }
 }

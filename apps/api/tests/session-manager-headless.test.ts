@@ -107,7 +107,7 @@ describe('SessionManager — useTmux resolution', () => {
 })
 
 describe('SessionManager — headless lifecycle', () => {
-  it('goes spawning -> running -> succeeded without waiting for a TUI', async () => {
+  it('goes spawning -> running -> idle without waiting for a TUI', async () => {
     const { adapter, releaseExit } = makeHeadlessAdapter({
       exitCode: 0,
       finalResponse: 'done',
@@ -120,7 +120,7 @@ describe('SessionManager — headless lifecycle', () => {
 
     await waitForRecord(mgr, s.id, (r) => r.status === 'running', 'running')
     releaseExit()
-    const done = await waitForRecord(mgr, s.id, (r) => r.status === 'succeeded', 'succeeded')
+    const done = await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
 
     // Never went through 'waiting', and neither TUI step was invoked.
     expect(adapter.waitTuiReady).not.toHaveBeenCalled()
@@ -128,7 +128,55 @@ describe('SessionManager — headless lifecycle', () => {
     expect(done.finalResponse).toBe('done')
     expect(done.costUsd).toBe(0.5)
     expect(done.tokenUsage).toEqual({ input: 1, output: 2 })
-    expect(done.endedAt).toBeTruthy()
+    // `idle` is not terminal, so endedAt stays null — the session is alive
+    // and waiting for the next turn. Phase 1 landed on `succeeded` here and
+    // stamped endedAt; that conflated process exit with user-done.
+    expect(done.endedAt).toBeNull()
+  })
+
+  it('lands needs_input when the turn returns a structured inquiry', async () => {
+    const { adapter, releaseExit } = makeHeadlessAdapter({
+      exitCode: 0,
+      finalResponse: JSON.stringify({
+        summary: 'Blocked on the target environment.',
+        inquiry: {
+          message: 'Which environment?',
+          fields: [{ name: 'env', label: 'Environment', type: 'choice', options: ['dev', 'prod'] }],
+        },
+      }),
+    })
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    releaseExit()
+    const asked = await waitForRecord(mgr, s.id, (r) => r.status === 'needs_input', 'needs_input')
+    expect(asked.pendingInquiry?.message).toBe('Which environment?')
+    expect(asked.pendingInquiry?.fields[0]?.options).toEqual(['dev', 'prod'])
+    // finalResponse carries the summary, not the raw JSON envelope.
+    expect(asked.finalResponse).toBe('Blocked on the target environment.')
+  })
+
+  it('lands idle when the structured result carries no inquiry', async () => {
+    const { adapter, releaseExit } = makeHeadlessAdapter({
+      exitCode: 0,
+      finalResponse: JSON.stringify({ summary: 'All done.', inquiry: null }),
+    })
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    releaseExit()
+    const done = await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
+    expect(done.finalResponse).toBe('All done.')
+    expect(done.pendingInquiry).toBeNull()
+  })
+
+  it('keeps a plain-text final response intact when the model ignores the schema', async () => {
+    // Structured output is a request, not a guarantee. Prose must survive.
+    const { adapter, releaseExit } = makeHeadlessAdapter({ exitCode: 0, finalResponse: 'just prose' })
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    releaseExit()
+    const done = await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
+    expect(done.finalResponse).toBe('just prose')
+    expect(done.pendingInquiry).toBeNull()
   })
 
   it('marks a non-zero exit failed and keeps the stderr as the reason', async () => {
@@ -160,7 +208,7 @@ describe('SessionManager — headless lifecycle', () => {
     const s = await mgr.spawn({ ...baseSpawn, agentType: 'codex', useTmux: false })
     expect(s.claudeSessionUuid).toBe('')
     releaseExit()
-    const done = await waitForRecord(mgr, s.id, (r) => r.status === 'succeeded', 'succeeded')
+    const done = await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
     expect(done.claudeSessionUuid).toBe('thread-xyz')
   })
 
@@ -184,64 +232,111 @@ describe('SessionManager — headless lifecycle', () => {
     expect(after.status).toBe('killed')
   })
 
-  it('never arms the idle sweeper — headless has no idle state to sleep from', async () => {
+  it('rests in idle without ever being swept to sleeping', async () => {
+    // Headless DOES have an idle state now, but nothing to warm-shutdown:
+    // between turns there is no tmux and no child. A sweeper firing here
+    // would push it to `sleeping`, a state whose only exit is a tmux resume.
     const { adapter, releaseExit } = makeHeadlessAdapter({ exitCode: 0 })
-    const mgr = makeManager(adapter)
+    // idleTimeoutMs of 1ms — a tmux session would be asleep almost at once.
+    const registry = new AdapterRegistry()
+    registry.register('claude', adapter)
+    const mgr = new SessionManager({ dataDir: tmpDir, maxConcurrent: 3, idleTimeoutMs: 1 }, registry)
     const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
     releaseExit()
-    const done = await waitForRecord(mgr, s.id, (r) => r.status === 'succeeded', 'succeeded')
-    expect(done.idleSince).toBeFalsy()
+    await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
+    await new Promise((r) => setTimeout(r, 120))
+    const after = (await mgr.list()).find((x) => x.id === s.id)!
+    expect(after.status).toBe('idle')
+    expect(adapter.kill).not.toHaveBeenCalled()
   })
 
-  it('releases its pool slot once the run reaches a terminal state', async () => {
+  it('releases its pool slot as soon as the turn ends, without going terminal', async () => {
     const { adapter, releaseExit } = makeHeadlessAdapter({ exitCode: 0 })
     const mgr = makeManager(adapter, 1)
     const first = await mgr.spawn({ ...baseSpawn, useTmux: false })
-    // Cap of 1 — a second spawn is refused while the first still runs.
+    // Cap of 1 — a second spawn is refused while the first is mid-turn.
     await expect(mgr.spawn({ ...baseSpawn, useTmux: false })).rejects.toThrow(/pool is full/i)
 
     releaseExit()
-    await waitForRecord(mgr, first.id, (r) => r.status === 'succeeded', 'succeeded')
-    // Slot freed by the terminal transition, no sweeper needed.
+    await waitForRecord(mgr, first.id, (r) => r.status === 'idle', 'idle')
+    // An idle headless session holds no process, so it must not keep
+    // occupying the slot the way an idle tmux session does.
     await expect(mgr.spawn({ ...baseSpawn, useTmux: false })).resolves.toBeTruthy()
+  })
+
+  it('still counts an idle TMUX session against the pool cap', async () => {
+    // The counterpart to the test above — the exemption must be scoped to
+    // headless, not applied to every idle session.
+    const { adapter } = makeHeadlessAdapter({ exitCode: 0 })
+    adapter.spawn.mockResolvedValue({ tmuxName: 't1', claudeUuid: 'u1', jsonlPath: '/tmp/u1.jsonl' })
+    const mgr = makeManager(adapter, 1)
+    const first = await mgr.spawn(baseSpawn)
+    await mgr.transition(first.id, 'waiting')
+    await mgr.transition(first.id, 'running')
+    await mgr.transition(first.id, 'idle')
+    await expect(mgr.spawn(baseSpawn)).rejects.toThrow(/pool is full/i)
   })
 })
 
 describe('SessionManager — headless guards', () => {
-  async function runToTerminal() {
+  async function runToIdle() {
     const { adapter, releaseExit } = makeHeadlessAdapter({ exitCode: 0 })
     const mgr = makeManager(adapter)
     const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
     releaseExit()
-    await waitForRecord(mgr, s.id, (r) => r.status === 'succeeded', 'succeeded')
-    return { mgr, id: s.id }
+    await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
+    return { mgr, adapter, id: s.id }
   }
 
   it('refuses follow-up input and says what to do instead', async () => {
-    const { mgr, id } = await runToTerminal()
+    const { mgr, id } = await runToIdle()
     await expect(mgr.sendInput(id, 'more')).rejects.toThrow(/one-shot|Respawn/i)
   })
 
   it('refuses reopen and points at Respawn', async () => {
-    const { mgr, id } = await runToTerminal()
+    // Reopen only ever applied to terminal sessions, and a headless session
+    // no longer reaches one on its own — kill it to get there.
+    const { mgr, id } = await runToIdle()
+    await mgr.kill(id)
     await expect(mgr.reopen(id, '/tmp/ws')).rejects.toThrow(/headless|Respawn/i)
   })
 
   it('refuses fork and points at Respawn', async () => {
-    const { mgr, id } = await runToTerminal()
+    const { mgr, id } = await runToIdle()
     await expect(mgr.clone(id, { workspace: '/tmp/ws' })).rejects.toThrow(/headless|Respawn/i)
   })
 
-  it('refuses interrupt while the run is live and points at Kill', async () => {
-    const { adapter, releaseExit } = makeHeadlessAdapter({ exitCode: 0 })
+  it('interrupts a live turn by signalling the child, landing idle not failed', async () => {
+    // The child is SIGTERMed, so it exits by signal — which on its own reads
+    // as a failure. The interrupt marker is what says "deliberate".
+    const { adapter, releaseExit } = makeHeadlessAdapter({ exitCode: null })
     const mgr = makeManager(adapter)
     const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
     await waitForRecord(mgr, s.id, (r) => r.status === 'running', 'running')
-    await expect(mgr.interrupt(s.id)).rejects.toThrow(/headless|Kill/i)
+
+    await mgr.interrupt(s.id)
+    expect(adapter.kill).toHaveBeenCalled()
+    expect(adapter.kill.mock.calls[0]![0]!.headless).toBe(true)
+
     releaseExit()
+    const after = await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
+    expect(after.failureReason).toBeUndefined()
+    // Still alive and resumable — the session outlives the interrupted turn.
+    expect(after.endedAt).toBeNull()
   })
 
-  it('allows editing useTmux on a terminal session but not a running one', async () => {
+  it('treats interrupt between turns as a no-op', async () => {
+    const { adapter, releaseExit } = makeHeadlessAdapter({ exitCode: 0 })
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    releaseExit()
+    await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
+    const same = await mgr.interrupt(s.id)
+    expect(same.status).toBe('idle')
+    expect(adapter.kill).not.toHaveBeenCalled()
+  })
+
+  it('allows editing useTmux between headless turns but not mid-turn', async () => {
     const { adapter, releaseExit } = makeHeadlessAdapter({ exitCode: 0 })
     const mgr = makeManager(adapter)
     const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
@@ -251,8 +346,22 @@ describe('SessionManager — headless guards', () => {
     await expect(mgr.updateMetadata(s.id, { useTmux: true })).rejects.toThrow(/Cannot edit/i)
 
     releaseExit()
-    await waitForRecord(mgr, s.id, (r) => r.status === 'succeeded', 'succeeded')
+    await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
+    // Idle headless holds no process, so this is the moment a multi-turn
+    // session is editable at all — refusing here would make the pencil
+    // unreachable for the whole life of the session.
     const patched = await mgr.updateMetadata(s.id, { useTmux: true })
     expect(patched.useTmux).toBe(true)
+  })
+
+  it('still refuses a metadata edit on an idle TMUX session', async () => {
+    const { adapter } = makeHeadlessAdapter({ exitCode: 0 })
+    adapter.spawn.mockResolvedValue({ tmuxName: 't1', claudeUuid: 'u1', jsonlPath: '/tmp/u1.jsonl' })
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn(baseSpawn)
+    await mgr.transition(s.id, 'waiting')
+    await mgr.transition(s.id, 'running')
+    await mgr.transition(s.id, 'idle')
+    await expect(mgr.updateMetadata(s.id, { model: 'x' })).rejects.toThrow(/Cannot edit/i)
   })
 })
