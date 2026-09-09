@@ -229,6 +229,10 @@ fastify.get('/api/health/detail', async () => {
     // include uid so the launchctl gui/<uid> selector is exact per host.
     platform: process.platform,
     uid: typeof process.getuid === 'function' ? process.getuid() : null,
+    // Global headless kill switch. The web dialogs read this to lock the
+    // "Use tmux" checkbox instead of letting the user submit something the
+    // API is going to 400.
+    enableHeadlessMode: config.enableHeadlessMode,
   }
 })
 
@@ -247,7 +251,7 @@ fastify.get('/api/version', async () => {
 })
 
 await fastify.register(projectsPlugin(projectRegistry))
-await fastify.register(sessionsPlugin(sessionManager, hookRunner, templateResolver, delegationTracker, projectRegistry))
+await fastify.register(sessionsPlugin(sessionManager, hookRunner, templateResolver, delegationTracker, projectRegistry, { enableHeadlessMode: config.enableHeadlessMode }))
 await fastify.register(delegationPlugin(delegationTracker, sessionManager))
 await fastify.register(streamPlugin(sessionManager, config.dataDir))
 await fastify.register(metricsPlugin(metricsCollector))

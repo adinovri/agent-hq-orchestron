@@ -8,7 +8,12 @@ import { mkdir, writeFile, chmod } from 'node:fs/promises'
 import crypto from 'node:crypto'
 import Database from 'better-sqlite3'
 import { existsSync } from 'node:fs'
-import { SpawnSessionBodySchema } from '@agent-hq-orchestron/shared'
+import {
+  SpawnSessionBodySchema,
+  DEFAULT_ENABLE_HEADLESS_MODE,
+  HEADLESS_DISABLED_ERROR,
+  HEADLESS_DISABLED_HINT,
+} from '@agent-hq-orchestron/shared'
 import { resolveClaudeTranscriptPath } from '../adapters/claude.js'
 import { SessionManager } from '../domain/session-manager.js'
 
@@ -353,7 +358,12 @@ export function sessionsPlugin(
   templateResolver: TemplateResolver,
   tracker: DelegationTracker,
   registry: ProjectRegistry,
+  /** Slice of runtime config the session routes care about. Optional so
+   *  callers that predate the flag (and every test harness) keep the
+   *  historical behaviour — headless available. */
+  serverConfig: { enableHeadlessMode?: boolean } = {},
 ) {
+  const headlessEnabled = serverConfig.enableHeadlessMode ?? DEFAULT_ENABLE_HEADLESS_MODE
   return fp(async (app: FastifyInstance) => {
     await app.register(multipart, {
       limits: {
@@ -476,6 +486,26 @@ export function sessionsPlugin(
       }
       const agentType = project.agentType
 
+      // Global headless kill switch. Two distinct cases, deliberately
+      // handled differently:
+      //   * the caller explicitly asked for headless  → 400, because
+      //     silently running it in tmux would be a lie about what was
+      //     spawned;
+      //   * only the *project default* is headless    → coerce to tmux,
+      //     because 400-ing here would brick every spawn in that project
+      //     the moment an operator flips the switch — the opposite of
+      //     what an emergency kill switch is for.
+      let effectiveUseTmux = body.data.useTmux ?? project.defaultUseTmux
+      if (!headlessEnabled && effectiveUseTmux === false) {
+        if (body.data.useTmux === false) {
+          return reply.code(400).send({
+            error: HEADLESS_DISABLED_ERROR,
+            hint: HEADLESS_DISABLED_HINT,
+          })
+        }
+        effectiveUseTmux = true
+      }
+
       const session = await manager.spawn({
         projectId,
         agentType,
@@ -487,11 +517,12 @@ export function sessionsPlugin(
         // Body values override project defaults; empty falls back to project.
         model: body.data.model ?? project.defaultModel,
         effort: body.data.effort ?? project.defaultEffort,
-        // Same cascade for the tmux/headless toggle, and it must stay a
-        // nullish coalesce: `false` is a meaningful value here, so `||`
-        // would quietly promote an explicit headless request back to the
-        // project default. session-manager applies the final `?? true`.
-        useTmux: body.data.useTmux ?? project.defaultUseTmux,
+        // Cascade resolved above (body > project), then run through the
+        // global kill switch. It must stay a nullish coalesce: `false` is a
+        // meaningful value here, so `||` would quietly promote an explicit
+        // headless request back to the project default. session-manager
+        // applies the final `?? true`.
+        useTmux: effectiveUseTmux,
       })
 
       // Record delegation edge if parent session provided
@@ -809,6 +840,16 @@ export function sessionsPlugin(
         useTmux: z.boolean().optional(),
       }).safeParse(req.body ?? {})
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+      // Same kill switch as spawn. Only an explicit flip *to* headless is
+      // refused — patches that leave useTmux alone, or move a session back
+      // to tmux, stay legal so an operator can unwind existing records
+      // while the switch is off.
+      if (!headlessEnabled && body.data.useTmux === false) {
+        return reply.code(400).send({
+          error: HEADLESS_DISABLED_ERROR,
+          hint: HEADLESS_DISABLED_HINT,
+        })
+      }
       try {
         const updated = await manager.updateMetadata(uuid, {
           model: body.data.model,
