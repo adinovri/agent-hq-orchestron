@@ -142,14 +142,12 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
   // means the check wasn't done (older list responses) — default to true so
   // the buttons don't disappear silently for older API versions.
   const hasTranscript = session.hasTranscript !== false
-  // Reopen + Fork both resume the conversation in an interactive tmux, which
-  // is a cross-mode jump for a headless session. The API refuses it; hiding
-  // the buttons keeps the UI honest about what's available. Respawn stays —
-  // it re-runs the same prompt in the session's own mode.
+  // Reopen + Fork are available whatever mode the session ran in — both
+  // directions of the tmux/headless jump resume cleanly on both harnesses,
+  // and the dialog's "Use tmux" checkbox is where the target mode is picked.
   // `?? true` — sessions predating the toggle are tmux sessions.
-  const isHeadless = !(session.useTmux ?? true)
-  const canReopen = isTerminal && hasTranscript && !isHeadless
-  const canClone = isTerminal && hasTranscript && !isHeadless
+  const canReopen = isTerminal && hasTranscript
+  const canClone = isTerminal && hasTranscript
   // Respawn always available on terminal — doesn't need the old JSONL.
   const canRespawn = isTerminal
   const [expanded, setExpanded] = useState(false)
@@ -180,7 +178,7 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
               {!(session.useTmux ?? true) && (
                 <span
                   className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono uppercase bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
-                  title={`Headless run — one-shot ${session.agentType === 'codex' ? 'codex exec' : 'claude -p'}, no tmux. No live TUI, no sleeping, no follow-up input.`}
+                  title={`Headless session — each turn runs as its own ${session.agentType === 'codex' ? 'codex exec' : 'claude -p'} process, with no tmux. Takes follow-up input and rests in idle between turns; no live TUI to attach to and no sleeping.`}
                 >
                   <Zap className="w-3 h-3" />
                   headless
@@ -217,7 +215,16 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
               {/* Pencil to patch model+effort — only when tmux is dead
                *  (terminal or sleeping). Server also enforces this, but
                *  hiding here keeps the UX clean. */}
-              {onEditMetadata && !readOnly && ['succeeded', 'killed', 'failed', 'sleeping'].includes(session.status) && (
+              {/* Editable whenever nothing live is bound to the current
+                *  values: terminal or sleeping for tmux, plus idle /
+                *  needs_input for headless, which holds no process between
+                *  turns. Without the second case the pencil would be
+                *  unreachable for the whole life of a headless session.
+                *  Server enforces the same rule. */}
+              {onEditMetadata && !readOnly && (
+                ['succeeded', 'killed', 'failed', 'sleeping'].includes(session.status) ||
+                (!(session.useTmux ?? true) && ['idle', 'needs_input'].includes(session.status))
+              ) && (
                 <button
                   onClick={onEditMetadata}
                   className="inline-flex items-center justify-center w-5 h-5 rounded text-zinc-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950 transition"
@@ -339,7 +346,7 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
                   className="text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950 h-8 w-8 p-0"
                   disabled={reopening}
                   onClick={onReopen}
-                  title="Reopen session — resume with same context"
+                  title="Reopen session — resume with same context (the dialog picks tmux or headless)"
                 >
                   <Play className="w-4 h-4" />
                 </Button>
@@ -351,7 +358,7 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
                   className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950 h-8 w-8 p-0"
                   disabled={cloning}
                   onClick={onClone}
-                  title="Clone/fork — new session inheriting this conversation"
+                  title="Clone/fork — new session inheriting this conversation (the dialog picks tmux or headless)"
                 >
                   <GitFork className="w-4 h-4" />
                 </Button>
@@ -363,7 +370,7 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
                   className="text-orange-600 hover:text-orange-700 hover:bg-orange-50 dark:hover:bg-orange-950 h-8 w-8 p-0"
                   disabled={respawning}
                   onClick={onRespawn}
-                  title="Respawn — fresh Claude session with the same prompt (does NOT continue the previous conversation)"
+                  title="Respawn — fresh conversation with the same prompt (does NOT continue the previous one)"
                 >
                   <RotateCcw className="w-4 h-4" />
                 </Button>

@@ -129,8 +129,8 @@ export function SessionMetadataEditDialog({
                   {!headlessEnabled
                     ? HEADLESS_DISABLED_TOOLTIP
                     : useTmux
-                      ? 'Respawn interactively in tmux.'
-                      : `Respawn headless (one-shot ${agentType === 'codex' ? 'codex exec' : 'claude -p'}) — no live TUI, no follow-up input.`}
+                      ? 'Next run starts an interactive tmux session.'
+                      : `Next run is headless — each turn its own ${agentType === 'codex' ? 'codex exec' : 'claude -p'} process, no live TUI.`}
                 </span>
               </span>
             </label>

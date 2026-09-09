@@ -111,7 +111,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   const [actionDialog, setActionDialog] = useState<SessionActionKind | null>(null)
 
   const reopenMutation = useMutation({
-    mutationFn: (opts: { model?: string; effort?: EffortLevel } = {}) =>
+    mutationFn: (opts: { model?: string; effort?: EffortLevel; useTmux?: boolean } = {}) =>
       apiFetch(`/api/sessions/${uuid}/reopen`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -126,7 +126,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   })
 
   const cloneMutation = useMutation({
-    mutationFn: async (opts: { prompt?: string; model?: string; effort?: EffortLevel } = {}) => {
+    mutationFn: async (opts: { prompt?: string; model?: string; effort?: EffortLevel; useTmux?: boolean } = {}) => {
       const res = await apiFetch(`/api/sessions/${uuid}/clone`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -163,7 +163,7 @@ export default function SessionDetailPage({ params }: PageProps) {
 
   const [respawning, setRespawning] = useState(false)
   const respawnMutation = useMutation({
-    mutationFn: async (opts: { model?: string; effort?: EffortLevel } = {}) => {
+    mutationFn: async (opts: { model?: string; effort?: EffortLevel; useTmux?: boolean } = {}) => {
       const res = await apiFetch(`/api/sessions/${uuid}/respawn`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -246,7 +246,7 @@ export default function SessionDetailPage({ params }: PageProps) {
         <TranscriptPanePoll uuid={uuid} status={session.status} agentType={session.agentType} />
       </div>
 
-      {!readOnly && <InputBox uuid={uuid} status={session.status} agentType={session.agentType} />}
+      {!readOnly && <InputBox uuid={uuid} status={session.status} agentType={session.agentType} useTmux={session.useTmux} />}
 
       <KillConfirmDialog
         open={killOpen}
@@ -286,17 +286,18 @@ export default function SessionDetailPage({ params }: PageProps) {
         currentEffort={session.effort}
         defaultModel={currentProject?.defaultModel}
         defaultEffort={currentProject?.defaultEffort}
+        currentUseTmux={session.useTmux}
         pending={reopening || cloning || respawning}
         onClose={() => setActionDialog(null)}
         onConfirm={(opts) => {
           const action = actionDialog
           setActionDialog(null)
           if (action === 'reopen') {
-            reopenMutation.mutate({ model: opts.model, effort: opts.effort })
+            reopenMutation.mutate({ model: opts.model, effort: opts.effort, useTmux: opts.useTmux })
           } else if (action === 'fork') {
-            cloneMutation.mutate({ prompt: opts.prompt, model: opts.model, effort: opts.effort })
+            cloneMutation.mutate({ prompt: opts.prompt, model: opts.model, effort: opts.effort, useTmux: opts.useTmux })
           } else if (action === 'respawn') {
-            respawnMutation.mutate({ model: opts.model, effort: opts.effort })
+            respawnMutation.mutate({ model: opts.model, effort: opts.effort, useTmux: opts.useTmux })
           }
         }}
       />

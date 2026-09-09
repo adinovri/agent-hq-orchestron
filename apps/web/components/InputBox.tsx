@@ -11,6 +11,9 @@ interface Props {
   uuid: string
   status: SessionStatus
   agentType?: AgentType
+  /** The session's run mode. `undefined` means tmux — records predating the
+   *  toggle have no field and they are all tmux. */
+  useTmux?: boolean
 }
 
 interface AttachedFile {
@@ -30,14 +33,22 @@ interface UploadedFile {
 // TUI buffers the paste and processes it as the next turn.
 const ENABLED: SessionStatus[] = ['needs_input', 'idle', 'waiting', 'running', 'sleeping']
 
+// Headless has no input queue. Each turn is its own process with no stdin,
+// so there is nothing to paste into while one is running — the API refuses
+// it, and greying the box out says so before the user types a paragraph.
+// `sleeping` and `waiting` never occur headless.
+const ENABLED_HEADLESS: SessionStatus[] = ['needs_input', 'idle']
+
 /** Hint text per status, harness-labelled. */
-function hintFor(status: SessionStatus, label: string): string {
+function hintFor(status: SessionStatus, label: string, useTmux: boolean): string {
   switch (status) {
     case 'spawning':    return `Session is spawning…`
     case 'waiting':     return `Session ready — type your first message`
-    case 'running':     return `Queue next turn (${label} is still thinking)`
+    case 'running':     return useTmux
+      ? `Queue next turn (${label} is still thinking)`
+      : `${label} is running this turn — headless takes no queued input. Wait, or interrupt.`
     case 'needs_input': return `Type your reply`
-    case 'idle':        return `Send a follow-up`
+    case 'idle':        return useTmux ? `Send a follow-up` : `Send the next turn`
     case 'sleeping':    return `Session is sleeping — send to wake it up (~3s cold start)`
     case 'succeeded':   return `Session succeeded (archived)`
     case 'failed':      return `Session failed`
@@ -61,7 +72,9 @@ function formatSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`
 }
 
-export function InputBox({ uuid, status, agentType }: Props) {
+export function InputBox({ uuid, status, agentType, useTmux }: Props) {
+  // `?? true` — no field means tmux.
+  const isTmux = useTmux ?? true
   const label = harnessLabel(agentType)
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<AttachedFile[]>([])
@@ -151,8 +164,8 @@ export function InputBox({ uuid, status, agentType }: Props) {
     },
   })
 
-  const enabled = ENABLED.includes(status) && !sendMutation.isPending
-  const hint = hintFor(status, label)
+  const enabled = (isTmux ? ENABLED : ENABLED_HEADLESS).includes(status) && !sendMutation.isPending
+  const hint = hintFor(status, label, isTmux)
 
   const submit = () => {
     const trimmed = text.trim()
@@ -213,7 +226,9 @@ export function InputBox({ uuid, status, agentType }: Props) {
               onClick={() => interruptMutation.mutate()}
               disabled={interruptMutation.isPending}
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 text-[11px] transition disabled:opacity-50"
-              title="Interrupt current turn (sends Escape to Claude)"
+              title={isTmux
+                ? 'Interrupt current turn (sends Escape to the TUI)'
+                : 'Interrupt current turn (signals the headless process). The session stays alive and returns to idle.'}
             >
               <Square className="w-2.5 h-2.5" fill="currentColor" />
               {interruptMutation.isPending ? 'Interrupting…' : 'Interrupt'}

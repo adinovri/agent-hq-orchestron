@@ -280,7 +280,7 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
                     ? HEADLESS_DISABLED_TOOLTIP
                     : form.defaultUseTmux
                       ? 'New sessions run interactively in tmux. Individual spawns can still opt into headless.'
-                      : `New sessions run headless (one-shot ${form.agentType === 'codex' ? 'codex exec' : 'claude -p'}) unless the spawn dialog says otherwise.`}
+                      : `New sessions run headless — each turn its own ${form.agentType === 'codex' ? 'codex exec' : 'claude -p'} process — unless the spawn dialog says otherwise.`}
                   {!headlessEnabled && !form.defaultUseTmux && (
                     <span className="block italic">
                       Saved preference for this project is headless — kept on record, re-applies when the flag is turned back on.

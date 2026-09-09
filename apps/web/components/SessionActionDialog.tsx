@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import type { AgentType, EffortLevel } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
+import { useHeadlessEnabled, HEADLESS_DISABLED_TOOLTIP } from '@/lib/server-config'
 
 const KEEP: { value: ''; label: string } = { value: '', label: '— Default / keep' }
 
@@ -17,47 +18,79 @@ interface Props {
   currentEffort?: string     // session's own effort
   defaultModel?: string      // project default (fallback display hint)
   defaultEffort?: string
+  /** The session's own run mode, as stored. `undefined` means tmux — every
+   *  record predating the toggle has no field and they are all tmux. */
+  currentUseTmux?: boolean
   onClose: () => void
-  onConfirm: (opts: { model?: string; effort?: EffortLevel; prompt?: string }) => void
+  onConfirm: (opts: { model?: string; effort?: EffortLevel; prompt?: string; useTmux?: boolean }) => void
   pending?: boolean
 }
 
-const ACTION_META: Record<SessionActionKind, { title: string; hint: string; confirmLabel: string; showPrompt: boolean }> = {
+interface ActionMeta {
+  title: string
+  hint: string
+  confirmLabel: string
+  showPrompt: boolean
+  /** What ticking / unticking "Use tmux" means for THIS action. Reopen and
+   *  Fork resume an existing conversation, so the mode only decides how it
+   *  comes back; Respawn starts a fresh one either way. */
+  modeHint: (useTmux: boolean, harness: string) => string
+}
+
+const ACTION_META: Record<SessionActionKind, ActionMeta> = {
   reopen: {
     title: 'Reopen session',
-    hint: 'Continues the same Claude conversation via --resume. Same session id, same context.',
+    hint: 'Continues the same conversation via --resume. Same session id, same context.',
     confirmLabel: 'Reopen',
     showPrompt: false,
+    modeHint: (useTmux, harness) => useTmux
+      ? 'Comes back in an interactive tmux session — live transcript, attach, sleeps when idle.'
+      : `Comes back headless and idle, ready for input. Each turn runs as its own ${harness} process; nothing starts until you send one.`,
   },
   fork: {
     title: 'Fork session',
     hint: 'New orchestron session id, inherits this conversation via --resume. Optional new prompt to seed a divergent path.',
     confirmLabel: 'Fork',
     showPrompt: true,
+    modeHint: (useTmux, harness) => useTmux
+      ? 'The fork runs in an interactive tmux session.'
+      : `The fork runs headless — each turn its own ${harness} process. A prompt below becomes its first turn.`,
   },
   respawn: {
     title: 'Respawn session',
-    hint: 'Restarts in-place with a fresh Claude conversation. Same session id, same prompt, previous conversation discarded.',
+    hint: 'Restarts in-place with a fresh conversation. Same session id, same prompt, previous conversation discarded.',
     confirmLabel: 'Respawn',
     showPrompt: false,
+    modeHint: (useTmux, harness) => useTmux
+      ? 'Restarts in an interactive tmux session.'
+      : `Restarts headless — the original prompt runs as one ${harness} process, then the session waits for input.`,
   },
 }
 
 export function SessionActionDialog({
-  open, kind, agentType, currentModel, currentEffort, defaultModel, defaultEffort,
+  open, kind, agentType, currentModel, currentEffort, defaultModel, defaultEffort, currentUseTmux,
   onClose, onConfirm, pending,
 }: Props) {
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
   const [prompt, setPrompt] = useState('')
+  // `?? true` — a record with no field is a tmux session.
+  const sessionUseTmux = currentUseTmux ?? true
+  const [useTmux, setUseTmux] = useState(true)
+  const headlessEnabled = useHeadlessEnabled()
 
   useEffect(() => {
     if (open) {
       setModel(currentModel ?? '')
       setEffort(currentEffort ?? '')
       setPrompt('')
+      // Default to the session's CURRENT mode, not to tmux. The action is
+      // "bring this session back", so the neutral choice is the one that
+      // changes nothing — same principle as the model and effort pickers
+      // starting on the session's own values.
+      setUseTmux(sessionUseTmux)
     }
-  }, [open, currentModel, currentEffort])
+  }, [open, currentModel, currentEffort, sessionUseTmux])
 
   if (!open) return null
 
@@ -111,6 +144,36 @@ export function SessionActionDialog({
             </select>
           </div>
 
+          {/* Run mode. Same control as the spawn dialog, defaulted to this
+            * session's mode rather than the project's. */}
+          <div>
+            <label
+              className={headlessEnabled ? 'flex items-start gap-2 cursor-pointer' : 'flex items-start gap-2 cursor-not-allowed'}
+              title={headlessEnabled ? undefined : HEADLESS_DISABLED_TOOLTIP}
+            >
+              <input
+                type="checkbox"
+                checked={headlessEnabled ? useTmux : true}
+                disabled={pending || !headlessEnabled}
+                onChange={(e) => setUseTmux(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600 disabled:opacity-60"
+              />
+              <span>
+                <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
+                <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
+                  {!headlessEnabled
+                    ? HEADLESS_DISABLED_TOOLTIP
+                    : meta.modeHint(useTmux, agentType === 'codex' ? 'codex exec' : 'claude -p')}
+                  {headlessEnabled && useTmux !== sessionUseTmux && (
+                    <span className="block italic">
+                      Switches this session from {sessionUseTmux ? 'tmux to headless' : 'headless to tmux'}.
+                    </span>
+                  )}
+                </span>
+              </span>
+            </label>
+          </div>
+
           {meta.showPrompt && (
             <div>
               <label className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">
@@ -135,6 +198,12 @@ export function SessionActionDialog({
               model: model || undefined,
               effort: (effort as EffortLevel) || undefined,
               prompt: prompt || undefined,
+              // Send it only when it actually differs. Omitted means "keep
+              // the session's mode" server-side, so an unchanged checkbox
+              // must not look like a deliberate override — and while the
+              // global switch is off the box is display-forced to checked,
+              // which must not rewrite a headless record to tmux.
+              useTmux: headlessEnabled && useTmux !== sessionUseTmux ? useTmux : undefined,
             })}
             disabled={pending}
           >
