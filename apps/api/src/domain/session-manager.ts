@@ -71,7 +71,12 @@ const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
   // 'running' direct from 'spawning' is the headless path: the child process
   // starts the turn the moment it launches (prompt is in argv), so there is
   // no 'waiting' phase — nothing to wait for and no prompt left to paste.
-  spawning: ['waiting', 'running', 'failed', 'killed'],
+  // 'idle' direct from 'spawning' is the headless revival path: reopening a
+  // terminal session INTO headless mode runs no child at all — it just makes
+  // the record live again, ready for the next `-p --resume` turn. There is
+  // no turn to pass through 'running' for, and claiming one would put a
+  // phantom turn in the session's history.
+  spawning: ['waiting', 'running', 'idle', 'failed', 'killed'],
   waiting: ['running', 'killed'],
   // 'running' → 'failed' is likewise headless: a non-zero exit is a real
   // failure with no idle state in between. Harmless for tmux, which simply
@@ -705,6 +710,26 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Does `uuid` still belong to the process behind `handle`?
+   *
+   * Every completion path (completeSpawn, completeHeadlessSpawn,
+   * completeReopen, landHeadlessTurn) is fire-and-forget, so it can still be
+   * in flight when the user kills the session and immediately reopens or
+   * respawns it. The revival writes a new handle; the stale completion then
+   * arrives and transitions a session it no longer owns — most visibly
+   * dragging a freshly-revived `idle` session back to `running` behind a
+   * process that is already dead.
+   *
+   * The handle name is unique per spawn / resume / turn, which makes it the
+   * natural ownership token. A completion whose handle no longer matches the
+   * record simply stops.
+   */
+  private async stillOwns(uuid: string, handle: TmuxHandle): Promise<boolean> {
+    const rec = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    return !!rec && rec.tmuxName === handle.tmuxName
+  }
+
   async spawn(spawnConfig: SpawnConfig): Promise<SessionMetadata> {
     const key = `spawn:${spawnConfig.parentSessionId ?? '__no_parent__'}`
     return this.withLock(key, () => this._spawnUnlocked(spawnConfig))
@@ -890,11 +915,13 @@ export class SessionManager {
       }
     }
 
+    if (!(await this.stillOwns(uuid, currentHandle))) return
     await this.transition(uuid, 'waiting')
 
     // Paste initial prompt + Enter
     const pasteTs = Date.now()
     await adapter.sendPrompt(currentHandle, prompt)
+    if (!(await this.stillOwns(uuid, currentHandle))) return
     await this.transition(uuid, 'running')
 
     // Codex interactive TUI: capture thread_id from SQLite after prompt paste.
@@ -942,6 +969,7 @@ export class SessionManager {
     adapter: import('@agent-hq-orchestron/shared').AgentAdapter,
     handle: TmuxHandle,
   ): Promise<void> {
+    if (!(await this.stillOwns(uuid, handle))) return
     await this.transition(uuid, 'running')
     await this.finishHeadlessTurn(uuid, adapter, handle)
   }
@@ -968,6 +996,23 @@ export class SessionManager {
       ? await adapter.awaitHeadlessExit(handle)
       : { exitCode: null, stderr: `adapter '${adapter.name}' does not support headless mode` }
 
+    // Reconcile under the session lock. The read-check-write below races a
+    // concurrent Kill otherwise: kill writes `killed`, this reads the
+    // pre-kill record, and the write puts `running` back — the session then
+    // sits `running` forever behind a process that is already reaped. The
+    // window is small but it is exactly the moment a user reaches for Kill.
+    return this.withLock(`uuid:${uuid}`, () => this.landHeadlessTurn(uuid, handle, result))
+  }
+
+  /** Record-mutating half of finishHeadlessTurn. Always called under the
+   *  session lock — see the comment at its only call site. */
+  private async landHeadlessTurn(uuid: string, handle: TmuxHandle, result: HeadlessResult): Promise<void> {
+    // Ownership: a turn that has been superseded (killed then respawned,
+    // reopened into another mode) must not land its result on the new one.
+    if (!(await this.stillOwns(uuid, handle))) {
+      this.headlessInterrupts.delete(uuid)
+      return
+    }
     // Re-read: the record may have moved on while the child ran — most
     // importantly a user Kill, which already put it in a terminal state.
     // Transitioning again would throw InvalidTransitionError.
@@ -1073,8 +1118,31 @@ export class SessionManager {
     }
 
     const proj = await this.projectResolver(session.projectId)
+    return this.startHeadlessTurn(uuid, session, prompt, proj.path, {
+      model: session.model ?? proj.defaultModel,
+      effort: session.effort ?? proj.defaultEffort,
+    })
+  }
+
+  /**
+   * Launch one headless child against an existing conversation and hand the
+   * landing off to `finishHeadlessTurn`.
+   *
+   * Split out of sendHeadlessTurn because fork-into-headless needs exactly
+   * the same sequence for the seed prompt, and it already knows its workspace
+   * (so it must not go back through the project resolver).
+   *
+   * Returns once the child is launched, not once it finishes.
+   */
+  private async startHeadlessTurn(
+    uuid: string,
+    session: SessionMetadata,
+    prompt: string,
+    workspace: string,
+    opts: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel } = {},
+  ): Promise<SessionMetadata> {
     const adapter = this.registry.getOrThrow(session.agentType)
-    await this.ensureMemorySymlink(session.agentType, session.configDir, proj.path)
+    await this.ensureMemorySymlink(session.agentType, session.configDir, workspace)
     // Regenerate per-turn so a rotated token / moved API URL takes effect on
     // the next turn rather than at the next spawn.
     const mcpConfigPath = await this.ensureSessionMcpConfig(uuid, session.agentType)
@@ -1082,13 +1150,13 @@ export class SessionManager {
     const outputSchemaPath = await this.ensureOutputSchemaPath(false)
 
     const handle = await adapter.resume(session.claudeSessionUuid, {
-      workspace: proj.path,
+      workspace,
       // Must be the SAME configDir the session was spawned with: the harness
       // finds a conversation by scanning that dir and nothing else, so a
       // different one means "No conversation found" on a perfectly good id.
       configDir: session.configDir,
-      model: session.model ?? proj.defaultModel,
-      effort: session.effort ?? proj.defaultEffort,
+      model: opts.model ?? session.model,
+      effort: opts.effort ?? session.effort,
       mcpConfigPath,
       mcpConfigInline,
       outputSchemaPath,
@@ -1497,7 +1565,32 @@ export class SessionManager {
     await this.sendInput(parentId, report).catch(() => { /* parent might be busy */ })
   }
 
+  /**
+   * Move a session to `newStatus`, validating the edge and updating the
+   * derived timestamps.
+   *
+   * Serialised per session on its own lock key. A transition is a
+   * read-modify-write, and several of them run concurrently by design — a
+   * fire-and-forget completion finishing a turn while the user presses Kill
+   * is the everyday case. Unlocked, the two interleave and the later write
+   * wins with a status computed from a record that has since changed: a
+   * killed session comes back as `running`, behind a process that is already
+   * reaped, and every subsequent action on it is refused.
+   *
+   * The key is deliberately NOT the coarse `uuid:` lock that reopen, respawn,
+   * clone and kill hold — those call transition from inside their critical
+   * sections, and `withLock` is not reentrant. A separate key makes each
+   * individual transition atomic without any of them being able to deadlock
+   * on themselves, and the ALLOWED_TRANSITIONS check then runs against a
+   * record nobody can change underneath it. A losing racer throws
+   * InvalidTransitionError instead of silently overwriting, which is what
+   * callers already expect.
+   */
   async transition(uuid: string, newStatus: SessionStatus): Promise<SessionMetadata> {
+    return this.withLock(`state:${uuid}`, () => this._transitionUnlocked(uuid, newStatus))
+  }
+
+  private async _transitionUnlocked(uuid: string, newStatus: SessionStatus): Promise<SessionMetadata> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
@@ -1824,11 +1917,11 @@ export class SessionManager {
    * resumes the prior conversation. Respawn discards the prior conversation
    * and starts over from the initialPrompt.
    */
-  async respawn(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
+  async respawn(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel; useTmux?: boolean }): Promise<SessionMetadata> {
     return this.withLock(`uuid:${uuid}`, () => this._respawnUnlocked(uuid, workspace, configDir, fallbackModel, fallbackEffort, overrides))
   }
 
-  private async _respawnUnlocked(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
+  private async _respawnUnlocked(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel; useTmux?: boolean }): Promise<SessionMetadata> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
@@ -1848,9 +1941,12 @@ export class SessionManager {
     await this.ensureMemorySymlink(session.agentType, effectiveConfigDir, workspace)
     const effectiveModel = overrides?.model ?? session.model ?? fallbackModel
     const effectiveEffort = overrides?.effort ?? session.effort ?? fallbackEffort
-    // Respawn keeps the session's own mode — a headless session respawns
-    // headless, a tmux session respawns into tmux.
-    const useTmux = resolveUseTmux(session.useTmux)
+    // Mode: the dialog's checkbox wins, else the session keeps its own.
+    // A headless respawn is a real operation again now that the session
+    // lands in `idle` and accepts follow-ups, so there is no reason to
+    // steer the user anywhere.
+    const useTmux = overrides?.useTmux ?? resolveUseTmux(session.useTmux)
+    const outputSchemaPath = await this.ensureOutputSchemaPath(useTmux)
 
     const handle = await adapter.spawn({
       projectId: session.projectId,
@@ -1863,6 +1959,7 @@ export class SessionManager {
       detached: session.detached,
       useTmux,
       mcpConfigPath,
+      outputSchemaPath,
     })
 
     // Transition terminal → spawning first (state machine now allows this),
@@ -2107,11 +2204,11 @@ export class SessionManager {
     return session
   }
 
-  async reopen(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
+  async reopen(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel; useTmux?: boolean }): Promise<SessionMetadata> {
     return this.withLock(`uuid:${uuid}`, () => this._reopenUnlocked(uuid, workspace, configDir, fallbackModel, fallbackEffort, overrides))
   }
 
-  private async _reopenUnlocked(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
+  private async _reopenUnlocked(uuid: string, workspace: string, configDir?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel; useTmux?: boolean }): Promise<SessionMetadata> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
@@ -2120,20 +2217,16 @@ export class SessionManager {
       throw new Error(`Cannot reopen session in ${session.status} state`)
     }
 
-    // Reopen means "resume this conversation in an interactive tmux", i.e. a
-    // cross-mode jump. Not supported in Phase 1 and deliberately conservative:
-    // for Claude the two modes do share one JSONL store, so it would likely
-    // work, but Codex does not — `codex exec` writes a rollout file while the
-    // interactive TUI reads thread_history SQLite, so an exec thread is not
-    // guaranteed to be visible to `codex resume`. Rather than ship a button
-    // that silently works for one harness and not the other, both are gated
-    // until cross-mode resume is tested per harness (Phase 2). Respawn, which
-    // starts a fresh headless run from the same prompt, stays available.
-    if (!resolveUseTmux(session.useTmux)) {
-      throw new Error(
-        'Cannot reopen a headless session — interactive resume across modes is not supported yet. Use Respawn to run it again.',
-      )
-    }
+    // Cross-mode reopen is supported in both directions and for both
+    // harnesses. Phase 1 gated it on the belief that a `codex exec` thread
+    // might be invisible to the interactive TUI; on codex-cli 0.153.4 both
+    // modes write BOTH the rollout JSONL and the thread_history SQLite, and a
+    // Claude conversation has always been one JSONL store scanned identically
+    // by `-p` and interactive. Both directions round-trip with full context —
+    // measured, not assumed; see scratchpad/headless-phase2-verification.md.
+    //
+    // So no JSONL synthesis, no id rewriting: reopen just picks the mode.
+    const targetUseTmux = overrides?.useTmux ?? resolveUseTmux(session.useTmux)
 
     // Refuse when the underlying transcript doesn't exist — happens when the
     // original spawn failed before the agent wrote its first turn.
@@ -2179,6 +2272,35 @@ export class SessionManager {
     const effectiveModel = overrides?.model ?? session.model ?? fallbackModel
     const effectiveEffort = overrides?.effort ?? session.effort ?? fallbackEffort
 
+    // Reopening INTO headless runs nothing. There is no process to bring up
+    // — a headless session is only ever alive for the length of a turn — so
+    // "reopen" here means exactly "make this record live again, ready for
+    // input". Spending a `-p --resume` invocation on an empty prompt would
+    // burn a turn to accomplish nothing, and the user has not asked for one.
+    //
+    // The next send picks up from here through the normal turn path.
+    if (!targetUseTmux) {
+      await this.transition(uuid, 'spawning')
+      const revived: SessionMetadata = {
+        ...session,
+        model: effectiveModel,
+        effort: effectiveEffort,
+        useTmux: false,
+        status: 'spawning',
+        // No process is held between turns, so the session owns no handle
+        // until the next one starts. Clearing it also revokes ownership from
+        // any completion still in flight from the session's previous life
+        // (see stillOwns) — without that, a late transition could drag this
+        // freshly-revived session straight back to `running`.
+        tmuxName: '',
+        endedAt: null,
+        failureReason: undefined,
+        pendingPrompt: null,
+      }
+      await writeJson(this.sessionPath(uuid), revived)
+      return this.transition(uuid, 'idle')
+    }
+
     const adapter = this.registry.getOrThrow(session.agentType)
     await this.ensureMemorySymlink(session.agentType, configDir ?? session.configDir, workspace)
     // Regenerate MCP config on every reopen so token/URL updates take effect.
@@ -2198,6 +2320,9 @@ export class SessionManager {
       ...session,
       model: effectiveModel,
       effort: effectiveEffort,
+      // Persist the mode: reopening a headless session into tmux converts it
+      // for good, so a later Kill + Reopen does not silently drop back.
+      useTmux: true,
       status: 'spawning',
       tmuxName: handle.tmuxName,
       jsonlPath: handle.jsonlPath,
@@ -2278,6 +2403,7 @@ export class SessionManager {
       }
     }
     // Reopen goes STRAIGHT to idle — no fresh prompt to send.
+    if (!(await this.stillOwns(uuid, currentHandle))) return
     await this.transition(uuid, 'waiting')
     await this.transition(uuid, 'running')
     await this.transition(uuid, 'idle')
@@ -2288,11 +2414,11 @@ export class SessionManager {
    * original's Claude conversation (via --resume). Creates a new orchestron
    * UUID + new tmux; original session record is untouched.
    */
-  async clone(uuid: string, spawnConfig: Pick<SpawnConfig, 'workspace' | 'configDir'>, extraPrompt?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
+  async clone(uuid: string, spawnConfig: Pick<SpawnConfig, 'workspace' | 'configDir'>, extraPrompt?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel; useTmux?: boolean }): Promise<SessionMetadata> {
     return this.withLock(`uuid:${uuid}`, () => this._cloneUnlocked(uuid, spawnConfig, extraPrompt, fallbackModel, fallbackEffort, overrides))
   }
 
-  private async _cloneUnlocked(uuid: string, spawnConfig: Pick<SpawnConfig, 'workspace' | 'configDir'>, extraPrompt?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel }): Promise<SessionMetadata> {
+  private async _cloneUnlocked(uuid: string, spawnConfig: Pick<SpawnConfig, 'workspace' | 'configDir'>, extraPrompt?: string, fallbackModel?: string, fallbackEffort?: import('@agent-hq-orchestron/shared').EffortLevel, overrides?: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel; useTmux?: boolean }): Promise<SessionMetadata> {
     const active = await this.countActiveSessions()
     if (active >= this.maxConcurrent) {
       throw new PoolFullError(this.maxConcurrent)
@@ -2301,14 +2427,11 @@ export class SessionManager {
     const original = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!original) throw new Error(`Session not found: ${uuid}`)
 
-    // Fork spawns an interactive tmux against the source conversation, so it
-    // is the same cross-mode jump reopen() refuses. Gated for the same
-    // reason and until the same Phase 2 verification.
-    if (!resolveUseTmux(original.useTmux)) {
-      throw new Error(
-        'Cannot fork a headless session — interactive resume across modes is not supported yet. Use Respawn to run it again.',
-      )
-    }
+    // Fork inherits the source conversation by resuming it, so it picks a
+    // mode the same way reopen does — and, like reopen, is no longer gated
+    // on the source's mode now that cross-mode resume is verified on both
+    // harnesses. The fork's mode is the dialog's choice, else the source's.
+    const targetUseTmux = overrides?.useTmux ?? resolveUseTmux(original.useTmux)
 
     // Refuse when the source has no transcript to fork from — harness-aware
     // (mirrors the reopen check).
@@ -2358,6 +2481,66 @@ export class SessionManager {
     // Fresh MCP config keyed to the CLONE's uuid so its ORCHESTRON_SESSION_ID
     // reflects the child, not the parent.
     const mcpConfigPath = await this.ensureSessionMcpConfig(newUuid)
+
+    const now = new Date().toISOString()
+    const baseRecord = {
+      id: newUuid,
+      projectId: original.projectId,
+      agentType: original.agentType,
+      model: effectiveModel,
+      effort: effectiveEffort,
+      status: 'spawning' as SessionStatus,
+      parentSessionId: original.id,   // record fork lineage
+      detached: original.detached,
+      claudeSessionUuid: original.claudeSessionUuid,   // share Claude session
+      configDir: original.configDir,
+      cwdSlug: original.cwdSlug,
+      useTmux: targetUseTmux,
+      initialPrompt: extraPrompt ? extraPrompt : `(fork of ${original.id.slice(0, 8)})`,
+      finalResponse: null,
+      tokenUsage: null,
+      costUsd: null,
+      startedAt: now,
+      endedAt: null,
+      lastActivityAt: now,
+      metadata: { forkedFrom: original.id },
+    }
+
+    // ── Fork into headless ──────────────────────────────────────────────
+    // No tmux to bring up, so the record is written straight to `idle` and
+    // the fork's seed prompt (if any) runs as its first turn through the
+    // ordinary headless turn path. Without a prompt the fork is simply a
+    // second cursor onto the same conversation, waiting for input.
+    //
+    // Both fork records share the source's harness session id, so both write
+    // to the same transcript — that is the pre-existing fork semantic, and
+    // the reason Fork is offered only for terminal sources.
+    if (!targetUseTmux) {
+      const forked: SessionMetadata = {
+        ...baseRecord,
+        tmuxName: '',
+        jsonlPath: original.jsonlPath,
+      }
+      await writeJson(this.sessionPath(newUuid), forked)
+      await this.transition(newUuid, 'idle')
+
+      if (extraPrompt) {
+        const idled = await readJson<SessionMetadata | null>(this.sessionPath(newUuid), null)
+        if (idled) {
+          this.startHeadlessTurn(newUuid, idled, extraPrompt, spawnConfig.workspace, {
+            model: effectiveModel,
+            effort: effectiveEffort,
+          }).catch(async (err: unknown) => {
+            const msg = (err as Error).message ?? String(err)
+            console.error(`[session-manager] headless fork seed turn failed for ${newUuid}: ${msg}`)
+            const rec = await readJson<SessionMetadata | null>(this.sessionPath(newUuid), null)
+            if (rec) await writeJson(this.sessionPath(newUuid), { ...rec, failureReason: msg })
+          })
+        }
+      }
+      return { ...forked, status: 'idle' }
+    }
+
     // Spawn via adapter.resume — reuses the ORIGINAL claudeSessionUuid so
     // Claude loads that context. Fresh tmux name.
     const handle = await adapter.resume(original.claudeSessionUuid, {
@@ -2368,27 +2551,10 @@ export class SessionManager {
       mcpConfigPath,
     })
 
-    const now = new Date().toISOString()
     const session: SessionMetadata = {
-      id: newUuid,
-      projectId: original.projectId,
-      agentType: original.agentType,
-      model: effectiveModel,
-      effort: effectiveEffort,
-      status: 'spawning',
-      parentSessionId: original.id,   // record fork lineage
-      detached: original.detached,
-      claudeSessionUuid: original.claudeSessionUuid,   // share Claude session
+      ...baseRecord,
       tmuxName: handle.tmuxName,
       jsonlPath: handle.jsonlPath,
-      initialPrompt: extraPrompt ? extraPrompt : `(fork of ${original.id.slice(0, 8)})`,
-      finalResponse: null,
-      tokenUsage: null,
-      costUsd: null,
-      startedAt: now,
-      endedAt: null,
-      lastActivityAt: now,
-      metadata: { forkedFrom: original.id },
     }
 
     await writeJson(this.sessionPath(newUuid), session)
@@ -2430,6 +2596,12 @@ export class SessionManager {
   }
 
   async kill(uuid: string): Promise<SessionMetadata> {
+    // Same lock as the headless turn reconciler, so a kill landing while a
+    // turn is being written cannot be clobbered back to `running`.
+    return this.withLock(`uuid:${uuid}`, () => this._killUnlocked(uuid))
+  }
+
+  private async _killUnlocked(uuid: string): Promise<SessionMetadata> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 

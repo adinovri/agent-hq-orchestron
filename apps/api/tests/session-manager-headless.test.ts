@@ -297,17 +297,18 @@ describe('SessionManager — headless guards', () => {
     await expect(mgr.sendInput(id, 'more')).rejects.toThrow(/project resolver/i)
   })
 
-  it('refuses reopen and points at Respawn', async () => {
-    // Reopen only ever applied to terminal sessions, and a headless session
-    // no longer reaches one on its own — kill it to get there.
+  it('still refuses reopen on a session that never wrote a transcript', async () => {
+    // The gate that remains: `--resume` needs something on disk to load.
+    // (The Phase 1 gate on the session's *mode* is gone — see the cross-mode
+    // suite in session-manager-crossmode.test.ts.)
     const { mgr, id } = await runToIdle()
     await mgr.kill(id)
-    await expect(mgr.reopen(id, '/tmp/ws')).rejects.toThrow(/headless|Respawn/i)
+    await expect(mgr.reopen(id, '/tmp/ws')).rejects.toThrow(/no transcript on disk/i)
   })
 
-  it('refuses fork and points at Respawn', async () => {
+  it('still refuses fork on a session that never wrote a transcript', async () => {
     const { mgr, id } = await runToIdle()
-    await expect(mgr.clone(id, { workspace: '/tmp/ws' })).rejects.toThrow(/headless|Respawn/i)
+    await expect(mgr.clone(id, { workspace: '/tmp/ws' })).rejects.toThrow(/no transcript on disk/i)
   })
 
   it('interrupts a live turn by signalling the child, landing idle not failed', async () => {

@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyReply } from 'fastify'
 import fp from 'fastify-plugin'
 import multipart from '@fastify/multipart'
 import { z } from 'zod'
@@ -943,16 +943,40 @@ export function sessionsPlugin(
       }
     })
 
+    /** Body parser shared by reopen / respawn / clone.
+     *
+     *  `useTmux` is the run-mode override the dialog's checkbox sends. It is
+     *  a genuine tri-state: absent means "keep whatever mode the session
+     *  already has", which is not the same as `true`, so it must never be
+     *  coalesced with `||`. */
+    const revivalBody = z.object({
+      model: z.string().optional(),
+      effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
+      useTmux: z.boolean().optional(),
+    })
+
+    /** The same kill-switch rule the spawn route applies: an explicit request
+     *  for headless while the global switch is off is a 400, because quietly
+     *  running it in tmux would be a lie about what the button did. Moving a
+     *  session back TO tmux stays legal so records can be unwound while the
+     *  switch is off. Returns a reply when it refused, else null. */
+    function refuseHeadlessIfDisabled(useTmux: boolean | undefined, reply: FastifyReply) {
+      if (headlessEnabled || useTmux !== false) return null
+      return reply.code(400).send({
+        error: HEADLESS_DISABLED_ERROR,
+        hint: HEADLESS_DISABLED_HINT,
+      })
+    }
+
     // Reopen a terminal session — same UUID + same Claude session, fresh tmux.
     // Session comes back to `idle` after Claude TUI boots with --resume.
     // Body { model?, effort? } lets the user override for this reopen.
     app.post('/api/sessions/:uuid/reopen', async (req, reply) => {
       const { uuid } = req.params as { uuid: string }
-      const body = z.object({
-        model: z.string().optional(),
-        effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
-      }).safeParse(req.body ?? {})
+      const body = revivalBody.safeParse(req.body ?? {})
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+      const refused = refuseHeadlessIfDisabled(body.data.useTmux, reply)
+      if (refused) return refused
 
       const sessions = await manager.list()
       const existing = sessions.find(s => s.id === uuid)
@@ -971,7 +995,7 @@ export function sessionsPlugin(
         const updated = await manager.reopen(
           uuid, project.path, configDir,
           project.defaultModel, project.defaultEffort,
-          { model: body.data.model, effort: body.data.effort },
+          { model: body.data.model, effort: body.data.effort, useTmux: body.data.useTmux },
         )
         return updated
       } catch (err: unknown) {
@@ -988,11 +1012,10 @@ export function sessionsPlugin(
     // or when you just want to start over from the same prompt.
     app.post('/api/sessions/:uuid/respawn', async (req, reply) => {
       const { uuid } = req.params as { uuid: string }
-      const body = z.object({
-        model: z.string().optional(),
-        effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
-      }).safeParse(req.body ?? {})
+      const body = revivalBody.safeParse(req.body ?? {})
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+      const refused = refuseHeadlessIfDisabled(body.data.useTmux, reply)
+      if (refused) return refused
 
       const sessions = await manager.list()
       const existing = sessions.find(s => s.id === uuid)
@@ -1013,7 +1036,7 @@ export function sessionsPlugin(
         const fresh = await manager.respawn(
           uuid, project.path, configDir,
           project.defaultModel, project.defaultEffort,
-          { model: body.data.model, effort: body.data.effort },
+          { model: body.data.model, effort: body.data.effort, useTmux: body.data.useTmux },
         )
         return fresh
       } catch (err: unknown) {
@@ -1029,12 +1052,10 @@ export function sessionsPlugin(
     // a new user turn (else just re-enters the shared context idle).
     app.post('/api/sessions/:uuid/clone', async (req, reply) => {
       const { uuid } = req.params as { uuid: string }
-      const body = z.object({
-        prompt: z.string().optional(),
-        model: z.string().optional(),
-        effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).optional(),
-      }).safeParse(req.body ?? {})
+      const body = revivalBody.extend({ prompt: z.string().optional() }).safeParse(req.body ?? {})
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+      const refused = refuseHeadlessIfDisabled(body.data.useTmux, reply)
+      if (refused) return refused
 
       const sessions = await manager.list()
       const existing = sessions.find(s => s.id === uuid)
@@ -1056,7 +1077,7 @@ export function sessionsPlugin(
           { workspace: project.path, configDir },
           body.data.prompt,
           project.defaultModel, project.defaultEffort,
-          { model: body.data.model, effort: body.data.effort },
+          { model: body.data.model, effort: body.data.effort, useTmux: body.data.useTmux },
         )
         return reply.code(201).send(cloned)
       } catch (err: unknown) {
