@@ -47,6 +47,9 @@ export const SessionMetadataSchema = z.object({
   costUsd: z.number().nullable(),
   startedAt: z.string().datetime(),
   endedAt: z.string().datetime().nullable(),
+  configDir: z.string().optional(),
+  cwdSlug: z.string().optional(),
+  useTmux: z.boolean().optional(),
   failureReason: z.string().optional(),
   metadata: z.record(z.unknown()),
 })
@@ -70,6 +73,7 @@ export const ProjectMetadataSchema = z.object({
   agentType: AgentTypeSchema,
   defaultModel: z.string().optional(),
   defaultEffort: EffortLevelSchema.optional(),
+  defaultUseTmux: z.boolean().optional(),
   group: z.string().nullable().optional(),
   tags: z.array(z.string()).optional(),
   agentConfig: AgentConfigSchema.optional(),
@@ -181,6 +185,9 @@ export const SpawnSessionBodySchema = z.object({
   snapshot: z.string().optional(), // e.g. "pr:123"
   model: z.string().optional(),
   effort: EffortLevelSchema.optional(),
+  /** Omit to inherit the project default (which itself falls back to tmux).
+   *  Explicit `false` spawns headless. */
+  useTmux: z.boolean().optional(),
 })
 
 export const RegisterProjectBodySchema = z.object({
@@ -189,6 +196,7 @@ export const RegisterProjectBodySchema = z.object({
   agentType: AgentTypeSchema,
   defaultModel: z.string().optional(),
   defaultEffort: EffortLevelSchema.optional(),
+  defaultUseTmux: z.boolean().optional(),
   group: z.string().nullable().optional(),
   tags: z.array(z.string()).optional(),
   agentConfig: AgentConfigSchema.optional(),

@@ -40,6 +40,41 @@ export const ConfigSchema = z.object({
 
 export type Config = z.infer<typeof ConfigSchema>
 
+/**
+ * Global default for the tmux/headless toggle.
+ *
+ * tmux (interactive TUI) is the default because it is what every session
+ * predating the toggle actually used, and because it is the only mode that
+ * supports live attach, sleeping/wake and the blocking `wait_for_idle` MCP
+ * tool. Headless is strictly opt-in.
+ */
+export const DEFAULT_USE_TMUX = true
+
+/**
+ * Resolve the effective tmux/headless choice from the two optional layers
+ * (per-spawn override > project default > global default).
+ *
+ * This exists so no consumer hand-rolls the check. `undefined` MUST mean
+ * tmux: session records and project records written before the toggle
+ * existed have no field at all, and a bare `!useTmux` / `Boolean(useTmux)`
+ * test would flip every one of them to headless. Always nullish-coalesce.
+ */
+export function resolveUseTmux(
+  sessionOrSpawn?: boolean | null,
+  projectDefault?: boolean | null,
+): boolean {
+  return sessionOrSpawn ?? projectDefault ?? DEFAULT_USE_TMUX
+}
+
+/** True when the given record/config should run headless. Inverse of
+ *  `resolveUseTmux`, spelled out so call sites read as intent. */
+export function isHeadless(
+  sessionOrSpawn?: boolean | null,
+  projectDefault?: boolean | null,
+): boolean {
+  return !resolveUseTmux(sessionOrSpawn, projectDefault)
+}
+
 export function isLoopback(host: string): boolean {
   return LOOPBACK_HOSTS.has(host)
 }

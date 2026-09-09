@@ -51,6 +51,19 @@ export interface SessionMetadata {
    *  reopen / clone target the same config dir even if the API process's
    *  env changes across restarts. */
   configDir?: string
+  /** Mangled workspace path (`/a/b` → `-a-b`) captured at spawn time. Together
+   *  with `configDir` + `claudeSessionUuid` it reconstructs the harness-native
+   *  transcript path `<configDir>/projects/<cwdSlug>/<uuid>.jsonl` without
+   *  re-deriving it from a project record that may since have moved. */
+  cwdSlug?: string
+  /** False when this session runs headless (`claude -p` / `codex exec`) —
+   *  a one-shot subprocess with no tmux and no live TUI.
+   *
+   *  ALWAYS read as `session.useTmux ?? true`. Records written before this
+   *  field existed have it `undefined`, and those are all tmux sessions —
+   *  a bare truthiness check (`!session.useTmux`) would silently reclassify
+   *  every legacy session as headless. */
+  useTmux?: boolean
   failureReason?: string
   metadata: Record<string, unknown>
   /** Runtime hint (not persisted): does the underlying Claude JSONL exist
@@ -92,6 +105,9 @@ export interface ProjectMetadata {
   agentType: AgentType
   defaultModel?: string
   defaultEffort?: EffortLevel
+  /** Project-level default for the tmux/headless toggle. Unset means tmux
+   *  (see DEFAULT_USE_TMUX). Read via `resolveUseTmux()`, never bare. */
+  defaultUseTmux?: boolean
   group?: string | null
   tags?: string[]
   agentConfig?: AgentConfig
@@ -197,6 +213,10 @@ export interface SpawnConfig {
   effort?: EffortLevel
   configDir?: string
   detached?: boolean
+  /** When false, spawn headless (`claude -p` / `codex exec`) — a one-shot
+   *  subprocess instead of an interactive tmux session. Unset means tmux.
+   *  Consumers must read it as `useTmux ?? true`, never bare. */
+  useTmux?: boolean
   /** Path to a per-session MCP config JSON. Written by session-manager
    *  and passed through so the adapter can hand it to the agent CLI
    *  (`--mcp-config <path>` for Claude). Enables auto-inject of the
@@ -223,9 +243,37 @@ export interface ResumeConfig {
 }
 
 export interface TmuxHandle {
+  /** tmux session name for interactive spawns. For headless spawns there is
+   *  no tmux — this holds a synthetic `headless-<rand>` key that the adapter
+   *  uses to look the child process up in its own registry. Unique per spawn
+   *  either way, so it stays usable as a handle id. */
   tmuxName: string
   claudeUuid: string
   jsonlPath: string
+  /** True when this handle refers to a headless child process rather than a
+   *  tmux session. Adapters set it; session-manager reads it to pick the
+   *  headless lifecycle. */
+  headless?: boolean
+}
+
+/** Outcome of a headless (one-shot) agent invocation, resolved when the child
+ *  process exits. Populated from the CLI's own stdout event stream — the
+ *  harness-native JSONL stays the single source of truth for the transcript
+ *  itself, so orchestron never writes a second copy. */
+export interface HeadlessResult {
+  /** Process exit code. `null` when the child was killed by a signal. */
+  exitCode: number | null
+  /** Harness-assigned session id discovered from the stream. Claude gets its
+   *  id pre-assigned via `--session-id`, so this only matters for Codex,
+   *  which mints a `thread_id` at `thread.started`. */
+  sessionId?: string
+  /** Final assistant message, when the stream reported one. */
+  finalResponse?: string
+  tokenUsage?: TokenUsage
+  costUsd?: number
+  /** Tail of the child's stderr (bounded) — surfaced as `failureReason` on a
+   *  non-zero exit so a headless failure isn't a silent dead end. */
+  stderr?: string
 }
 
 export interface AgentAdapter {
@@ -235,6 +283,11 @@ export interface AgentAdapter {
   sendPrompt(handle: TmuxHandle, prompt: string): Promise<void>
   waitTuiReady(handle: TmuxHandle, timeoutMs: number): Promise<void>
   kill(handle: TmuxHandle): Promise<void>
+  /** Headless only: resolve when the one-shot child process for `handle`
+   *  exits. The returned promise is created at spawn time, so awaiting it
+   *  late still yields the real exit code rather than racing the exit.
+   *  Adapters that support headless mode implement it. */
+  awaitHeadlessExit?(handle: TmuxHandle): Promise<HeadlessResult>
 }
 
 export interface WorktreeLedger {
