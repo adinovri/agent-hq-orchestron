@@ -1,6 +1,7 @@
 # agent-hq-orchestron
 
-A web-based supervisor for coding agents (Claude, Codex, OpenCode). Runs
+A web-based supervisor for coding agents (Claude and Codex; OpenCode
+adapter on the roadmap). Runs
 locally, drives interactive `claude` / `codex` under tmux — uses your
 subscription quota (Anthropic Pro/Max, ChatGPT Plus/Pro), not API credit.
 
@@ -14,7 +15,7 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
   device on your tailnet, each running in its own tmux window on the
   host.
 - **Multi-project + multi-harness** — one dashboard, sessions scoped per
-  project, mix Claude / Codex / OpenCode harnesses (whichever adapters
+  project, mix Claude / Codex harnesses (OpenCode planned; whichever adapters
   are installed).
 - **Full session lifecycle** — reopen a terminal session (resume the
   same conversation via `claude --resume` or `codex resume <uuid>`),
