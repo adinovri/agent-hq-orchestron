@@ -17,6 +17,8 @@ interface HealthResponse {
   bindHost: string
   remoteAuth: 'enabled' | 'disabled'
   maxConcurrent: number
+  platform?: NodeJS.Platform
+  uid?: number | null
 }
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
@@ -68,7 +70,11 @@ function CopyableCommand({ command }: { command: string }) {
 export default function SettingsPage() {
   const { data: health, isLoading, error } = useQuery<HealthResponse>({
     queryKey: ['health'],
-    queryFn: () => fetchJson('/api/health'),
+    // /api/health is now anonymous {ok:true} only — verbose fields
+    // (storage/bindHost/tmux/remoteAuth/maxConcurrent/platform) moved
+    // behind Bearer at /api/health/detail after security pass-1 finding
+    // #3. This page is authed anyway, so hit the detail endpoint.
+    queryFn: () => fetchJson('/api/health/detail'),
     refetchInterval: 30_000,
   })
 
@@ -134,10 +140,40 @@ export default function SettingsPage() {
               ~/.orchestron/config.json
             </code>
           </p>
-          <div>
-            <p className="text-xs text-zinc-500 mb-1">Restart after editing:</p>
-            <CopyableCommand command="systemctl --user restart orchestron-api.service orchestron-web.service" />
-          </div>
+          {(() => {
+            // Show both restart commands (deploy targets both Linux server
+            // + macOS laptop), mark the current host as ACTIVE. Falls back
+            // to Linux-marked when platform detection is unavailable.
+            const isMac = health?.platform === 'darwin'
+            const uidPart = health?.uid != null ? String(health.uid) : '501'
+            const macCmd = `launchctl kickstart -k gui/${uidPart}/com.orchestron.api && launchctl kickstart -k gui/${uidPart}/com.orchestron.web`
+            const linuxCmd = 'systemctl --user restart orchestron-api.service orchestron-web.service'
+            return (
+              <div className="space-y-2">
+                <p className="text-xs text-zinc-500">Restart after editing:</p>
+                <div className="space-y-2">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[10px] font-mono uppercase tracking-wide text-zinc-500">Linux · systemd</span>
+                      {!isMac && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-medium uppercase tracking-wide">this host</span>
+                      )}
+                    </div>
+                    <CopyableCommand command={linuxCmd} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[10px] font-mono uppercase tracking-wide text-zinc-500">macOS · launchd</span>
+                      {isMac && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-medium uppercase tracking-wide">this host</span>
+                      )}
+                    </div>
+                    <CopyableCommand command={macCmd} />
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
         </div>
       </Section>
 

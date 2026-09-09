@@ -224,6 +224,11 @@ fastify.get('/api/health/detail', async () => {
     bindHost: config.bindHost,
     remoteAuth: config.remoteToken ? 'enabled' : 'disabled',
     maxConcurrent: config.maxConcurrent,
+    // Surface the host OS so the Settings page can render the right
+    // restart command (systemctl on Linux, launchctl on macOS). Also
+    // include uid so the launchctl gui/<uid> selector is exact per host.
+    platform: process.platform,
+    uid: typeof process.getuid === 'function' ? process.getuid() : null,
   }
 })
 
