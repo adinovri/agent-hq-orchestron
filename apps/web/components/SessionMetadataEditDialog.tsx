@@ -12,11 +12,12 @@ interface Props {
   agentType: AgentType
   currentModel?: string           // session's own override
   currentEffort?: string
+  currentUseTmux?: boolean        // undefined = never set = tmux
   defaultModel?: string           // project default (shown as fallback hint)
   defaultEffort?: string
   pending?: boolean
   onClose: () => void
-  onConfirm: (opts: { model?: string; effort?: EffortLevel | '' }) => void
+  onConfirm: (opts: { model?: string; effort?: EffortLevel | ''; useTmux?: boolean }) => void
 }
 
 /** Small modal to patch model + effort on a session record. No lifecycle
@@ -24,18 +25,24 @@ interface Props {
  *  spawn (Reopen / Respawn / sleep-wake). Parent must only render this
  *  when session state has no live tmux (terminal or sleeping). */
 export function SessionMetadataEditDialog({
-  open, agentType, currentModel, currentEffort, defaultModel, defaultEffort,
+  open, agentType, currentModel, currentEffort, currentUseTmux, defaultModel, defaultEffort,
   pending, onClose, onConfirm,
 }: Props) {
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
+  const [useTmux, setUseTmux] = useState(true)
+
+  // `?? true` throughout — a record written before the toggle existed has no
+  // field, and those are all tmux sessions.
+  const currentUseTmuxResolved = currentUseTmux ?? true
 
   useEffect(() => {
     if (open) {
       setModel(currentModel ?? '')
       setEffort(currentEffort ?? '')
+      setUseTmux(currentUseTmux ?? true)
     }
-  }, [open, currentModel, currentEffort])
+  }, [open, currentModel, currentEffort, currentUseTmux])
 
   if (!open) return null
 
@@ -44,7 +51,10 @@ export function SessionMetadataEditDialog({
   const hasCuratedModels = models.length > 1
   const inputCls = 'w-full px-3 py-2 text-sm bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded focus:outline-none focus:ring-2 focus:ring-blue-500'
 
-  const dirty = (model || '') !== (currentModel ?? '') || (effort || '') !== (currentEffort ?? '')
+  const dirty =
+    (model || '') !== (currentModel ?? '') ||
+    (effort || '') !== (currentEffort ?? '') ||
+    useTmux !== currentUseTmuxResolved
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
@@ -53,7 +63,7 @@ export function SessionMetadataEditDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
-          <h2 className="text-base font-semibold">Edit model &amp; effort</h2>
+          <h2 className="text-base font-semibold">Edit session defaults</h2>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
             Metadata-only. Applies the next time this session spawns a tmux
             (Reopen / Respawn / wake from sleep).
@@ -93,6 +103,26 @@ export function SessionMetadataEditDialog({
               {efforts.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
             </select>
           </div>
+
+          <div>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useTmux}
+                onChange={(e) => setUseTmux(e.target.checked)}
+                disabled={pending}
+                className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600"
+              />
+              <span>
+                <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
+                <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
+                  {useTmux
+                    ? 'Respawn interactively in tmux.'
+                    : `Respawn headless (one-shot ${agentType === 'codex' ? 'codex exec' : 'claude -p'}) — no live TUI, no follow-up input.`}
+                </span>
+              </span>
+            </label>
+          </div>
         </div>
 
         <div className="px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 flex justify-end gap-2">
@@ -103,6 +133,7 @@ export function SessionMetadataEditDialog({
             onClick={() => onConfirm({
               model: (model || '') !== (currentModel ?? '') ? model : undefined,
               effort: (effort || '') !== (currentEffort ?? '') ? (effort as EffortLevel | '') : undefined,
+              useTmux: useTmux !== currentUseTmuxResolved ? useTmux : undefined,
             })}
           >
             {pending ? 'Saving…' : 'Save'}

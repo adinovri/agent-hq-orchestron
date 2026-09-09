@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/StatusPill'
 import { formatRelative, formatDuration } from '@/lib/time'
 import { isActive } from '@/lib/status'
-import { Sparkles, Terminal, Bot, X, GitBranch } from 'lucide-react'
+import { Sparkles, Terminal, Bot, X, GitBranch, Zap } from 'lucide-react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 
 interface Props {
@@ -79,6 +79,15 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
             >
               {session.agentType}
             </span>
+            {!(session.useTmux ?? true) && (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono uppercase bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+                title={`Headless run — one-shot ${session.agentType === 'codex' ? 'codex exec' : 'claude -p'}, no tmux. No live TUI, no sleeping, no follow-up input.`}
+              >
+                <Zap className="w-3 h-3" />
+                headless
+              </span>
+            )}
             {descendantCount != null && descendantCount > 0 && (
               <span
                 className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300"

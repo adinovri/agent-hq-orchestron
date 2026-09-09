@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/StatusPill'
 import { isActive } from '@/lib/status'
 import { formatRelative, formatDuration } from '@/lib/time'
-import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw, Copy, ClipboardCheck, Trash2, Download, Loader2, Pencil } from 'lucide-react'
+import { X, Check, GitBranch, ChevronDown, ChevronUp, Play, GitFork, RotateCcw, Copy, ClipboardCheck, Trash2, Download, Loader2, Pencil, Zap } from 'lucide-react'
 import { useState } from 'react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 import { apiFetch } from '@/lib/fetcher'
@@ -142,8 +142,14 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
   // means the check wasn't done (older list responses) — default to true so
   // the buttons don't disappear silently for older API versions.
   const hasTranscript = session.hasTranscript !== false
-  const canReopen = isTerminal && hasTranscript
-  const canClone = isTerminal && hasTranscript
+  // Reopen + Fork both resume the conversation in an interactive tmux, which
+  // is a cross-mode jump for a headless session. The API refuses it; hiding
+  // the buttons keeps the UI honest about what's available. Respawn stays —
+  // it re-runs the same prompt in the session's own mode.
+  // `?? true` — sessions predating the toggle are tmux sessions.
+  const isHeadless = !(session.useTmux ?? true)
+  const canReopen = isTerminal && hasTranscript && !isHeadless
+  const canClone = isTerminal && hasTranscript && !isHeadless
   // Respawn always available on terminal — doesn't need the old JSONL.
   const canRespawn = isTerminal
   const [expanded, setExpanded] = useState(false)
@@ -171,6 +177,15 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
               >
                 {session.agentType}
               </span>
+              {!(session.useTmux ?? true) && (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono uppercase bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+                  title={`Headless run — one-shot ${session.agentType === 'codex' ? 'codex exec' : 'claude -p'}, no tmux. No live TUI, no sleeping, no follow-up input.`}
+                >
+                  <Zap className="w-3 h-3" />
+                  headless
+                </span>
+              )}
               {effectiveModel && (
                 <span
                   className={`text-xs font-mono ${modelFromProject || modelFromHarness ? 'text-zinc-400 dark:text-zinc-500 italic' : 'text-zinc-500 dark:text-zinc-400'}`}

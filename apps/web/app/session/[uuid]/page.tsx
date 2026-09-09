@@ -145,7 +145,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   })
 
   const editMetadataMutation = useMutation({
-    mutationFn: async (opts: { model?: string; effort?: EffortLevel | '' }) => {
+    mutationFn: async (opts: { model?: string; effort?: EffortLevel | ''; useTmux?: boolean }) => {
       const res = await apiFetch(`/api/sessions/${uuid}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -270,6 +270,7 @@ export default function SessionDetailPage({ params }: PageProps) {
         agentType={session.agentType}
         currentModel={session.model}
         currentEffort={session.effort}
+        currentUseTmux={session.useTmux}
         defaultModel={currentProject?.defaultModel}
         defaultEffort={currentProject?.defaultEffort}
         pending={editMetadataMutation.isPending}

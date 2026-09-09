@@ -247,6 +247,7 @@ export default function DashboardPage() {
           path: p.path,
           defaultModel: p.defaultModel,
           defaultEffort: p.defaultEffort,
+          defaultUseTmux: p.defaultUseTmux,
           configDir: p.agentType === 'codex'
             ? p.agentConfig?.env?.['CODEX_HOME']
             : p.agentConfig?.env?.['CLAUDE_CONFIG_DIR'],

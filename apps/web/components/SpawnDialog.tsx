@@ -44,6 +44,7 @@ interface Props {
     configDir?: string
     defaultModel?: string
     defaultEffort?: import('@agent-hq-orchestron/shared').EffortLevel
+    defaultUseTmux?: boolean
   }>
   templates: TemplateInfo[]
   onSpawned: () => void
@@ -77,6 +78,13 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
   const [prompt, setPrompt] = useState('')
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
+  // null = untouched, so the selected project's default shows through and
+  // keeps updating if the user switches project. Derived rather than mirrored
+  // into state via an effect — no cascading render, no stale value.
+  // `?? true`: a project with no stored preference means tmux.
+  const [useTmuxOverride, setUseTmuxOverride] = useState<boolean | null>(null)
+  const projectDefaultUseTmux = currentProject?.defaultUseTmux ?? true
+  const useTmux = useTmuxOverride ?? projectDefaultUseTmux
   const [vars, setVars] = useState<Record<string, string>>({})
   const [attachments, setAttachments] = useState<AttachedFile[]>([])
   const [dragOver, setDragOver] = useState(false)
@@ -126,6 +134,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
   useEffect(() => {
     if (!open) {
       setError(null)
+      setUseTmuxOverride(null)
     }
   }, [open])
 
@@ -161,6 +170,10 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
         vars: Object.keys(vars).length > 0 ? vars : undefined,
         model: model || undefined,
         effort: effort || undefined,
+        // Send only when it differs from the project default, so the
+        // project stays the single place to change the default later.
+        // Must not use `||` anywhere near this — false is the payload.
+        useTmux: useTmux === projectDefaultUseTmux ? undefined : useTmux,
       }
       let res: Response
       if (attachments.length > 0) {
@@ -184,6 +197,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
       setVars({})
       setModel('')
       setEffort('')
+      setUseTmuxOverride(null)
       onSpawned()
       onClose()
     } catch (err) {
@@ -352,6 +366,29 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
                 {[DEFAULT_EFFORT_ROW, ...effortsFor(selectedAgentType)].map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
               </select>
             </div>
+          </div>
+
+          {/* Run mode */}
+          <div>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useTmux}
+                onChange={(e) => setUseTmuxOverride(e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600"
+              />
+              <span>
+                <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
+                <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
+                  {useTmux
+                    ? 'Interactive session — live transcript, follow-up input, sleeps when idle.'
+                    : `Headless (one-shot ${selectedAgentType === 'codex' ? 'codex exec' : 'claude -p'}) — runs to completion and exits. No live TUI, no sleeping, no follow-up input.`}
+                  {useTmux !== projectDefaultUseTmux && (
+                    <span className="italic"> Overrides the project default.</span>
+                  )}
+                </span>
+              </span>
+            </label>
           </div>
 
           {/* Attachments */}

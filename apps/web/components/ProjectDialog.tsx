@@ -26,6 +26,7 @@ interface FormState {
   agentType: 'claude' | 'codex' | 'opencode'
   defaultModel: string
   defaultEffort: string
+  defaultUseTmux: boolean
   claudeConfigDir: string
   codexHome: string
   group: string
@@ -42,6 +43,7 @@ const BLANK: FormState = {
   agentType: 'claude',
   defaultModel: '',
   defaultEffort: '',
+  defaultUseTmux: true,
   claudeConfigDir: '',
   codexHome: '',
   group: '',
@@ -68,6 +70,8 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
         agentType: project.agentType,
         defaultModel: project.defaultModel ?? '',
         defaultEffort: project.defaultEffort ?? '',
+        // `?? true` — a project saved before the toggle existed is a tmux project.
+        defaultUseTmux: project.defaultUseTmux ?? true,
         claudeConfigDir: env['CLAUDE_CONFIG_DIR'] ?? '',
         codexHome: env['CODEX_HOME'] ?? '',
         group: project.group ?? '',
@@ -137,6 +141,9 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
       agentType: form.agentType,
       ...(form.defaultModel ? { defaultModel: form.defaultModel } : {}),
       ...(form.defaultEffort ? { defaultEffort: form.defaultEffort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}),
+      // Always sent, unlike model/effort: `false` is the meaningful value
+      // here, so an "only when truthy" spread would make headless unsavable.
+      defaultUseTmux: form.defaultUseTmux,
       group: form.group.trim() || null,
       tags: form.tags.split(',').map((s) => s.trim()).filter(Boolean),
       ...(Object.keys(agentConfig).length > 0 ? { agentConfig } : {}),
@@ -244,6 +251,25 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
                 ))}
               </select>
             </div>
+          </div>
+
+          <div>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.defaultUseTmux}
+                onChange={(e) => set('defaultUseTmux', e.target.checked)}
+                className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600"
+              />
+              <span>
+                <span className="text-sm font-medium">Use tmux by default</span>
+                <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
+                  {form.defaultUseTmux
+                    ? 'New sessions run interactively in tmux. Individual spawns can still opt into headless.'
+                    : `New sessions run headless (one-shot ${form.agentType === 'codex' ? 'codex exec' : 'claude -p'}) unless the spawn dialog says otherwise.`}
+                </span>
+              </span>
+            </label>
           </div>
 
           {/* Harness-specific config-dir env — only the one matching the
