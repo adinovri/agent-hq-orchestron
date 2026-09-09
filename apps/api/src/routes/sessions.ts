@@ -734,12 +734,18 @@ export function sessionsPlugin(
     // Adopt an existing harness session (started outside orchestron) into a
     // new orchestron session record. Body: { projectId, harnessSessionId }.
     // See SessionManager.adopt() for validation rules.
+    //
+    // `useTmux` picks the mode the adopted record runs in. Unlike the revival
+    // routes it is NOT a tri-state against a stored value — adopt creates the
+    // record, so there is no previous mode to keep and `undefined` simply
+    // means tmux, the pre-toggle behaviour.
     app.post('/api/sessions/adopt', async (req, reply) => {
       const body = z.object({
         projectId: z.string().min(1),
         harnessSessionId: z.string().min(8),
         model: z.string().optional(),
         effort: z.enum(['low', 'medium', 'high', 'ultra']).optional(),
+        useTmux: z.boolean().optional(),
       }).safeParse(req.body)
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
 
@@ -751,6 +757,19 @@ export function sessionsPlugin(
         throw err
       }
 
+      // Same masking flavour as spawn: an explicit headless adopt made while
+      // the switch is off becomes a tmux adopt and succeeds, and the response
+      // says so. The manager coerces again on its own — this pass exists to
+      // produce the `coerced` payload the dialog turns into a toast.
+      const { useTmux: adoptUseTmux, coerced: adoptCoerced } =
+        applyHeadlessSwitch(body.data.useTmux, headlessEnabled)
+      if (adoptCoerced) {
+        req.log.info(
+          { projectId: project.id, harnessSessionId: body.data.harnessSessionId, requestedUseTmux: false, effectiveUseTmux: true },
+          `coerced useTmux=false to true (${HEADLESS_COERCED_REASON})`,
+        )
+      }
+
       try {
         const session = await manager.adopt({
           projectId: project.id,
@@ -760,8 +779,10 @@ export function sessionsPlugin(
           model: body.data.model ?? project.defaultModel,
           effort: body.data.effort ?? project.defaultEffort,
           harnessSessionId: body.data.harnessSessionId,
+          useTmux: adoptUseTmux,
         })
-        return reply.code(201).send(session)
+        const coerced = headlessCoercion(adoptCoerced)
+        return reply.code(201).send(coerced ? { ...session, coerced } : session)
       } catch (err: unknown) {
         const msg = (err as Error).message ?? 'adopt failed'
         if (msg.includes('not supported')) return reply.code(400).send({ error: msg })

@@ -5,6 +5,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { apiFetch } from '@/lib/fetcher'
 import { Button } from '@/components/ui/button'
+import { useHeadlessEnabled } from '@/lib/server-config'
+import { noticeIfCoerced } from '@/lib/notice'
 import { X, Loader2, CheckCircle2, AlertTriangle, Import } from 'lucide-react'
 
 interface ProjectSummary {
@@ -42,12 +44,19 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
   const [uuid, setUuid] = useState<string>('')
   const [validation, setValidation] = useState<ValidateResult | null>(null)
   const [validating, setValidating] = useState(false)
+  // Default tmux. Adopt has no source mode to inherit — the record is being
+  // created here — and the user often does not know how the session they are
+  // adopting was started. tmux is the mode that works for every conversation
+  // and the one every adopt produced before this checkbox existed.
+  const [useTmux, setUseTmux] = useState(true)
+  const headlessEnabled = useHeadlessEnabled()
 
   useEffect(() => {
     if (open) {
       setProjectId(eligible[0]?.id ?? '')
       setUuid('')
       setValidation(null)
+      setUseTmux(true)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -80,10 +89,20 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
       const res = await apiFetch(`/api/sessions/adopt`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ projectId, harnessSessionId: uuid.trim() }),
+        // Omitted while the switch is off: the control is not rendered, so
+        // there is no user choice to transmit and the server's own coercion
+        // is the whole story.
+        body: JSON.stringify({
+          projectId,
+          harnessSessionId: uuid.trim(),
+          ...(headlessEnabled ? { useTmux } : {}),
+        }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
-      return res.json() as Promise<{ id: string }>
+      const session = await res.json() as { id: string }
+      // Raised before the dialog closes, same as the spawn dialog.
+      noticeIfCoerced(session)
+      return session
     },
     onSuccess: (session) => {
       qc.invalidateQueries({ queryKey: ['sessions'] })
@@ -113,8 +132,9 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             Import a Claude or Codex session that was started outside orchestron
             (via <code className="text-[11px] px-1 bg-zinc-100 dark:bg-zinc-800 rounded">claude --resume</code>, a background job, etc.)
-            into a new orchestron record. A fresh tmux is spawned with the harness's resume flag —
-            confirm no other process is still resuming this session or the transcript will race.
+            into a new orchestron record. Confirm no other process is still resuming this session
+            or the transcript will race — that holds in either mode, since a headless adopt only
+            defers its first resume to your next message.
           </p>
 
           <div>
@@ -191,6 +211,36 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
                 placeholder="Pick a project first"
                 className="w-full px-3 py-2 text-sm font-mono bg-zinc-50 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded opacity-60"
               />
+            </div>
+          )}
+
+          {/* Run mode. Hidden while the global switch is off, on the same
+              rule as every other "Use tmux" control: headless is
+              unavailable, the server coerces regardless, and a
+              checked-and-disabled box only invites the question of what it
+              would have done. */}
+          {headlessEnabled && (
+            <div>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useTmux}
+                  disabled={adoptMutation.isPending}
+                  onChange={(e) => setUseTmux(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-violet-600 disabled:opacity-60"
+                />
+                <span>
+                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
+                  <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
+                    {useTmux
+                      ? 'Resumes now in an interactive tmux session — live transcript, attach, sleeps when idle.'
+                      : `Adopts headless: nothing starts until you send a message, and each turn then runs as its own ${currentProject?.agentType === 'codex' ? 'codex exec' : 'claude -p'} process.`}
+                    <span className="block italic">
+                      The source session&apos;s own mode does not constrain this — one transcript store, read the same way by both.
+                    </span>
+                  </span>
+                </span>
+              </label>
             </div>
           )}
 

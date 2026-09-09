@@ -2068,17 +2068,35 @@ export class SessionManager {
   /**
    * Adopt an existing harness session (started outside orchestron — e.g. via
    * `claude --resume` in a terminal, or a nafu-bg-claude/claw-bg-claude
-   * background job) into a new orchestron session record. Spawns a fresh
-   * tmux window with the harness's native resume flag so the session becomes
+   * background job) into a new orchestron session record, so it becomes
    * live-manageable via the dashboard (interrupt, send input, kill, reopen).
    *
-   * Validation blocks creation when:
+   * `useTmux` picks the mode the adopted record runs in from here on, and it
+   * is a genuine choice rather than a property of the source: the harness
+   * conversation is one transcript store that `-p` and the interactive TUI
+   * scan identically, so a session started headless can be adopted into tmux
+   * and vice versa (the same cross-mode result Phase 2 measured for reopen).
+   * Absent means tmux, which is what every adopt did before the field.
+   *
+   * Adopting into tmux spawns a fresh window with the harness's native resume
+   * flag. Adopting into headless spawns NOTHING — a headless session only
+   * exists for the length of a turn, so the record simply lands `idle` and
+   * the next send is its first `-p --resume`. Same reasoning as reopening
+   * into headless: burning a turn on an empty prompt would accomplish
+   * nothing the user asked for.
+   *
+   * Validation is identical in both modes and blocks creation when:
    * - The harness transcript doesn't exist at the expected path for the
    *   given project's workspace + configDir (usually means the UUID was
    *   started in a different cwd, or was typed wrong).
    * - An active orchestron session already tracks this harness UUID —
    *   spawning a second tmux `--resume` against the same JSONL would race
    *   the writer and corrupt the transcript.
+   *
+   * Those checks apply to a headless adopt too, even though it starts no
+   * process: the race is deferred to the first turn, not avoided. Adopting
+   * a UUID some other supervisor is holding would still produce two writers
+   * against one transcript the moment the user sends anything.
    *
    * `initialPrompt` is populated from the first user event in the transcript
    * so the dashboard shows something meaningful; the prompt is NOT re-sent
@@ -2092,6 +2110,9 @@ export class SessionManager {
     model?: string
     effort?: import('@agent-hq-orchestron/shared').EffortLevel
     harnessSessionId: string
+    /** Mode for the adopted record. `undefined` means tmux — every adopt
+     *  predating this field spawned one. Runs through the global switch. */
+    useTmux?: boolean
   }): Promise<SessionMetadata> {
     return this.withLock(`adopt:${config.harnessSessionId}`, () => this._adoptUnlocked(config))
   }
@@ -2107,6 +2128,7 @@ export class SessionManager {
      *  wants to bring into orchestron. Matches claudeSessionUuid on the new
      *  record — same field for both harnesses. */
     harnessSessionId: string
+    useTmux?: boolean
   }): Promise<SessionMetadata> {
     const active = await this.countActiveSessions()
     if (active >= this.maxConcurrent) throw new PoolFullError(this.maxConcurrent)
@@ -2190,21 +2212,14 @@ export class SessionManager {
       : config.configDir
     const effectiveModel = filterModelForHarness(config.model, config.agentType)
 
-    await this.ensureMemorySymlink(config.agentType, effectiveConfigDir, config.workspace)
-
-    const adapter = this.registry.getOrThrow(config.agentType)
     const uuid = crypto.randomUUID()
-    const mcpConfigPath = await this.ensureSessionMcpConfig(uuid, config.agentType)
-    const handle = await adapter.resume(config.harnessSessionId, {
-      workspace: config.workspace,
-      configDir: config.configDir,
-      model: effectiveModel,
-      effort: config.effort,
-      mcpConfigPath,
-    })
+    // Through the masked resolver like every other spawn decision, so the
+    // global switch reaches adopt too — including the callers that never
+    // pass a body, such as the import route.
+    const useTmux = this.resolveUseTmuxMasked(config.useTmux, 'adopt', uuid)
 
     const now = new Date().toISOString()
-    const session: SessionMetadata = {
+    const record: SessionMetadata = {
       id: uuid,
       projectId: config.projectId,
       agentType: config.agentType,
@@ -2214,8 +2229,10 @@ export class SessionManager {
       parentSessionId: null,
       detached: false,
       claudeSessionUuid: config.harnessSessionId,
-      tmuxName: handle.tmuxName,
-      jsonlPath: handle.jsonlPath || expectedJsonlPath,
+      // Filled in from the handle on the tmux path below; a headless record
+      // holds no process between turns, so it owns no handle yet.
+      tmuxName: '',
+      jsonlPath: expectedJsonlPath,
       configDir: effectiveConfigDir,
       initialPrompt,
       finalResponse: null,
@@ -2224,7 +2241,39 @@ export class SessionManager {
       startedAt: now,
       endedAt: null,
       lastActivityAt: now,
+      // Written explicitly rather than left absent now that it is a choice:
+      // an adopt record with no field would read as "predates the toggle".
+      useTmux,
       metadata: { adopted: true, adoptedAt: now, adoptedFromUuid: config.harnessSessionId },
+    }
+
+    // Headless: nothing to launch. The conversation already exists on disk
+    // and a headless session is only alive for the length of a turn, so
+    // adopting it means "make this record live and ready for input" — the
+    // next send is its first `-p --resume`. Memory symlink and MCP config
+    // are regenerated per turn by startHeadlessTurn, so there is nothing to
+    // prepare here either. Same shape as reopening into headless.
+    if (!useTmux) {
+      await writeJson(this.sessionPath(uuid), record)
+      return this.transition(uuid, 'idle')
+    }
+
+    await this.ensureMemorySymlink(config.agentType, effectiveConfigDir, config.workspace)
+
+    const adapter = this.registry.getOrThrow(config.agentType)
+    const mcpConfigPath = await this.ensureSessionMcpConfig(uuid, config.agentType)
+    const handle = await adapter.resume(config.harnessSessionId, {
+      workspace: config.workspace,
+      configDir: config.configDir,
+      model: effectiveModel,
+      effort: config.effort,
+      mcpConfigPath,
+    })
+
+    const session: SessionMetadata = {
+      ...record,
+      tmuxName: handle.tmuxName,
+      jsonlPath: handle.jsonlPath || expectedJsonlPath,
     }
     await writeJson(this.sessionPath(uuid), session)
 
