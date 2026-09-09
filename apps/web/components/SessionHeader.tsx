@@ -13,6 +13,10 @@ import { apiFetch } from '@/lib/fetcher'
 interface Props {
   session: SessionMetadata
   descendantCount?: number
+  /** Prompt preview of the parent session (first N chars of its
+   *  initialPrompt). Rendered as hover title on the parent chip so
+   *  the user has context without leaving the page. */
+  parentPrompt?: string
   readOnly?: boolean
   onKill: () => void
   onArchive?: () => void
@@ -114,7 +118,7 @@ function ExportButton({ sessionId }: { sessionId: string }) {
   )
 }
 
-export function SessionHeader({ session, descendantCount, readOnly, onKill, onArchive, onReopen, onClone, onRespawn, onDeleteRecord, onEditMetadata, killing, archiving, reopening, cloning, respawning, deletingRecord, projectName, projectPath, projectDefaultModel, projectDefaultEffort }: Props) {
+export function SessionHeader({ session, descendantCount, parentPrompt, readOnly, onKill, onArchive, onReopen, onClone, onRespawn, onDeleteRecord, onEditMetadata, killing, archiving, reopening, cloning, respawning, deletingRecord, projectName, projectPath, projectDefaultModel, projectDefaultEffort }: Props) {
   const harnessDefaultModel = implicitDefaultModel(session.agentType)
   const harnessDefaultEffort = implicitDefaultEffort(session.agentType)
   const effectiveModel = session.model ?? projectDefaultModel ?? harnessDefaultModel
@@ -226,10 +230,27 @@ export function SessionHeader({ session, descendantCount, readOnly, onKill, onAr
                 )
               })()}
               {descendantCount != null && descendantCount > 0 && (
-                <span className="inline-flex items-center gap-1 text-xs text-zinc-500">
+                <span
+                  className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                  title={`${descendantCount} direct child ${descendantCount === 1 ? 'agent' : 'agents'} spawned — see menu Graph for tree view`}
+                >
                   <GitBranch className="w-3 h-3" />
                   {descendantCount}
                 </span>
+              )}
+              {session.parentSessionId && (
+                <a
+                  href={`/session/${session.parentSessionId}`}
+                  className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition"
+                  title={
+                    parentPrompt
+                      ? `Child of parent session ${session.parentSessionId} — "${parentPrompt}"`
+                      : `Child of parent session ${session.parentSessionId}`
+                  }
+                >
+                  <GitBranch className="w-3 h-3 rotate-180" />
+                  parent: {session.parentSessionId.slice(0, 8)}
+                </a>
               )}
             </div>
             <p className="mt-2 text-sm text-zinc-800 dark:text-zinc-200 line-clamp-2 leading-snug">

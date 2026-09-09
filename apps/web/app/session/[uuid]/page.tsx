@@ -57,6 +57,21 @@ export default function SessionDetailPage({ params }: PageProps) {
   const projectName = currentProject?.name
   const projectPath = currentProject?.path
 
+  // Resolve parent's prompt preview for the parent-chip hover title.
+  // Cheap lookup — sessions list is already fetched by the dashboard's
+  // long-poll cache, so hitting the same query key here just replays it.
+  const { data: allSessions = [] } = useQuery<SessionMetadata[]>({
+    queryKey: ['sessions'],
+    queryFn: async () => {
+      const r = await fetchJson<{ sessions: SessionMetadata[] }>('/api/sessions')
+      return r.sessions
+    },
+    enabled: !!session?.parentSessionId,
+  })
+  const parentPrompt = session?.parentSessionId
+    ? (allSessions.find((s) => s.id === session.parentSessionId)?.initialPrompt ?? '').trim().slice(0, 100)
+    : undefined
+
   const killMutation = useMutation({
     mutationFn: () => apiFetch(`/api/sessions/${uuid}`, { method: 'DELETE' }),
     onMutate: () => setKilling(true),
@@ -198,6 +213,7 @@ export default function SessionDetailPage({ params }: PageProps) {
       <SessionHeader
         session={session}
         descendantCount={descendantCount}
+        parentPrompt={parentPrompt || undefined}
         readOnly={readOnly}
         onKill={() => setKillOpen(true)}
         onArchive={() => {
