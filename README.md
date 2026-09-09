@@ -29,7 +29,8 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
   live attach, no sleeping, no follow-up input. Good for batch, cron and
   fire-and-forget work; tmux stays the default for everything else.
   `"enableHeadlessMode": false` in `~/.orchestron/config.json` is the
-  fleet-wide off switch. See
+  fleet-wide off switch — it hides the toggle and coerces headless
+  requests to tmux rather than failing them. See
   [Headless mode](docs/USAGE.md#headless-mode-no-tmux).
 - **Sleep on idle** — sessions unused for 15 min go to `sleeping`
   (tmux released, no resources held). Sending input auto-wakes them

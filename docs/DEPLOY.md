@@ -188,12 +188,18 @@ sleeping is cheap, keep them around for reopen/adopt without worrying
 about pool pressure.
 
 **Headless kill switch (`enableHeadlessMode`)**: default `true`. Set it
-to `false` and the API refuses every explicit `useTmux: false` on
-`POST /api/sessions` and `PATCH /api/sessions/:uuid` with a `400`, and
-coerces headless *project defaults* back to tmux instead of failing the
-spawn. Running headless sessions are not touched — this gates new
-spawns only. Config-file only (no env override) and read at boot, so
-restart the API after changing it. See
+to `false` and every headless request is quietly coerced to tmux instead
+of rejected — an explicit `useTmux: false` on `POST /api/sessions` or
+`PATCH /api/sessions/:uuid`, a headless project default, and a headless
+session record on Respawn. Nothing 400s; the response carries
+`"coerced": {"useTmux": true, "reason": "headless disabled globally"}`
+and the API logs each one at info level. The web UI hides the *Use tmux*
+toggle outright while the switch is off and raises a toast whenever a
+coercion comes back. Stored preferences are left on disk, so flipping the
+switch back on restores each project and session to the mode it asked
+for. Running headless sessions are untouched — a live process cannot be
+converted mid-flight. Config-file only (no env override) and read at
+boot, so restart the API after changing it. See
 [USAGE.md § Headless mode](USAGE.md#headless-mode-no-tmux).
 
 **Idle sweeper (`idleTimeoutMs`)**: default 900000 (15 min). Sessions in
