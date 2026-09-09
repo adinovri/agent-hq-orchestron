@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import type { AgentType, EffortLevel } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
-import { useHeadlessEnabled, HEADLESS_DISABLED_TOOLTIP } from '@/lib/server-config'
+import { useHeadlessEnabled } from '@/lib/server-config'
 
 const RESET: { value: ''; label: string } = { value: '', label: '— Reset to project default' }
 
@@ -53,10 +53,14 @@ export function SessionMetadataEditDialog({
   const hasCuratedModels = models.length > 1
   const inputCls = 'w-full px-3 py-2 text-sm bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded focus:outline-none focus:ring-2 focus:ring-blue-500'
 
+  // `useTmux` drops out of the comparison while the switch is off: the
+  // control is hidden, so the state can never diverge, and leaving it in
+  // would make `dirty` depend on a value the user cannot see.
+  const useTmuxDirty = headlessEnabled && useTmux !== currentUseTmuxResolved
   const dirty =
     (model || '') !== (currentModel ?? '') ||
     (effort || '') !== (currentEffort ?? '') ||
-    useTmux !== currentUseTmuxResolved
+    useTmuxDirty
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
@@ -106,35 +110,33 @@ export function SessionMetadataEditDialog({
             </select>
           </div>
 
-          {/* Forced-checked while the global switch is off: the API 400s an
-              explicit useTmux:false, so tmux is the only value this session
-              can respawn with. `useTmux` state is left untouched, which
-              keeps `dirty` false — editing model/effort during an outage
-              must not silently rewrite a headless session's record. */}
-          <div>
-            <label
-              className={headlessEnabled ? 'flex items-start gap-2 cursor-pointer' : 'flex items-start gap-2 cursor-not-allowed'}
-              title={headlessEnabled ? undefined : HEADLESS_DISABLED_TOOLTIP}
-            >
-              <input
-                type="checkbox"
-                checked={headlessEnabled ? useTmux : true}
-                onChange={(e) => setUseTmux(e.target.checked)}
-                disabled={pending || !headlessEnabled}
-                className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600 disabled:opacity-60"
-              />
-              <span>
-                <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
-                <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
-                  {!headlessEnabled
-                    ? HEADLESS_DISABLED_TOOLTIP
-                    : useTmux
+          {/* Hidden while the global switch is off. This dialog is
+              metadata-only and takes effect on the next spawn, and that
+              spawn will be tmux whatever the record says — so the control
+              would be offering a choice with no consequence. The stored
+              `useTmux` is left as it is; Respawn is what converts a
+              headless record, and it does so on its own. */}
+          {headlessEnabled && (
+            <div>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useTmux}
+                  onChange={(e) => setUseTmux(e.target.checked)}
+                  disabled={pending}
+                  className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600 disabled:opacity-60"
+                />
+                <span>
+                  <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
+                  <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
+                    {useTmux
                       ? 'Respawn interactively in tmux.'
                       : `Respawn headless (one-shot ${agentType === 'codex' ? 'codex exec' : 'claude -p'}) — no live TUI, no follow-up input.`}
+                  </span>
                 </span>
-              </span>
-            </label>
-          </div>
+              </label>
+            </div>
+          )}
         </div>
 
         <div className="px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 flex justify-end gap-2">
@@ -145,7 +147,7 @@ export function SessionMetadataEditDialog({
             onClick={() => onConfirm({
               model: (model || '') !== (currentModel ?? '') ? model : undefined,
               effort: (effort || '') !== (currentEffort ?? '') ? (effort as EffortLevel | '') : undefined,
-              useTmux: useTmux !== currentUseTmuxResolved ? useTmux : undefined,
+              useTmux: useTmuxDirty ? useTmux : undefined,
             })}
           >
             {pending ? 'Saving…' : 'Save'}

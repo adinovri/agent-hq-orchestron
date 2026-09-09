@@ -15,7 +15,9 @@ export interface HealthDetail {
   maxConcurrent: number
   platform?: NodeJS.Platform
   uid?: number | null
-  /** Global headless kill switch. Absent on servers older than the flag. */
+  /** Global headless kill switch. `false` hides every "Use tmux" toggle —
+   *  the server coerces headless requests to tmux anyway, so there is no
+   *  choice left to present. Absent on servers older than the flag. */
   enableHeadlessMode?: boolean
 }
 
@@ -36,16 +38,14 @@ export function useHealthDetail() {
  * Whether headless mode may be requested at all.
  *
  * Optimistic `true` while loading, on error, and against an older server
- * that does not report the field. The API is the enforcement layer — it
- * 400s an explicit `useTmux:false` regardless of what the UI believes —
- * so guessing "enabled" only risks a rejected submit, whereas guessing
- * "disabled" would lock the checkbox for everyone whose health fetch
- * happens to be slow or blocked.
+ * that does not report the field — so the "Use tmux" toggle stays visible
+ * unless the server has actually said the switch is off. The API is the
+ * enforcement layer (it coerces a headless request to tmux regardless of
+ * what the UI believes), so guessing "enabled" costs at worst a spawn that
+ * comes back with a `coerced` notice, whereas guessing "disabled" would
+ * hide the toggle from everyone whose health fetch is slow or blocked.
  */
 export function useHeadlessEnabled(): boolean {
   const { data } = useHealthDetail()
   return data?.enableHeadlessMode ?? true
 }
-
-export const HEADLESS_DISABLED_TOOLTIP =
-  'Headless disabled globally. Enable via ~/.orchestron/config.json'

@@ -117,7 +117,18 @@ export default function SettingsPage() {
               // kill switch and always allowed headless.
               (health.enableHeadlessMode ?? true)
                 ? <span className="text-emerald-600 dark:text-emerald-400">enabled</span>
-                : <span className="text-amber-600 dark:text-amber-400">disabled globally</span>
+                : (
+                  // The switch masks rather than blocks, so say what that
+                  // means for records that are already headless — this is
+                  // the only place in the UI that still mentions headless
+                  // once the toggles are hidden.
+                  <span className="text-right">
+                    <span className="text-amber-600 dark:text-amber-400">disabled globally</span>
+                    <span className="block text-[11px] text-zinc-500 dark:text-zinc-400">
+                      Toggles hidden. Existing headless sessions are coerced to tmux on their next spawn.
+                    </span>
+                  </span>
+                )
             } />
             <InfoRow label="Storage dir" value={health.storage} />
           </>
