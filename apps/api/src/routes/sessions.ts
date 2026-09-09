@@ -7,7 +7,9 @@ import os from 'node:os'
 import { mkdir, writeFile, chmod } from 'node:fs/promises'
 import crypto from 'node:crypto'
 import Database from 'better-sqlite3'
+import { existsSync } from 'node:fs'
 import { SpawnSessionBodySchema } from '@agent-hq-orchestron/shared'
+import { resolveClaudeTranscriptPath } from '../adapters/claude.js'
 import { SessionManager } from '../domain/session-manager.js'
 
 const UPLOAD_ROOT = '/tmp/orchestron/uploads'
@@ -102,7 +104,7 @@ function claudeContextWindowForModel(model?: string): number {
   return 200_000
 }
 
-function parseClaudeRollout(raw: string): RolloutParsed {
+export function parseClaudeRollout(raw: string): RolloutParsed {
   const entries: RolloutEntry[] = []
   let lastTurnEndTs = ''
   let lastUserTs = ''
@@ -569,6 +571,12 @@ export function sessionsPlugin(
         return { entries: parsed.entries, size: 0, contextStats: parsed.contextStats }
       }
 
+      // Claude records can carry a stale/empty jsonlPath; rebuild from the
+      // configDir + cwdSlug + uuid tuple when that happens.
+      const transcriptPath = session.agentType === 'codex'
+        ? session.jsonlPath
+        : resolveClaudeTranscriptPath(session, existsSync)
+
       const { readFile, stat } = await import('node:fs/promises')
       // Cap transcript read at 50MB to prevent OOM on runaway sessions.
       // Real transcripts are KB-MB; 50MB is orders of magnitude beyond
@@ -576,7 +584,7 @@ export function sessionsPlugin(
       // anyway — 413 tells the operator to /export instead.
       const TRANSCRIPT_READ_CAP = 50 * 1024 * 1024
       try {
-        const st = await stat(session.jsonlPath)
+        const st = await stat(transcriptPath)
         if (st.size > TRANSCRIPT_READ_CAP) {
           return reply.code(413).send({
             error: `transcript size ${st.size} exceeds ${TRANSCRIPT_READ_CAP}-byte cap; use /api/sessions/${uuid}/export to download the full bundle`,
@@ -585,7 +593,7 @@ export function sessionsPlugin(
       } catch { /* stat failed — readFile below handles it */ }
       let raw = ''
       try {
-        raw = await readFile(session.jsonlPath, 'utf8')
+        raw = await readFile(transcriptPath, 'utf8')
       } catch {
         return { entries: [], size: 0 }
       }
@@ -624,7 +632,11 @@ export function sessionsPlugin(
       const turnEndedAfterUser = parsed.lastTurnEndTs && (!parsed.lastUserTs || parsed.lastTurnEndTs > parsed.lastUserTs)
       if (turnEndedAfterUser && session.status === 'running') {
         manager.reconcileTurnEnd(session.id, parsed.lastAssistantText).catch(() => {})
-      } else if (session.status === 'running') {
+      } else if (session.status === 'running' && (session.useTmux ?? true)) {
+        // Headless is excluded: `-p` has no selector modal to block on, and
+        // needs_input there would have no answer path — process exit is the
+        // only thing that moves a headless run off `running`.
+        //
         // AskUserQuestion special-case: Claude shows an interactive selector
         // modal in the TUI and does NOT emit `turn_duration` until the user
         // answers. Without this the session sits at `running` in the list
@@ -755,7 +767,6 @@ export function sessionsPlugin(
         const { claudeTranscriptPath, effectiveClaudeConfigDir } = await import('../adapters/claude.js')
         const effCfg = effectiveClaudeConfigDir(configDir)
         const jsonlPath = claudeTranscriptPath(project.path, effCfg, body.data.harnessSessionId)
-        const { existsSync } = await import('node:fs')
         if (!existsSync(jsonlPath)) {
           return { ok: false, error: `Transcript not found at ${redactHome(jsonlPath)}. Check the UUID + that the session was started in this workspace.` }
         }
@@ -1092,7 +1103,7 @@ export function sessionsPlugin(
         return reply.code(409).send({ error: 'Session has no harness UUID yet — spawn likely still pending' })
       }
 
-      const { existsSync, createReadStream } = await import('node:fs')
+      const { createReadStream } = await import('node:fs')
       const { rm } = await import('node:fs/promises')
 
       // Case A — raw .jsonl on disk (claude, or codex with rollout).

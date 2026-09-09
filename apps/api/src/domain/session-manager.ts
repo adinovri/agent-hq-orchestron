@@ -2329,6 +2329,7 @@ export class SessionManager {
     const files = await listDir(this.sessionsDir)
     const sessions: SessionMetadata[] = []
     const { existsSync } = await import('node:fs')
+    const { resolveClaudeTranscriptPath } = await import('../adapters/claude.js')
 
     await Promise.all(
       files
@@ -2345,9 +2346,13 @@ export class SessionManager {
           //   jsonlPath is empty. Use claudeSessionUuid (thread_id) presence as
           //   the indicator — the capture step only populates it after codex
           //   has written to SQLite, so a non-empty thread id == transcript exists.
+          // Claude: prefer the recorded path, but fall back to rebuilding it
+          // from configDir + cwdSlug + uuid so a record whose jsonlPath was
+          // never filled in (spawn died early) or whose workspace moved
+          // isn't reported as transcript-less while the file is right there.
           record.hasTranscript = record.agentType === 'codex'
             ? record.claudeSessionUuid !== ''
-            : existsSync(record.jsonlPath)
+            : existsSync(resolveClaudeTranscriptPath(record, existsSync))
           sessions.push(record)
         }),
     )

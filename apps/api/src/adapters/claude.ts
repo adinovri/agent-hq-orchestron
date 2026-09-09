@@ -80,6 +80,33 @@ export function claudeTranscriptPathFromSlug(configDir: string | undefined, cwdS
   return path.join(effectiveClaudeConfigDir(configDir), 'projects', cwdSlug, `${uuid}.jsonl`)
 }
 
+/**
+ * Best available transcript path for a Claude session record.
+ *
+ * `jsonlPath` recorded at spawn is authoritative and normally correct — this
+ * only matters when it is empty (a spawn that died before the adapter filled
+ * it in) or points somewhere the file no longer is. In those cases the
+ * `configDir` + `cwdSlug` + `claudeSessionUuid` tuple on the record rebuilds
+ * it without consulting the project, which may since have been edited or
+ * deleted.
+ *
+ * Returns the recorded path unchanged when nothing better can be derived, so
+ * callers get a consistent "the path we believe in" either way.
+ */
+export function resolveClaudeTranscriptPath(session: {
+  jsonlPath?: string
+  configDir?: string
+  cwdSlug?: string
+  claudeSessionUuid?: string
+}, fileExists: (p: string) => boolean): string {
+  if (session.jsonlPath && fileExists(session.jsonlPath)) return session.jsonlPath
+  if (session.cwdSlug && session.claudeSessionUuid) {
+    const rebuilt = claudeTranscriptPathFromSlug(session.configDir, session.cwdSlug, session.claudeSessionUuid)
+    if (fileExists(rebuilt)) return rebuilt
+  }
+  return session.jsonlPath ?? ''
+}
+
 function buildArgv(opts: {
   model?: string
   effort?: string
