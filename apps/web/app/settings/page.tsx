@@ -144,9 +144,15 @@ export default function SettingsPage() {
             // Show both restart commands (deploy targets both Linux server
             // + macOS laptop), mark the current host as ACTIVE. Falls back
             // to Linux-marked when platform detection is unavailable.
+            //
+            // Mac command uses `$(id -u)` shell substitution instead of
+            // baking in the API process's uid — the API's uid is the
+            // CURRENT HOST's uid, which is wrong when the user is viewing
+            // Server Settings and wants the Mac command (or vice versa).
+            // Shell substitution resolves at paste-time on the target
+            // machine, always correct.
             const isMac = health?.platform === 'darwin'
-            const uidPart = health?.uid != null ? String(health.uid) : '501'
-            const macCmd = `launchctl kickstart -k gui/${uidPart}/com.orchestron.api && launchctl kickstart -k gui/${uidPart}/com.orchestron.web`
+            const macCmd = 'launchctl kickstart -k gui/$(id -u)/com.orchestron.api && launchctl kickstart -k gui/$(id -u)/com.orchestron.web'
             const linuxCmd = 'systemctl --user restart orchestron-api.service orchestron-web.service'
             return (
               <div className="space-y-2">
