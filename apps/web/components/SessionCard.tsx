@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/StatusPill'
 import { formatRelative, formatDuration } from '@/lib/time'
 import { isActive } from '@/lib/status'
-import { Sparkles, Terminal, Bot, X } from 'lucide-react'
+import { Sparkles, Terminal, Bot, X, GitBranch } from 'lucide-react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 
 interface Props {
@@ -16,6 +16,13 @@ interface Props {
   projectName?: string
   projectDefaultModel?: string
   projectDefaultEffort?: string
+  /** Number of direct children — surfaced as a `⑃ N` chip on the parent
+   *  card so the list-level tree is visible. Computed by the caller from
+   *  the full session list. */
+  descendantCount?: number
+  /** Short label for the parent (usually first N chars of parent prompt
+   *  or uuid slice) — surfaced as a `⑃ parent: X` chip on child cards. */
+  parentLabel?: string
 }
 
 const AGENT_ICON: Record<string, React.ReactNode> = {
@@ -24,7 +31,7 @@ const AGENT_ICON: Record<string, React.ReactNode> = {
   opencode: <Terminal className="w-4 h-4" />,
 }
 
-export function SessionCard({ session, onKill, killing, projectName, projectDefaultModel, projectDefaultEffort }: Props) {
+export function SessionCard({ session, onKill, killing, projectName, projectDefaultModel, projectDefaultEffort, descendantCount, parentLabel }: Props) {
   const harnessDefaultModel = implicitDefaultModel(session.agentType)
   const harnessDefaultEffort = implicitDefaultEffort(session.agentType)
   const model = session.model ?? projectDefaultModel ?? harnessDefaultModel
@@ -69,6 +76,24 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
             >
               {session.agentType}
             </span>
+            {descendantCount != null && descendantCount > 0 && (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300"
+                title={`${descendantCount} direct child ${descendantCount === 1 ? 'agent' : 'agents'} spawned from this session · view tree in Graph`}
+              >
+                <GitBranch className="w-3 h-3" />
+                {descendantCount}
+              </span>
+            )}
+            {parentLabel && (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400"
+                title={`Child of parent session ${parentLabel}`}
+              >
+                <GitBranch className="w-3 h-3 rotate-180" />
+                parent: {parentLabel}
+              </span>
+            )}
             {model && (
               <span
                 className={`text-xs font-mono ${modelFromProject || modelFromHarness ? 'text-zinc-400 dark:text-zinc-500 italic' : 'text-zinc-500 dark:text-zinc-400'}`}
