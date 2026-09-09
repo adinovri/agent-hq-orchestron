@@ -19,6 +19,16 @@ export const LOOPBACK_HOSTS = new Set(['127.0.0.1', '::1', 'localhost'])
 const DEFAULT_MAX_CONCURRENT_CAP = 20
 const RAM_PER_SUBPROCESS_MB = 800
 
+/**
+ * Global default for the headless kill switch.
+ *
+ * `true` — headless is available and the per-project / per-session
+ * `useTmux` toggles decide. Set `enableHeadlessMode: false` in
+ * ~/.orchestron/config.json to disable headless fleet-wide without
+ * touching a single session record.
+ */
+export const DEFAULT_ENABLE_HEADLESS_MODE = true
+
 export const ConfigSchema = z.object({
   bindHost: z.string().default('127.0.0.1'),
   port: z.number().int().min(1).max(65535).default(8080),
@@ -36,6 +46,12 @@ export const ConfigSchema = z.object({
   /** Milliseconds a session may stay idle/needs_input before its tmux is
    *  released (transition to 'sleeping'). 0 disables the sweeper. */
   idleTimeoutMs: z.number().int().min(0).default(15 * 60 * 1000),
+  /** Global kill switch for headless mode. `false` makes the API refuse
+   *  every explicit `useTmux: false` request and coerces headless project
+   *  defaults back to tmux — an operator escape hatch for when a headless
+   *  bug is loose in production. Default `true`: the per-session and
+   *  per-project toggles behave exactly as they did before this flag. */
+  enableHeadlessMode: z.boolean().default(DEFAULT_ENABLE_HEADLESS_MODE),
 })
 
 export type Config = z.infer<typeof ConfigSchema>
@@ -74,6 +90,13 @@ export function isHeadless(
 ): boolean {
   return !resolveUseTmux(sessionOrSpawn, projectDefault)
 }
+
+/** Body the API returns when a caller explicitly asks for headless while
+ *  the global switch is off. Exported so route, tests and docs cannot
+ *  drift from each other. */
+export const HEADLESS_DISABLED_ERROR = 'headless mode disabled globally'
+export const HEADLESS_DISABLED_HINT =
+  'set enableHeadlessMode: true in ~/.orchestron/config.json'
 
 export function isLoopback(host: string): boolean {
   return LOOPBACK_HOSTS.has(host)
