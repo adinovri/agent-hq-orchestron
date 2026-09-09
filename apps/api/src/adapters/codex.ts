@@ -177,6 +177,11 @@ export function buildCodexExecArgv(opts: {
   model?: string
   effort?: string
   mcpConfigInline?: string[]
+  /** Path to the structured-output schema on disk. Codex's `--output-schema`
+   *  takes a FILE (unlike Claude's `--json-schema`, which takes the document
+   *  inline), so this is the path the session-manager wrote. Unset disables
+   *  structured output for the run. */
+  outputSchemaPath?: string
   sessionMode?: { type: 'new' } | { type: 'resume'; threadId: string }
 }): string[] {
   const argv: string[] = ['codex', 'exec']
@@ -198,8 +203,10 @@ export function buildCodexExecArgv(opts: {
   // prompt auto-dismiss, which `exec` has no equivalent for.
   argv.push('--skip-git-repo-check')
 
-  // NOTE: `--output-schema` is deliberately absent. Structured
-  // inquiry/needs_input output is Phase 2.
+  // Strict-mode schema: `additionalProperties: false` everywhere and every
+  // property in `required`, which is what codex/OpenAI structured output
+  // demands. Same document Claude gets inline.
+  if (opts.outputSchemaPath) argv.push('--output-schema', opts.outputSchemaPath)
 
   argv.push('--', opts.prompt)
   return argv
@@ -306,6 +313,7 @@ export class CodexAdapter implements AgentAdapter {
       model: config.model,
       effort: config.effort,
       mcpConfigInline: config.mcpConfigInline,
+      outputSchemaPath: config.outputSchemaPath,
       sessionMode: { type: 'new' },
     })
 
@@ -368,6 +376,45 @@ export class CodexAdapter implements AgentAdapter {
     })
 
     this.headless.set(handle.tmuxName, { proc, exit })
+  }
+
+  /**
+   * One headless turn against an existing thread: `codex exec resume <id>`.
+   *
+   * Codex spells resume as a SUBCOMMAND of `exec` rather than a flag, and
+   * calls the id a `thread_id`; otherwise this mirrors the Claude adapter.
+   * The thread id is stable across turns and across modes — on 0.153.4 both
+   * `codex exec` and the interactive TUI write the rollout JSONL *and* the
+   * `thread_history` SQLite, so a thread started either way resumes as the
+   * other (see scratchpad/headless-phase2-verification.md; this supersedes
+   * the Phase 1 assumption that the two modes had separate stores).
+   *
+   * `jsonlPath` is resolved by globbing the rollout tree for the thread id,
+   * which is why this one is async where Claude's is not — Claude can
+   * compute its path arithmetically, Codex has a timestamp in the filename.
+   */
+  private async resumeHeadless(sessionUuid: string, config: ResumeConfig): Promise<TmuxHandle> {
+    if (!config.prompt) {
+      throw new Error('Headless resume needs a prompt — a `codex exec` invocation has nothing to run without one')
+    }
+    const handleName = `headless-codex-${crypto.randomBytes(4).toString('hex')}`
+    const argv = buildCodexExecArgv({
+      prompt: config.prompt,
+      model: config.model,
+      effort: config.effort,
+      mcpConfigInline: config.mcpConfigInline,
+      outputSchemaPath: config.outputSchemaPath,
+      sessionMode: { type: 'resume', threadId: sessionUuid },
+    })
+
+    const handle: TmuxHandle = {
+      tmuxName: handleName,
+      claudeUuid: sessionUuid,
+      jsonlPath: (await findCodexRolloutPath(config.configDir, sessionUuid)) ?? '',
+      headless: true,
+    }
+    this.startHeadless(handle, argv, config.workspace, config.configDir)
+    return handle
   }
 
   /** Resolve when the headless child for `handle` exits. See the Claude
@@ -465,6 +512,9 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async resume(sessionUuid: string, config: ResumeConfig): Promise<TmuxHandle> {
+    // `?? true` — a resume config without the field resumes into tmux.
+    if (!resolveUseTmux(config.useTmux)) return this.resumeHeadless(sessionUuid, config)
+
     const tmuxName = `orchestron-codex-${sessionUuid.slice(0, 8)}-${crypto.randomBytes(3).toString('hex')}`
 
     const argv = buildArgv({
@@ -523,8 +573,10 @@ export class CodexAdapter implements AgentAdapter {
 
   async sendPrompt(handle: TmuxHandle, prompt: string): Promise<void> {
     if (handle.headless) {
-      // The prompt travelled in argv; Phase 1 headless is single-turn.
-      throw new Error('Headless session does not accept follow-up input — respawn or reopen instead')
+      // A headless turn carries its prompt in argv. Follow-ups go through
+      // `resume({useTmux: false, prompt})`; session-manager routes them
+      // there, so reaching here is a caller bug, not a user action.
+      throw new Error('Headless turns take their prompt in argv — use resume({ useTmux: false, prompt }) for a follow-up turn')
     }
     // Paste-buffer + wait-for-echo + Enter, then VERIFY submission and retry
     // Enter if codex TUI swallowed the keystroke.

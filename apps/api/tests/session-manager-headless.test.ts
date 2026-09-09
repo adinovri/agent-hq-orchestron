@@ -288,9 +288,13 @@ describe('SessionManager — headless guards', () => {
     return { mgr, adapter, id: s.id }
   }
 
-  it('refuses follow-up input and says what to do instead', async () => {
+  it('needs a project resolver before it can run a follow-up turn', async () => {
+    // A headless follow-up has to look up the workspace to spawn its child
+    // in. The resolver is optional on SessionManager so unit tests need not
+    // build a ProjectRegistry, which makes this reachable rather than
+    // theoretical — it should say so plainly instead of failing deeper in.
     const { mgr, id } = await runToIdle()
-    await expect(mgr.sendInput(id, 'more')).rejects.toThrow(/one-shot|Respawn/i)
+    await expect(mgr.sendInput(id, 'more')).rejects.toThrow(/project resolver/i)
   })
 
   it('refuses reopen and points at Respawn', async () => {

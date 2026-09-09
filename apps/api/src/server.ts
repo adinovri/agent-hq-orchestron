@@ -67,6 +67,10 @@ const sessionManager = new SessionManager({
   dataDir: config.dataDir,
   maxConcurrent: config.maxConcurrent,
   idleTimeoutMs: config.idleTimeoutMs,
+  // Hand headless runs the `inquiry` schema so an agent with no TUI can
+  // still ask the user something. Off means headless keeps its Phase 1
+  // behaviour: prose in finalResponse, and no way to raise a question.
+  headlessStructuredOutput: config.headlessStructuredOutput,
   // Every claude spawn/reopen/clone/respawn ensures the per-workspace
   // memory dir is a symlink to this shared pool. Matches the manual layout
   // Adi already uses for CLI sessions. Set env ORCHESTRON_SHARED_MEMORY_DIR=''
@@ -233,6 +237,7 @@ fastify.get('/api/health/detail', async () => {
     // "Use tmux" checkbox instead of letting the user submit something the
     // API is going to 400.
     enableHeadlessMode: config.enableHeadlessMode,
+    headlessStructuredOutput: config.headlessStructuredOutput,
   }
 })
 

@@ -5,7 +5,13 @@ import os from 'node:os'
 import Database from 'better-sqlite3'
 import { writeJson, readJson, listDir } from '@agent-hq-orchestron/file-store'
 import type { SessionMetadata, SessionStatus, SpawnConfig, TmuxHandle, HeadlessResult } from '@agent-hq-orchestron/shared'
-import { resolveUseTmux, parseHeadlessResultDocument } from '@agent-hq-orchestron/shared'
+import {
+  resolveUseTmux,
+  parseHeadlessResultDocument,
+  DEFAULT_HEADLESS_STRUCTURED_OUTPUT,
+  ORCHESTRON_RESULT_SCHEMA_FILENAME,
+  ORCHESTRON_RESULT_SCHEMA_JSON,
+} from '@agent-hq-orchestron/shared'
 import type { AdapterRegistry } from '../adapters/registry.js'
 import { TranscriptTailer } from '../streaming/transcript-tailer.js'
 
@@ -435,6 +441,11 @@ export interface SessionManagerConfig {
     token: string
     mcpServerPath: string   // absolute path to dist/mcp-server.js
   }
+  /** Hand headless runs the structured-output schema that carries the
+   *  `inquiry` field, so an agent with no TUI can still ask the user a
+   *  question. Defaults to on; see `headlessStructuredOutput` in the server
+   *  config for why an operator might turn it off. Ignored for tmux. */
+  headlessStructuredOutput?: boolean
 }
 
 export class SessionManager {
@@ -446,6 +457,7 @@ export class SessionManager {
   private readonly idleTimeoutMs: number
   private readonly sharedMemoryDir: string
   private readonly sharedCodexMemoryDir: string
+  private readonly headlessStructuredOutput: boolean
   // Optional — needed only for the wake-up path (sleeping → spawning). Kept
   // optional so unit tests don't have to construct a ProjectRegistry.
   private projectResolver: ((projectId: string) => Promise<{ path: string; defaultModel?: string; defaultEffort?: import('@agent-hq-orchestron/shared').EffortLevel }>) | null = null
@@ -478,7 +490,35 @@ export class SessionManager {
     this.idleTimeoutMs = config.idleTimeoutMs ?? 15 * 60 * 1000
     this.sharedMemoryDir = config.sharedMemoryDir ?? ''
     this.sharedCodexMemoryDir = config.sharedCodexMemoryDir ?? ''
+    this.headlessStructuredOutput = config.headlessStructuredOutput ?? DEFAULT_HEADLESS_STRUCTURED_OUTPUT
   }
+
+  /**
+   * Ensure the structured-output schema exists on disk and return its path,
+   * or undefined when structured output is off or the session is tmux.
+   *
+   * Only Codex actually reads the file — its `--output-schema` flag takes a
+   * path. Claude's `--json-schema` takes the document inline and errors on a
+   * path, so the Claude adapter serialises the same shared constant itself
+   * and treats a defined path purely as the "structured output is on" signal.
+   * One schema, two delivery mechanisms, same split as mcpConfigPath vs
+   * mcpConfigInline.
+   *
+   * Written once per API process rather than per session — the document is a
+   * compile-time constant, so there is nothing per-session to vary.
+   */
+  private async ensureOutputSchemaPath(useTmux: boolean): Promise<string | undefined> {
+    if (useTmux || !this.headlessStructuredOutput) return undefined
+    const p = path.join(this.dataDir, ORCHESTRON_RESULT_SCHEMA_FILENAME)
+    if (!this.outputSchemaWritten) {
+      await fs.promises.mkdir(this.dataDir, { recursive: true })
+      await fs.promises.writeFile(p, ORCHESTRON_RESULT_SCHEMA_JSON, 'utf8')
+      this.outputSchemaWritten = true
+    }
+    return p
+  }
+
+  private outputSchemaWritten = false
 
   /**
    * Ensure `<configDir>/projects/<mangled-cwd>/memory/` is a symlink into
@@ -737,8 +777,9 @@ export class SessionManager {
     // for codex, sonnet for claude).
     const effectiveModel = filterModelForHarness(spawnConfig.model, spawnConfig.agentType)
     await this.ensureMemorySymlink(spawnConfig.agentType, effectiveConfigDir, spawnConfig.workspace)
+    const outputSchemaPath = await this.ensureOutputSchemaPath(useTmux)
     const spawnedAt = Date.now()
-    const handle = await adapter.spawn({ ...spawnConfig, useTmux, model: effectiveModel, configDir: effectiveConfigDir, mcpConfigPath, mcpConfigInline })
+    const handle = await adapter.spawn({ ...spawnConfig, useTmux, model: effectiveModel, configDir: effectiveConfigDir, mcpConfigPath, mcpConfigInline, outputSchemaPath })
 
     // Codex thread_id capture happens async in completeSpawn() via SQLite
     // (see captureCodexThreadId call after sendPrompt). We used to block here
@@ -987,17 +1028,115 @@ export class SessionManager {
     await this.transition(uuid, !ok ? 'failed' : inquiry ? 'needs_input' : 'idle')
   }
 
+  /**
+   * Run one follow-up turn on a headless session.
+   *
+   * Every turn is a fresh child process resuming the same conversation —
+   * `claude -p --resume <uuid>` / `codex exec resume <thread_id>`. The
+   * harness appends to the transcript it already owns and reports the same
+   * session id back, so `claudeSessionUuid`, `jsonlPath` and `cwdSlug` on the
+   * record survive untouched across turns.
+   *
+   * Returns as soon as the child is launched; `finishHeadlessTurn` lands the
+   * session when it exits, exactly as it does for the initial spawn. That
+   * keeps POST /input fast and means one code path reconciles every turn.
+   *
+   * Deliberately narrower than the tmux path in two ways:
+   *
+   *  - No queue-during-run. A tmux TUI buffers a paste and runs it as the
+   *    next turn; a headless child has no input channel at all, and starting
+   *    a second `--resume` against a live one would have two processes
+   *    appending to the same JSONL. `running` is refused.
+   *  - No wake-from-sleeping. Headless never sleeps (see armIdleSweeper), so
+   *    there is no cold-start branch to take.
+   */
+  private async sendHeadlessTurn(
+    uuid: string,
+    session: SessionMetadata,
+    prompt: string,
+  ): Promise<SessionMetadata> {
+    const ALLOWED: SessionStatus[] = ['idle', 'needs_input']
+    if (!ALLOWED.includes(session.status)) {
+      throw new Error(
+        session.status === 'running' || session.status === 'spawning'
+          ? `Cannot send input while a headless turn is still running — headless has no input queue. Wait for it to finish, or interrupt it first.`
+          : `Cannot send input while session is ${session.status}`,
+      )
+    }
+    if (!session.claudeSessionUuid) {
+      throw new Error(
+        'Cannot send input: this headless session has no harness session id — its first run failed before the harness reported one. Respawn instead.',
+      )
+    }
+    if (!this.projectResolver) {
+      throw new Error('Cannot send input to a headless session: project resolver not wired')
+    }
+
+    const proj = await this.projectResolver(session.projectId)
+    const adapter = this.registry.getOrThrow(session.agentType)
+    await this.ensureMemorySymlink(session.agentType, session.configDir, proj.path)
+    // Regenerate per-turn so a rotated token / moved API URL takes effect on
+    // the next turn rather than at the next spawn.
+    const mcpConfigPath = await this.ensureSessionMcpConfig(uuid, session.agentType)
+    const mcpConfigInline = session.agentType === 'codex' ? this.buildCodexMcpArgs(uuid) : undefined
+    const outputSchemaPath = await this.ensureOutputSchemaPath(false)
+
+    const handle = await adapter.resume(session.claudeSessionUuid, {
+      workspace: proj.path,
+      // Must be the SAME configDir the session was spawned with: the harness
+      // finds a conversation by scanning that dir and nothing else, so a
+      // different one means "No conversation found" on a perfectly good id.
+      configDir: session.configDir,
+      model: session.model ?? proj.defaultModel,
+      effort: session.effort ?? proj.defaultEffort,
+      mcpConfigPath,
+      mcpConfigInline,
+      outputSchemaPath,
+      useTmux: false,
+      prompt,
+    })
+
+    // The handle name is fresh per turn so a kill aimed at this turn cannot
+    // reap the next one; persist it or `handleFor` would still point at the
+    // previous turn's child. jsonlPath is refreshed too — for codex it is
+    // globbed from the rollout tree and may only now exist.
+    const refreshed = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    await writeJson(this.sessionPath(uuid), {
+      ...(refreshed ?? session),
+      tmuxName: handle.tmuxName,
+      jsonlPath: handle.jsonlPath || (refreshed ?? session).jsonlPath,
+      // The question, if there was one, has now been answered.
+      pendingInquiry: null,
+    })
+
+    const updated = await this.transition(uuid, 'running')
+
+    this.finishHeadlessTurn(uuid, adapter, handle).catch(async (err: unknown) => {
+      const msg = (err as Error).message ?? String(err)
+      console.error(`[session-manager] headless turn failed for ${uuid}: ${msg}`)
+      try {
+        const rec = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+        if (rec && rec.status === 'running') {
+          await this.transition(uuid, 'failed').catch(() => {})
+          const failed = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+          if (failed) {
+            failed.failureReason = msg
+            await writeJson(this.sessionPath(uuid), failed)
+          }
+        }
+      } catch { /* ignore */ }
+    })
+
+    return updated
+  }
+
   async sendInput(uuid: string, prompt: string): Promise<SessionMetadata> {
     let session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
-    // Headless is single-turn in Phase 1: the prompt went in argv and the
-    // process is gone. Multi-turn headless (`-p --resume` per turn) is
-    // Phase 2 — until then, respawn with a new prompt.
+    // Headless: each turn is its own `-p --resume` / `exec resume` child.
     if (!resolveUseTmux(session.useTmux)) {
-      throw new Error(
-        'Cannot send input to a headless session — it is a one-shot run. Respawn with a new prompt instead.',
-      )
+      return this.sendHeadlessTurn(uuid, session, prompt)
     }
 
     // Wake-up path: session is sleeping → cold-start tmux with --resume,

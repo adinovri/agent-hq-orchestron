@@ -23,7 +23,7 @@ import { spawn as spawnProcess, type ChildProcess } from 'node:child_process'
 import type {
   AgentAdapter, SpawnConfig, ResumeConfig, TmuxHandle, HeadlessResult, TokenUsage,
 } from '@agent-hq-orchestron/shared'
-import { resolveUseTmux } from '@agent-hq-orchestron/shared'
+import { resolveUseTmux, ORCHESTRON_RESULT_SCHEMA_JSON } from '@agent-hq-orchestron/shared'
 import * as tmux from './tmux.js'
 
 const FORBIDDEN_FLAGS = new Set(['-p', '--print'])
@@ -181,6 +181,12 @@ export function buildHeadlessArgv(opts: {
   model?: string
   effort?: string
   mcpConfigPath?: string
+  /** Opt into the structured-output contract for this run. Claude's
+   *  `--json-schema` takes the schema INLINE as a JSON string and errors on
+   *  a path (`--json-schema is not valid JSON`), so the shared schema object
+   *  is serialised here rather than read from `outputSchemaPath` — that
+   *  field exists for Codex, whose flag does take a file. */
+  structuredOutput?: boolean
   sessionMode: { type: 'new'; uuid: string } | { type: 'resume'; uuid: string }
 }): string[] {
   // `--verbose` is required for `--output-format stream-json` under `-p`.
@@ -189,6 +195,7 @@ export function buildHeadlessArgv(opts: {
   if (opts.model) argv.push('--model', opts.model)
   if (opts.effort) argv.push('--effort', opts.effort)
   if (opts.mcpConfigPath) argv.push('--mcp-config', opts.mcpConfigPath)
+  if (opts.structuredOutput) argv.push('--json-schema', ORCHESTRON_RESULT_SCHEMA_JSON)
   argv.push('--permission-mode', 'bypassPermissions')
   argv.push('--allowedTools', MCP_TOOLS_HEADLESS.join(','))
 
@@ -321,6 +328,7 @@ export class ClaudeAdapter implements AgentAdapter {
       model: config.model,
       effort: config.effort,
       mcpConfigPath: config.mcpConfigPath,
+      structuredOutput: !!config.outputSchemaPath,
       sessionMode: { type: 'new', uuid: claudeUuid },
     })
 
@@ -392,6 +400,44 @@ export class ClaudeAdapter implements AgentAdapter {
     this.headless.set(handle.tmuxName, { proc, exit })
   }
 
+  /**
+   * One headless turn against an existing conversation: `claude -p --resume`.
+   *
+   * This is both the multi-turn send path and the cross-mode reopen path —
+   * `-p --resume <uuid>` and interactive `--resume <uuid>` read the same
+   * JSONL store, so a session started either way can continue as the other
+   * (verified on 2.1.266; see scratchpad/headless-phase2-verification.md).
+   *
+   * The session id does NOT change: Claude appends to the same
+   * `<uuid>.jsonl`, so `claudeUuid`, `jsonlPath` and `cwdSlug` on the record
+   * stay valid across every turn and the transcript tailer never has to
+   * re-point. Only the handle name is fresh, so each turn's child has its own
+   * key in the registry and a kill aimed at turn N cannot reap turn N+1.
+   */
+  private resumeHeadless(sessionUuid: string, config: ResumeConfig): TmuxHandle {
+    if (!config.prompt) {
+      throw new Error('Headless resume needs a prompt — a `claude -p` invocation has nothing to run without one')
+    }
+    const handleName = `headless-${sessionUuid.slice(0, 8)}-${crypto.randomBytes(3).toString('hex')}`
+    const argv = buildHeadlessArgv({
+      prompt: config.prompt,
+      model: config.model,
+      effort: config.effort,
+      mcpConfigPath: config.mcpConfigPath,
+      structuredOutput: !!config.outputSchemaPath,
+      sessionMode: { type: 'resume', uuid: sessionUuid },
+    })
+
+    const handle: TmuxHandle = {
+      tmuxName: handleName,
+      claudeUuid: sessionUuid,
+      jsonlPath: claudeTranscriptPath(config.workspace, config.configDir, sessionUuid),
+      headless: true,
+    }
+    this.startHeadless(handle, argv, config.workspace, config.configDir)
+    return handle
+  }
+
   /** Resolve when the headless child for `handle` exits. Safe to call at any
    *  time — the promise was created at spawn, so it does not race the exit.
    *  Returns `{ exitCode: null }` for an unknown handle (already consumed,
@@ -405,6 +451,9 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   async resume(sessionUuid: string, config: ResumeConfig): Promise<TmuxHandle> {
+    // `?? true` — a resume config without the field resumes into tmux.
+    if (!resolveUseTmux(config.useTmux)) return this.resumeHeadless(sessionUuid, config)
+
     // Use a fresh random suffix so re-opening the same session multiple times
     // doesn't collide on the tmux name (previous impl appended '-resume' which
     // wasn't unique across reopens).
@@ -472,10 +521,11 @@ export class ClaudeAdapter implements AgentAdapter {
 
   async sendPrompt(handle: TmuxHandle, prompt: string): Promise<void> {
     if (handle.headless) {
-      // The prompt travelled in argv; a headless turn takes no follow-up
-      // input. Reaching here means a caller tried to queue a second turn,
-      // which Phase 1 does not support.
-      throw new Error('Headless session does not accept follow-up input — respawn or reopen instead')
+      // A headless turn carries its prompt in argv; there is no live process
+      // to paste into. Follow-up turns go through `resume({useTmux: false,
+      // prompt})`, which starts a fresh child — session-manager routes them
+      // there, so reaching here is a bug in a caller, not a user action.
+      throw new Error('Headless turns take their prompt in argv — use resume({ useTmux: false, prompt }) for a follow-up turn')
     }
     await tmux.setBuffer(handle.tmuxName, prompt)
     await tmux.pasteBuffer(handle.tmuxName)

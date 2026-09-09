@@ -312,12 +312,12 @@ describe('ClaudeAdapter — headless run', () => {
     expect(tmuxMock.killSession).not.toHaveBeenCalled()
   })
 
-  it('waitTuiReady is a no-op and sendPrompt refuses a second turn', async () => {
+  it('waitTuiReady is a no-op and sendPrompt refuses to paste into a headless run', async () => {
     startStub({ name: 'claude', stdout: RESULT_LINE, exitCode: 0 })
     const adapter = new ClaudeAdapter()
     const handle = await adapter.spawn({ ...baseSpawnConfig, workspace, useTmux: false })
     await expect(adapter.waitTuiReady(handle, 1)).resolves.toBeUndefined()
-    await expect(adapter.sendPrompt(handle, 'again')).rejects.toThrow(/one-shot|does not accept/i)
+    await expect(adapter.sendPrompt(handle, 'again')).rejects.toThrow(/prompt in argv|resume/i)
     await adapter.awaitHeadlessExit!(handle)
   })
 
