@@ -36,3 +36,27 @@ describe('resolveUseTmux', () => {
     expect(resolveUseTmux(false, true)).toBe(false)
   })
 })
+
+/**
+ * The same rule applied to the three-valued `useTmux` the revival routes
+ * accept. Absent there means "keep the session's current mode", so the API
+ * cannot collapse it to a boolean before it reaches the manager — an
+ * untouched checkbox would otherwise read as a deliberate request for tmux
+ * and convert every headless session the user merely reopened.
+ */
+describe('the revival override is a tri-state', () => {
+  const resolveTarget = (override: boolean | undefined, sessionUseTmux: boolean | undefined) =>
+    override ?? resolveUseTmux(sessionUseTmux)
+
+  it.each([
+    ['no override keeps a tmux session in tmux', undefined, true, true],
+    ['no override keeps a headless session headless', undefined, false, false],
+    ['no override keeps a legacy record in tmux', undefined, undefined, true],
+    ['override true converts headless to tmux', true, false, true],
+    ['override false converts tmux to headless', false, true, false],
+    ['override false on a legacy record converts it', false, undefined, false],
+    ['override true is a no-op on a tmux session', true, true, true],
+  ] as const)('%s', (_label, override, session, expected) => {
+    expect(resolveTarget(override, session)).toBe(expected)
+  })
+})
