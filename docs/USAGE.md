@@ -103,13 +103,19 @@ away without crowding the header on mobile. The dialog:
   (project)`), not a generic "project setting", so picking Default
   isn't a leap of faith.
 - **Initial prompt** — the first user turn Claude receives.
+- **Use tmux** — checked by default. Unchecking runs the session
+  headless (one-shot `claude -p` / `codex exec`, no tmux). The checkbox
+  starts on the project's default and the helper text under it spells
+  out what each mode gives up; see
+  [Headless mode](#headless-mode-no-tmux).
 - **Attachments** — drag/drop files (or paperclip button, or paste
   images). Saved to `/tmp/orchestron/uploads/pending/<hex>/` with
   `0600` perms and appended to the prompt as `Attached files:`.
 
 Click **Spawn** and you'll land on the session detail page. Status
 progresses: `spawning` → `running` (once TUI is ready + prompt paste
-lands) → `needs_input` / `idle` / `succeeded`.
+lands) → `needs_input` / `idle` / `succeeded`. A headless session skips
+the TUI wait entirely: `spawning` → `running` → `succeeded` / `failed`.
 
 ### Adopt an existing harness session
 
@@ -421,8 +427,96 @@ any active state ──▶ killed  (X button)
 any state       ──▶ failed  (crash)
 ```
 
+Headless sessions take a shorter path — the child process runs the whole
+turn and exits, so there is no TUI to wait for and no idle state to
+linger in:
+
+```
+spawning ──▶ running ──▶ succeeded   (exit 0)
+                     └─▶ failed      (non-zero exit / signal / spawn error)
+
+running ──▶ killed  (X button — SIGTERM to the child)
+```
+
 The API enforces `ALLOWED_TRANSITIONS` in `SessionManager`; illegal
 transitions throw `InvalidTransitionError`.
+
+### Headless mode (no tmux)
+
+By default every session runs an interactive harness TUI inside its own
+tmux window. Unticking **Use tmux** runs it headless instead: orchestron
+launches a single `claude -p <prompt>` (or `codex exec <prompt>`) child
+process, the agent works through the whole turn, and the process exits.
+
+**Where to set it**, in increasing precedence:
+
+| Where | Effect |
+|---|---|
+| Nothing set | tmux — the default, and what every pre-existing session is |
+| Project → **Use tmux by default** | applies to new spawns in that project, including scheduled ones |
+| Spawn dialog → **Use tmux** | this session only |
+| Session detail → ✎ (pencil) | changes the mode the session will use on its next Respawn |
+
+The pencil is gated exactly like model and effort: editable only when
+the session is terminal or sleeping. The mode is baked into the process
+arguments at spawn, so it cannot change mid-flight.
+
+**What you give up.** Headless is not a cheaper tmux — it is a different
+shape of session:
+
+| | tmux (default) | headless |
+|---|---|---|
+| Live transcript | yes, streams as the turn runs | yes — the harness writes the same JSONL |
+| Attach to the live TUI | yes (`tmux attach`) | no process to attach to |
+| Follow-up input | yes, queued mid-turn | no — one prompt, one run |
+| Interrupt a turn | yes (Escape) | no — Kill is the only stop |
+| Sleep / wake on idle | yes | n/a — nothing is held between runs |
+| Reopen / Fork | yes | no (see below) |
+| Respawn | yes | yes — re-runs the same prompt headless |
+| `wait_for_idle` MCP tool | available | withheld — see below |
+| Pool cap slot | held until sleep or terminal | released when the run ends |
+
+**When it is the right choice**
+
+- Batch work: fan out N independent one-shot tasks without N tmux
+  windows competing for the pool cap.
+- Scheduled / cron runs where nobody is watching a TUI and the result is
+  read after the fact.
+- Fire-and-forget tasks with a self-contained prompt and no expected
+  back-and-forth.
+
+Stay on tmux when you expect to steer the session, answer a question
+mid-run, or attach to watch it work.
+
+**Notes and sharp edges**
+
+- *Quota is unchanged.* `claude -p` authenticates from the same
+  `CLAUDE_CONFIG_DIR` credentials as the interactive TUI, so a
+  subscription still applies. Headless is not "the API-billing mode".
+- *The transcript is the harness's, not orchestron's.* Claude writes
+  `<CLAUDE_CONFIG_DIR>/projects/<mangled-cwd>/<uuid>.jsonl` in `-p` mode
+  exactly as it does interactively; `codex exec` writes
+  `<CODEX_HOME>/sessions/YYYY/MM/DD/rollout-<ts>-<thread_id>.jsonl`.
+  Orchestron reads those files and never keeps a second copy.
+- *No `turn_duration` event.* Headless transcripts contain no turn-end
+  marker — process exit is the turn boundary. Nothing downstream should
+  wait for one.
+- *`wait_for_idle` is not offered to headless agents.* It blocks until a
+  child session goes idle, which can be minutes; a one-shot invocation
+  has no turn boundary to release it and no way to interrupt, so the run
+  would simply hang. The other nine orchestron MCP tools are available.
+  Async delegation for headless parents is future work.
+- *Reopen and Fork are unavailable.* Both resume the conversation into an
+  interactive tmux, which is a cross-mode jump. For Claude the two modes
+  do share one JSONL store so it would likely work, but `codex exec`
+  writes a rollout file while the interactive TUI reads `thread_history`
+  SQLite — so rather than ship a button that silently works for one
+  harness and not the other, both are gated until cross-mode resume is
+  tested per harness. **Respawn** works and re-runs the prompt headless.
+- *Failures carry a reason.* A non-zero exit records the child's stderr
+  tail on the session as `failureReason`, so a headless run that dies at
+  launch (bad model name, expired credentials) says why instead of just
+  going red.
 
 ### Sleep / wake-up (idle sweeper)
 
@@ -467,8 +561,10 @@ Three ways to bring a terminal session back to life:
 
 Buttons are only visible for terminal states (`succeeded`, `killed`,
 `failed`). Reopen and Fork are additionally hidden when
-`hasTranscript === false` (session died before writing any JSONL) —
-Respawn stays visible as the only recovery for that case.
+`hasTranscript === false` (session died before writing any JSONL), and
+for [headless](#headless-mode-no-tmux) sessions, where resuming into an
+interactive tmux would be a cross-mode jump — Respawn stays visible as
+the recovery in both cases, and re-runs a headless session headless.
 
 **Model + effort override.** Clicking any of the three opens a dialog
 with model + effort pickers (harness-aware — Claude gets the curated

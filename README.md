@@ -23,6 +23,12 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
   with a fresh conversation, interrupt a running turn, queue prompts
   while the model is thinking. Each of those three actions opens a
   dialog with per-call model + effort override.
+- **Headless mode (opt-in)** — untick *Use tmux* on a spawn (or set the
+  project default) and the session runs as a one-shot `claude -p` /
+  `codex exec` child process instead of an interactive TUI: no tmux, no
+  live attach, no sleeping, no follow-up input. Good for batch, cron and
+  fire-and-forget work; tmux stays the default for everything else. See
+  [Headless mode](docs/USAGE.md#headless-mode-no-tmux).
 - **Sleep on idle** — sessions unused for 15 min go to `sleeping`
   (tmux released, no resources held). Sending input auto-wakes them
   via the harness's native resume flag in ~3 s.
