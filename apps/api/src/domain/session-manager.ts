@@ -4,7 +4,8 @@ import path from 'node:path'
 import os from 'node:os'
 import Database from 'better-sqlite3'
 import { writeJson, readJson, listDir } from '@agent-hq-orchestron/file-store'
-import type { SessionMetadata, SessionStatus, SpawnConfig } from '@agent-hq-orchestron/shared'
+import type { SessionMetadata, SessionStatus, SpawnConfig, TmuxHandle, HeadlessResult } from '@agent-hq-orchestron/shared'
+import { resolveUseTmux } from '@agent-hq-orchestron/shared'
 import type { AdapterRegistry } from '../adapters/registry.js'
 import { TranscriptTailer } from '../streaming/transcript-tailer.js'
 
@@ -30,6 +31,21 @@ async function captureCodexThreadId(codexHome: string | undefined, afterMs: numb
   return ''
 }
 
+/** Rebuild an adapter handle from a persisted session record.
+ *
+ *  `headless` MUST be derived through resolveUseTmux: records written before
+ *  the toggle existed have no `useTmux` field, and they are all tmux
+ *  sessions. Getting it wrong here sends a tmux kill at a headless handle
+ *  (or vice versa) and the process is never reaped. */
+function handleFor(session: SessionMetadata): TmuxHandle {
+  return {
+    tmuxName: session.tmuxName,
+    claudeUuid: session.claudeSessionUuid,
+    jsonlPath: session.jsonlPath,
+    headless: !resolveUseTmux(session.useTmux),
+  }
+}
+
 export class PoolFullError extends Error {
   constructor(max: number) {
     super(`Session pool is full (max ${max} concurrent sessions)`)
@@ -46,9 +62,15 @@ export class InvalidTransitionError extends Error {
 
 // Legal transitions — tycho-inspired lifecycle
 const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
-  spawning: ['waiting', 'failed', 'killed'],
+  // 'running' direct from 'spawning' is the headless path: the child process
+  // starts the turn the moment it launches (prompt is in argv), so there is
+  // no 'waiting' phase — nothing to wait for and no prompt left to paste.
+  spawning: ['waiting', 'running', 'failed', 'killed'],
   waiting: ['running', 'killed'],
-  running: ['running', 'idle', 'needs_input', 'succeeded', 'killed'],
+  // 'running' → 'failed' is likewise headless: a non-zero exit is a real
+  // failure with no idle state in between. Harmless for tmux, which simply
+  // never takes it.
+  running: ['running', 'idle', 'needs_input', 'succeeded', 'failed', 'killed'],
   idle: ['running', 'needs_input', 'sleeping', 'succeeded', 'killed'],
   needs_input: ['running', 'idle', 'sleeping', 'succeeded', 'killed'],
   sleeping: ['spawning', 'succeeded', 'killed'],   // wake → spawning; archive → succeeded; kill remains legal
@@ -695,10 +717,14 @@ export class SessionManager {
     // for codex). For claude we also cascade to CLAUDE_CONFIG_DIR env and
     // ~/.claude default via effectiveClaudeConfigDir. Codex adapter reads
     // CODEX_HOME env internally when passed undefined.
-    const { effectiveClaudeConfigDir } = await import('../adapters/claude.js')
+    const { effectiveClaudeConfigDir, mangleCwd } = await import('../adapters/claude.js')
     const effectiveConfigDir = spawnConfig.agentType === 'claude'
       ? effectiveClaudeConfigDir(spawnConfig.configDir)
       : spawnConfig.configDir
+    // Resolve once, here, and persist the resolved boolean — downstream code
+    // then never has to re-derive it from a project record that may since
+    // have been edited. `?? true` via resolveUseTmux.
+    const useTmux = resolveUseTmux(spawnConfig.useTmux)
     // Same-harness model check: project defaults might carry a Claude model
     // that Codex would reject at spawn. Drop the model if it looks like the
     // wrong family; adapter will fall back to its own default (gpt-6-astra
@@ -706,7 +732,7 @@ export class SessionManager {
     const effectiveModel = filterModelForHarness(spawnConfig.model, spawnConfig.agentType)
     await this.ensureMemorySymlink(spawnConfig.agentType, effectiveConfigDir, spawnConfig.workspace)
     const spawnedAt = Date.now()
-    const handle = await adapter.spawn({ ...spawnConfig, model: effectiveModel, configDir: effectiveConfigDir, mcpConfigPath, mcpConfigInline })
+    const handle = await adapter.spawn({ ...spawnConfig, useTmux, model: effectiveModel, configDir: effectiveConfigDir, mcpConfigPath, mcpConfigInline })
 
     // Codex thread_id capture happens async in completeSpawn() via SQLite
     // (see captureCodexThreadId call after sendPrompt). We used to block here
@@ -730,6 +756,8 @@ export class SessionManager {
       tmuxName: handle.tmuxName,
       jsonlPath: handle.jsonlPath,
       configDir: effectiveConfigDir,
+      cwdSlug: mangleCwd(spawnConfig.workspace),
+      useTmux,
       initialPrompt: spawnConfig.initialPrompt,
       finalResponse: null,
       tokenUsage: null,
@@ -772,6 +800,13 @@ export class SessionManager {
     spawnConfig?: SpawnConfig,
     spawnedAt?: number,
   ): Promise<void> {
+    // Headless: the child is already running the turn (prompt was in argv).
+    // No TUI to wait for, nothing to paste — just follow it to exit.
+    if (handle.headless) {
+      await this.completeHeadlessSpawn(uuid, adapter, handle)
+      return
+    }
+
     let currentHandle = handle
     let attempt = 0
     const MAX_ATTEMPTS = 2
@@ -834,9 +869,78 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Headless lifecycle: `spawning → running → succeeded | failed`.
+   *
+   * Differences from the tmux path, all of them because the process is
+   * ephemeral rather than long-lived:
+   *  - no waitTuiReady / interstitial dismissal — `-p` and `exec` have no TUI
+   *  - no sendPrompt — the prompt was in argv
+   *  - no turn watcher — the harness emits no `turn_duration` in headless
+   *    mode; process exit IS the turn boundary
+   *  - no idle/sleeping — there is no live process to release, so the idle
+   *    sweeper is never armed (transition() only arms on idle/needs_input)
+   *  - pool cap decrements naturally when the run reaches a terminal state
+   */
+  private async completeHeadlessSpawn(
+    uuid: string,
+    adapter: import('@agent-hq-orchestron/shared').AgentAdapter,
+    handle: TmuxHandle,
+  ): Promise<void> {
+    await this.transition(uuid, 'running')
+
+    const result: HeadlessResult = adapter.awaitHeadlessExit
+      ? await adapter.awaitHeadlessExit(handle)
+      : { exitCode: null, stderr: `adapter '${adapter.name}' does not support headless mode` }
+
+    // Re-read: the record may have moved on while the child ran — most
+    // importantly a user Kill, which already put it in a terminal state.
+    // Transitioning again would throw InvalidTransitionError.
+    const rec = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+    if (!rec) return
+    const TERMINAL: SessionStatus[] = ['succeeded', 'failed', 'killed']
+    if (TERMINAL.includes(rec.status)) return
+
+    const patched: SessionMetadata = { ...rec }
+
+    // Codex mints its own thread id and only announces it on stdout, so this
+    // is the one chance to capture it. Claude pre-assigns via --session-id
+    // and reports the same value back, so the assignment is a no-op there.
+    if (result.sessionId && !patched.claudeSessionUuid) {
+      patched.claudeSessionUuid = result.sessionId
+      if (!patched.jsonlPath && patched.agentType === 'codex') {
+        const { findCodexRolloutPath } = await import('../adapters/codex.js')
+        patched.jsonlPath = (await findCodexRolloutPath(patched.configDir, result.sessionId)) ?? ''
+      }
+    }
+
+    if (result.finalResponse != null) patched.finalResponse = result.finalResponse
+    if (result.tokenUsage) patched.tokenUsage = result.tokenUsage
+    if (result.costUsd != null) patched.costUsd = result.costUsd
+
+    const ok = result.exitCode === 0
+    if (!ok) {
+      patched.failureReason = result.stderr
+        ? `headless exit ${result.exitCode ?? 'signal'}: ${result.stderr}`
+        : `headless exit ${result.exitCode ?? 'signal'}`
+    }
+
+    await writeJson(this.sessionPath(uuid), patched)
+    await this.transition(uuid, ok ? 'succeeded' : 'failed')
+  }
+
   async sendInput(uuid: string, prompt: string): Promise<SessionMetadata> {
     let session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
+
+    // Headless is single-turn in Phase 1: the prompt went in argv and the
+    // process is gone. Multi-turn headless (`-p --resume` per turn) is
+    // Phase 2 — until then, respawn with a new prompt.
+    if (!resolveUseTmux(session.useTmux)) {
+      throw new Error(
+        'Cannot send input to a headless session — it is a one-shot run. Respawn with a new prompt instead.',
+      )
+    }
 
     // Wake-up path: session is sleeping → cold-start tmux with --resume,
     // wait for TUI ready, then fall through to the normal paste flow.
@@ -910,7 +1014,7 @@ export class SessionManager {
     }
 
     const adapter = this.registry.getOrThrow(session.agentType)
-    const handle = { tmuxName: session.tmuxName, claudeUuid: session.claudeSessionUuid, jsonlPath: session.jsonlPath }
+    const handle = handleFor(session)
 
     // Dismiss any stale interstitial (e.g. "Teach auto mode?" modal that Claude
     // may pop up between turns) before pasting the prompt. Short timeout — if
@@ -990,7 +1094,14 @@ export class SessionManager {
       throw new Error(`Cannot interrupt session in ${session.status} state`)
     }
 
-    const handle = { tmuxName: session.tmuxName, claudeUuid: session.claudeSessionUuid, jsonlPath: session.jsonlPath }
+    // Interrupt is an Escape keystroke into a TUI — a headless child has no
+    // TUI and no mid-turn boundary to fall back to. Kill is the only way to
+    // stop one, and it reports the run as `killed` rather than `idle`.
+    if (!resolveUseTmux(session.useTmux)) {
+      throw new Error('Cannot interrupt a headless session — no TUI to signal. Kill it instead.')
+    }
+
+    const handle = handleFor(session)
 
     // Send Escape via tmux — Claude TUI interprets as interrupt-turn.
     // Fallback silently if tmux is dead.
@@ -1106,11 +1217,7 @@ export class SessionManager {
 
     // Kill tmux — session archived means we don't need the process anymore
     const adapter = this.registry.getOrThrow(session.agentType)
-    await adapter.kill({
-      tmuxName: session.tmuxName,
-      claudeUuid: session.claudeSessionUuid,
-      jsonlPath: session.jsonlPath,
-    }).catch(() => { /* tmux may already be gone */ })
+    await adapter.kill(handleFor(session)).catch(() => { /* tmux may already be gone */ })
 
     // Direct terminal transition. Every allowed pre-state (idle,
     // needs_input, running, sleeping) goes straight to 'succeeded'.
@@ -1247,11 +1354,7 @@ export class SessionManager {
     const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
     if (!IDLE_STATES.includes(session.status)) return
     const adapter = this.registry.getOrThrow(session.agentType)
-    await adapter.kill({
-      tmuxName: session.tmuxName,
-      claudeUuid: session.claudeSessionUuid,
-      jsonlPath: session.jsonlPath,
-    }).catch(() => { /* tmux may already be dead */ })
+    await adapter.kill(handleFor(session)).catch(() => { /* tmux may already be dead */ })
     // Close any dangling watcher.
     const w = this.turnWatchers.get(uuid)
     if (w) { w.close(); this.turnWatchers.delete(uuid) }
@@ -1480,13 +1583,16 @@ export class SessionManager {
     // claudeSessionUuid internally + returns handle with new tmuxName + jsonlPath.
     const adapter = this.registry.getOrThrow(session.agentType)
     const mcpConfigPath = await this.ensureSessionMcpConfig(uuid)
-    const { effectiveClaudeConfigDir } = await import('../adapters/claude.js')
+    const { effectiveClaudeConfigDir, mangleCwd } = await import('../adapters/claude.js')
     const effectiveConfigDir = session.agentType === 'claude'
       ? effectiveClaudeConfigDir(configDir ?? session.configDir)
       : (configDir ?? session.configDir)
     await this.ensureMemorySymlink(session.agentType, effectiveConfigDir, workspace)
     const effectiveModel = overrides?.model ?? session.model ?? fallbackModel
     const effectiveEffort = overrides?.effort ?? session.effort ?? fallbackEffort
+    // Respawn keeps the session's own mode — a headless session respawns
+    // headless, a tmux session respawns into tmux.
+    const useTmux = resolveUseTmux(session.useTmux)
 
     const handle = await adapter.spawn({
       projectId: session.projectId,
@@ -1497,6 +1603,7 @@ export class SessionManager {
       model: effectiveModel,
       effort: effectiveEffort,
       detached: session.detached,
+      useTmux,
       mcpConfigPath,
     })
 
@@ -1510,6 +1617,8 @@ export class SessionManager {
       tmuxName: handle.tmuxName,
       jsonlPath: handle.jsonlPath,
       configDir: effectiveConfigDir,
+      cwdSlug: mangleCwd(workspace),
+      useTmux,
       model: effectiveModel,
       effort: effectiveEffort,
       endedAt: null,
@@ -1531,6 +1640,7 @@ export class SessionManager {
       model: effectiveModel,
       effort: effectiveEffort,
       detached: session.detached,
+      useTmux,
     }).catch(async (err: unknown) => {
       const msg = (err as Error).message ?? String(err)
       console.error(`[session-manager] completeSpawn during respawn failed for ${uuid}: ${msg}`)
@@ -1752,6 +1862,21 @@ export class SessionManager {
       throw new Error(`Cannot reopen session in ${session.status} state`)
     }
 
+    // Reopen means "resume this conversation in an interactive tmux", i.e. a
+    // cross-mode jump. Not supported in Phase 1 and deliberately conservative:
+    // for Claude the two modes do share one JSONL store, so it would likely
+    // work, but Codex does not — `codex exec` writes a rollout file while the
+    // interactive TUI reads thread_history SQLite, so an exec thread is not
+    // guaranteed to be visible to `codex resume`. Rather than ship a button
+    // that silently works for one harness and not the other, both are gated
+    // until cross-mode resume is tested per harness (Phase 2). Respawn, which
+    // starts a fresh headless run from the same prompt, stays available.
+    if (!resolveUseTmux(session.useTmux)) {
+      throw new Error(
+        'Cannot reopen a headless session — interactive resume across modes is not supported yet. Use Respawn to run it again.',
+      )
+    }
+
     // Refuse when the underlying transcript doesn't exist — happens when the
     // original spawn failed before the agent wrote its first turn.
     // For codex interactive TUI sessions, transcript lives in SQLite (no jsonlPath);
@@ -1918,6 +2043,15 @@ export class SessionManager {
     const original = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!original) throw new Error(`Session not found: ${uuid}`)
 
+    // Fork spawns an interactive tmux against the source conversation, so it
+    // is the same cross-mode jump reopen() refuses. Gated for the same
+    // reason and until the same Phase 2 verification.
+    if (!resolveUseTmux(original.useTmux)) {
+      throw new Error(
+        'Cannot fork a headless session — interactive resume across modes is not supported yet. Use Respawn to run it again.',
+      )
+    }
+
     // Refuse when the source has no transcript to fork from — harness-aware
     // (mirrors the reopen check).
     if (original.agentType === 'codex' && !original.jsonlPath) {
@@ -2048,11 +2182,7 @@ export class SessionManager {
     }
 
     const adapter = this.registry.getOrThrow(session.agentType)
-    await adapter.kill({
-      tmuxName: session.tmuxName,
-      claudeUuid: session.claudeSessionUuid,
-      jsonlPath: session.jsonlPath,
-    })
+    await adapter.kill(handleFor(session))
 
     return this.transition(uuid, 'killed')
   }
@@ -2111,11 +2241,7 @@ export class SessionManager {
     if (session.tmuxName) {
       try {
         const adapter = this.registry.getOrThrow(session.agentType)
-        await adapter.kill({
-          tmuxName: session.tmuxName,
-          claudeUuid: session.claudeSessionUuid,
-          jsonlPath: session.jsonlPath,
-        })
+        await adapter.kill(handleFor(session))
       } catch { /* tmux may already be gone — fine */ }
     }
 
@@ -2178,11 +2304,7 @@ export class SessionManager {
           if (s.tmuxName) {
             const adapter = this.registry.get(s.agentType)
             if (adapter) {
-              await adapter.kill({
-                tmuxName: s.tmuxName,
-                claudeUuid: s.claudeSessionUuid,
-                jsonlPath: s.jsonlPath,
-              }).catch(() => {})
+              await adapter.kill(handleFor(s)).catch(() => {})
             }
           }
           await this.transition(s.id, 'failed').catch(() => {})
