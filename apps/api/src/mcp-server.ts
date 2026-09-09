@@ -147,9 +147,14 @@ const TOOLS: ToolDef[] = [
       required: ['projectId', 'initialPrompt'],
     },
     handler: async (args) => {
+      // MCP tool arg names are `initialPrompt` (descriptive for LLM), but
+      // the API accepts `prompt` per SpawnSessionBodySchema — map here.
+      // The old code sent `initialPrompt` verbatim, which Zod stripped as
+      // an unknown key, leaving `prompt` undefined and tripping the
+      // "prompt or template required" 422 gate.
       const body: Record<string, unknown> = {
         projectId: args['projectId'],
-        initialPrompt: args['initialPrompt'],
+        prompt: args['initialPrompt'],
         agentType: args['agentType'] ?? 'claude',
       }
       if (args['model']) body['model'] = args['model']
@@ -173,7 +178,10 @@ const TOOLS: ToolDef[] = [
       required: ['sessionId', 'text'],
     },
     handler: async (args) => {
-      await api('POST', `/api/sessions/${args['sessionId']}/input`, { text: args['text'] })
+      // API /input schema is `{ prompt }`, not `{ text }`. Same field-name
+      // mismatch as spawn_session — MCP arg key `text` is nice for the
+      // LLM, but map to `prompt` here.
+      await api('POST', `/api/sessions/${args['sessionId']}/input`, { prompt: args['text'] })
       return { ok: true }
     },
   },
