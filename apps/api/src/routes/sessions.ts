@@ -402,6 +402,10 @@ export function sessionsPlugin(
             vars: fields.vars ? JSON.parse(fields.vars) : undefined,
             parentSessionId: fields.parentSessionId || undefined,
             detached: fields.detached === 'true' ? true : undefined,
+            // Only an explicit "false" opts into headless; anything else
+            // (absent, "true", garbage) leaves it undefined so the project
+            // default — and ultimately tmux — wins.
+            useTmux: fields.useTmux === 'false' ? false : undefined,
           }
         }
       } else {
@@ -481,6 +485,11 @@ export function sessionsPlugin(
         // Body values override project defaults; empty falls back to project.
         model: body.data.model ?? project.defaultModel,
         effort: body.data.effort ?? project.defaultEffort,
+        // Same cascade for the tmux/headless toggle, and it must stay a
+        // nullish coalesce: `false` is a meaningful value here, so `||`
+        // would quietly promote an explicit headless request back to the
+        // project default. session-manager applies the final `?? true`.
+        useTmux: body.data.useTmux ?? project.defaultUseTmux,
       })
 
       // Record delegation edge if parent session provided
@@ -786,12 +795,14 @@ export function sessionsPlugin(
       const body = z.object({
         model: z.string().optional(),
         effort: z.union([z.enum(['low', 'medium', 'high', 'xhigh', 'max']), z.literal('')]).optional(),
+        useTmux: z.boolean().optional(),
       }).safeParse(req.body ?? {})
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
       try {
         const updated = await manager.updateMetadata(uuid, {
           model: body.data.model,
           effort: body.data.effort as import('@agent-hq-orchestron/shared').EffortLevel | '' | undefined,
+          useTmux: body.data.useTmux,
         })
         return updated
       } catch (err: unknown) {

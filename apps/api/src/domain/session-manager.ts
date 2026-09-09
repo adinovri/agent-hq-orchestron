@@ -1499,7 +1499,7 @@ export class SessionManager {
    *  project default; `undefined` leaves the field untouched. */
   async updateMetadata(
     uuid: string,
-    patch: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel | '' },
+    patch: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel | ''; useTmux?: boolean },
   ): Promise<SessionMetadata> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) throw new Error(`Session not found: ${uuid}`)
@@ -1516,6 +1516,13 @@ export class SessionManager {
     }
     if (patch.effort !== undefined) {
       next.effort = patch.effort === '' ? undefined : patch.effort
+    }
+    // Same EDITABLE gate as model/effort — the mode is baked into argv at
+    // spawn, so changing it mid-flight would desync the record from the
+    // running process. Stored as an explicit boolean (never cleared back to
+    // undefined) so the next spawn reads an unambiguous value.
+    if (patch.useTmux !== undefined) {
+      next.useTmux = patch.useTmux
     }
     await writeJson(this.sessionPath(uuid), next)
     return next
