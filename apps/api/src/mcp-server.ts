@@ -72,6 +72,31 @@ async function api<T = unknown>(method: string, path: string, body?: unknown): P
   try { return JSON.parse(text) as T } catch { return text as unknown as T }
 }
 
+/**
+ * The parent session's run mode, for a child being spawned into the parent's
+ * OWN project — `undefined` for anything else, which leaves the API's normal
+ * project-default cascade in charge.
+ *
+ * Best-effort by design. A parent that cannot be read (deleted record, API
+ * blip, a session id from an older orchestron) falls back to the project
+ * default rather than failing the spawn: the caller asked for a child, not
+ * for a mode, and refusing over an unreadable default would be a worse
+ * answer than the configured one.
+ */
+async function inheritParentMode(childProjectId: string): Promise<boolean | undefined> {
+  try {
+    const parent = await api<{ projectId?: string; useTmux?: boolean }>(
+      'GET', `/api/sessions/${encodeURIComponent(PARENT_SESSION_ID)}`,
+    )
+    if (!parent.projectId || parent.projectId !== childProjectId) return undefined
+    // `?? true` — a parent record predating the toggle is a tmux session.
+    return parent.useTmux ?? true
+  } catch (err) {
+    log(`spawn_session: could not read parent ${PARENT_SESSION_ID} for mode inheritance, using project default:`, (err as Error).message)
+    return undefined
+  }
+}
+
 // ── Tool schemas ─────────────────────────────────────────────────────
 
 interface ToolDef {
@@ -119,9 +144,9 @@ const TOOLS: ToolDef[] = [
     name: 'spawn_session',
     description:
       'Spawn a new agent session as a child of the current session. Every dimension is ' +
-      'independent — project, agent type, model, and effort can differ from the caller. ' +
-      'Guardrails: max depth 5, max 10 children per parent, max 5 spawns/minute. ' +
-      'Returns the new session uuid.',
+      'independent — project, agent type, model, effort, and run mode can differ from the ' +
+      'caller. Guardrails: max depth 5, max 10 children per parent, max 5 spawns/minute. ' +
+      'Returns the new session uuid and the mode it actually runs in.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -143,6 +168,16 @@ const TOOLS: ToolDef[] = [
           enum: ['low', 'medium', 'high', 'xhigh', 'max'],
           description: 'Reasoning effort. Falls back to project default if omitted.',
         },
+        useTmux: {
+          type: 'boolean',
+          description:
+            'Run the child in tmux (true — interactive, attachable, sleeps when idle) or ' +
+            'headless (false — each turn is its own claude -p / codex exec process, no live ' +
+            'TUI, no sleeping, and wait_for_idle still works). Omitted: inherits YOUR mode ' +
+            'when the child stays in your own project, otherwise the target project default. ' +
+            'A headless request is silently run as tmux when the server has headless disabled; ' +
+            'the result says which mode you actually got.',
+        },
       },
       required: ['projectId', 'initialPrompt'],
     },
@@ -160,8 +195,42 @@ const TOOLS: ToolDef[] = [
       if (args['model']) body['model'] = args['model']
       if (args['effort']) body['effort'] = args['effort']
       if (PARENT_SESSION_ID) body['parentSessionId'] = PARENT_SESSION_ID
-      const session = await api<{ id: string; status: string }>('POST', '/api/sessions', body)
-      return { sessionId: session.id, status: session.status }
+
+      // Run mode. An explicit boolean is the caller's decision and goes
+      // straight through — `typeof` rather than truthiness, because `false`
+      // is the whole point of the field.
+      //
+      // Omitted, the caller expressed no preference, and there are two
+      // defaults competing to fill it: the parent's own mode and the target
+      // project's `defaultUseTmux`. Inheriting wins only within the parent's
+      // own project — a child sent somewhere else lands under that project's
+      // configured policy, which an LLM tool call that never mentioned mode
+      // has no business overriding.
+      if (typeof args['useTmux'] === 'boolean') {
+        body['useTmux'] = args['useTmux']
+      } else if (PARENT_SESSION_ID) {
+        const inherited = await inheritParentMode(String(args['projectId'] ?? ''))
+        if (inherited !== undefined) body['useTmux'] = inherited
+      }
+
+      // The API masks rather than refuses: with headless disabled globally a
+      // `useTmux: false` comes back as a tmux session plus a `coerced`
+      // payload. Pass that on — a parent that asked for headless and got
+      // tmux should be told, not left to infer it from behaviour.
+      const session = await api<{
+        id: string
+        status: string
+        useTmux?: boolean
+        coerced?: { reason: string }
+      }>('POST', '/api/sessions', body)
+      if (session.coerced) log(`spawn_session: ${session.coerced.reason}, child ${session.id} runs in tmux`)
+      return {
+        sessionId: session.id,
+        status: session.status,
+        // `?? true` — a record with no field is a tmux session.
+        useTmux: session.useTmux ?? true,
+        ...(session.coerced ? { coerced: session.coerced } : {}),
+      }
     },
   },
   {
