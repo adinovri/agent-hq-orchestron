@@ -3,18 +3,20 @@ import Fastify from 'fastify'
 import { metricsPlugin } from '../../src/routes/metrics.js'
 import { MetricsCollector } from '../../src/domain/metrics-collector.js'
 
+// Vitest 4.x: `vi.fn().mockImplementation(() => ({...}))` used with `new`
+// invokes the arrow function as constructor — arrows aren't constructible,
+// so it throws TypeError. Use a real class in the mock instead.
 vi.mock('../../src/domain/metrics-collector.js', () => {
-  return {
-    MetricsCollector: vi.fn().mockImplementation(() => ({
-      query: vi.fn().mockResolvedValue({
-        buckets: [
-          { key: 'proj-alpha', sessions: 5, tokens: 7500, cost_usd: 0.15, avg_duration_ms: 60000 },
-          { key: 'proj-beta', sessions: 3, tokens: 4500, cost_usd: 0.09, avg_duration_ms: 30000 },
-        ],
-        total: { sessions: 8, tokens: 12000, cost_usd: 0.24 },
-      }),
-    })),
+  class MockMetricsCollector {
+    query = vi.fn().mockResolvedValue({
+      buckets: [
+        { key: 'proj-alpha', sessions: 5, tokens: 7500, cost_usd: 0.15, avg_duration_ms: 60000 },
+        { key: 'proj-beta', sessions: 3, tokens: 4500, cost_usd: 0.09, avg_duration_ms: 30000 },
+      ],
+      total: { sessions: 8, tokens: 12000, cost_usd: 0.24 },
+    })
   }
+  return { MetricsCollector: MockMetricsCollector }
 })
 
 let app: ReturnType<typeof Fastify>

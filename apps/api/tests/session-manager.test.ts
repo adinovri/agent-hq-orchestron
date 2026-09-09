@@ -98,24 +98,31 @@ describe('SessionManager — transition', () => {
     expect(updated.status).toBe('waiting')
   })
 
-  it('valid chain: spawning → waiting → running → completing → completed', async () => {
+  it('valid chain: spawning → waiting → running → idle → succeeded', async () => {
+    // State machine v2 (2026-09-05): `completing`/`completed` were removed
+    // in favor of `idle` + terminal `succeeded`. Terminal is entered via
+    // archive() or directly from a running/idle transition.
     const mgr = makeManager(makeAdapter())
     const s = await mgr.spawn(baseSpawn)
     await mgr.transition(s.id, 'waiting')
     await mgr.transition(s.id, 'running')
-    await mgr.transition(s.id, 'completing')
-    const final = await mgr.transition(s.id, 'completed')
-    expect(final.status).toBe('completed')
+    await mgr.transition(s.id, 'idle')
+    const final = await mgr.transition(s.id, 'succeeded')
+    expect(final.status).toBe('succeeded')
     expect(final.endedAt).toBeTruthy()
   })
 
   it('invalid transition throws InvalidTransitionError', async () => {
     const mgr = makeManager(makeAdapter())
     const s = await mgr.spawn(baseSpawn)
-    await expect(mgr.transition(s.id, 'completed')).rejects.toThrow(InvalidTransitionError)
+    // spawning → succeeded is not allowed; must go through waiting/running/idle
+    await expect(mgr.transition(s.id, 'succeeded')).rejects.toThrow(InvalidTransitionError)
   })
 
-  it('terminal → any throws InvalidTransitionError', async () => {
+  it('terminal → any throws InvalidTransitionError (except respawn → spawning)', async () => {
+    // State machine v2: terminal states (succeeded/failed/killed) allow ONE
+    // exit — → spawning — for in-place respawn (same session id, fresh
+    // Claude conversation). Any other target is rejected.
     const mgr = makeManager(makeAdapter())
     const s = await mgr.spawn(baseSpawn)
     await mgr.transition(s.id, 'failed')

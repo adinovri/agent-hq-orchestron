@@ -82,7 +82,13 @@ describe('claudeAdapter — tmux delegation', () => {
   })
 
   it('waitTuiReady resolves when capturePane matches TUI regex', async () => {
-    vi.mocked(tmuxMock.capturePane).mockResolvedValueOnce('❯')
+    // TUI_READY_RE matches the Claude status-bar footer (version + `│` separator)
+    // or the `? for shortcuts` hint. A bare `❯` was the pre-2026-08 signal but
+    // proved noisy (menu selectors use it too) — real ready detection now keys
+    // on the version-bar line the TUI renders once the pane is settled.
+    vi.mocked(tmuxMock.capturePane).mockResolvedValueOnce(
+      '  ? for shortcuts  |  v2.1.266 │ Opus 5 │ /help for commands',
+    )
     const handle = { tmuxName: 'test-session', claudeUuid: 'abc', jsonlPath: '/tmp/abc.jsonl' }
     await expect(claudeAdapter.waitTuiReady(handle, 2000)).resolves.toBeUndefined()
   })

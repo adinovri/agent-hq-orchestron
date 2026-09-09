@@ -14,7 +14,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import dagre from '@dagrejs/dagre'
-import type { SessionMetadata, DelegationEdge } from '@agent-hq-orchestron/shared'
+import type { SessionMetadata, DelegationGraphEdge } from '@agent-hq-orchestron/shared'
 
 const NODE_W = 200
 const NODE_H = 70
@@ -56,7 +56,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 interface Props {
   sessions: SessionMetadata[]
-  delegationEdges: DelegationEdge[]
+  delegationEdges: DelegationGraphEdge[]
   rootUuid?: string
 }
 
@@ -71,7 +71,7 @@ export function DelegationGraph({ sessions, delegationEdges, rootUuid }: Props) 
 
   const rawNodes = useMemo((): Node[] => {
     const ids = new Set<string>()
-    delegationEdges.forEach((e) => { ids.add(e.parent); ids.add(e.child) })
+    delegationEdges.forEach((e) => { ids.add(e.source); ids.add(e.target) })
     if (rootUuid) ids.add(rootUuid)
 
     return Array.from(ids).map((id) => {
@@ -101,11 +101,12 @@ export function DelegationGraph({ sessions, delegationEdges, rootUuid }: Props) 
   }, [delegationEdges, sessionMap, rootUuid])
 
   const rawEdges = useMemo((): Edge[] =>
-    delegationEdges.map((e, i) => ({
-      id: `e-${i}`,
-      source: e.parent,
-      target: e.child,
-      animated: ['running', 'spawning'].includes(sessionMap.get(e.child)?.status ?? ''),
+    delegationEdges.map((e) => ({
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      label: e.label,
+      animated: ['running', 'spawning'].includes(sessionMap.get(e.target)?.status ?? ''),
     })),
     [delegationEdges, sessionMap],
   )

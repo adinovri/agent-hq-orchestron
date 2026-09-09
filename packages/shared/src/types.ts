@@ -99,6 +99,10 @@ export interface ProjectMetadata {
   config: Record<string, unknown>
 }
 
+/** Internal delegation-tracker storage shape (persisted on disk). Used
+ *  by the tracker + list operations; NOT what the /api/delegation/:root
+ *  endpoint returns to clients (that reshapes into React-Flow-native
+ *  format below). */
 export interface DelegationEdge {
   parent: string
   child: string
@@ -106,9 +110,21 @@ export interface DelegationEdge {
   createdAt: string
 }
 
+/** API response shape from GET /api/delegation/:rootUuid. Edges use the
+ *  React Flow-native `source`/`target` keys so the client can pass them
+ *  straight through without a translation step (which is where the old
+ *  `{parent, child}` client code silently produced `undefined` → dagre
+ *  crash → `/graph` blank page). */
+export interface DelegationGraphEdge {
+  id: string
+  source: string
+  target: string
+  label?: string
+}
+
 export interface DelegationEdges {
-  version: 1
-  edges: DelegationEdge[]
+  nodes: SessionMetadata[]
+  edges: DelegationGraphEdge[]
 }
 
 export interface Snapshot {
