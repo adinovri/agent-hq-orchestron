@@ -42,8 +42,10 @@ export const TERMINAL_STATUSES: SessionStatus[] = ['succeeded', 'failed', 'kille
 // "Active" for the UI's purposes = costs a live resource OR is alive but hidden.
 // Sleeping sits between active-and-idle: no tmux, but session is resumable.
 export const ACTIVE_STATUSES: SessionStatus[] = ['spawning', 'waiting', 'running', 'needs_input', 'idle']
-// Sending input to a sleeping session triggers a wake-up (cold-start tmux
-// with --resume), so it's a valid input target.
+// Sending input to a sleeping session triggers a wake-up, so it's a valid
+// input target in both modes. For tmux that means a cold-start with
+// --resume; for headless the sleep released nothing, so the wake is a record
+// write and the turn starts straight away.
 export const INPUT_ALLOWED_STATUSES: SessionStatus[] = ['needs_input', 'idle', 'waiting', 'sleeping']
 
 export function isActive(s: SessionStatus): boolean {

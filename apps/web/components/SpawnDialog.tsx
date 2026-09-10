@@ -353,7 +353,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
                   <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
                     {useTmux
                       ? 'Interactive session — live transcript, attach to the TUI, sleeps when idle.'
-                      : `Headless — each turn runs as its own ${selectedAgentType === 'codex' ? 'codex exec' : 'claude -p'} process, then the session waits in idle for the next one. Takes follow-up input; no live TUI and no sleeping.`}
+                      : `Headless — each turn runs as its own ${selectedAgentType === 'codex' ? 'codex exec' : 'claude -p'} process, then the session waits in idle for the next one and sleeps once left alone. Takes follow-up input; no live TUI, and the sleep releases nothing.`}
                     {useTmux !== projectDefaultUseTmux && (
                       <span className="italic"> Overrides the project default.</span>
                     )}

@@ -8,11 +8,15 @@ import { useHeadlessEnabled } from '@/lib/server-config'
 
 const RESET: { value: ''; label: string } = { value: '', label: '— Reset to project default' }
 
-/** The two resting states of a headless session. Its next turn is delivered
- *  by sendInput rather than by a spawn, so a mode flip here would never
- *  become real — the API refuses it, and this dialog says so up front rather
- *  than letting the user find out at Save. */
-const MODE_LOCKED_STATES: SessionStatus[] = ['idle', 'needs_input']
+/** Every resting state of a headless session. Its next turn is delivered by
+ *  sendInput rather than by a spawn — including out of `sleeping`, whose
+ *  sleep released nothing and whose wake costs no spawn either — so a mode
+ *  flip here would never become real. The API refuses it, and this dialog
+ *  says so up front rather than letting the user find out at Save.
+ *
+ *  Only applied to headless records: a sleeping TMUX session really did give
+ *  up its window, and waking it does spawn, so its mode stays editable. */
+const MODE_LOCKED_STATES: SessionStatus[] = ['idle', 'needs_input', 'sleeping']
 
 interface Props {
   open: boolean
@@ -60,7 +64,7 @@ export function SessionMetadataEditDialog({
   const hasCuratedModels = models.length > 1
   const inputCls = 'w-full px-3 py-2 text-sm bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded focus:outline-none focus:ring-2 focus:ring-blue-500'
 
-  const modeLocked = MODE_LOCKED_STATES.includes(status)
+  const modeLocked = !currentUseTmuxResolved && MODE_LOCKED_STATES.includes(status)
 
   // `useTmux` drops out of the comparison while the switch is off: the
   // control is hidden, so the state can never diverge, and leaving it in
@@ -146,7 +150,7 @@ export function SessionMetadataEditDialog({
                   <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
                   <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
                     {modeLocked
-                      ? 'Mode is locked while session is idle. Use Reopen, Fork, or Respawn to change mode.'
+                      ? `Mode is locked while the session is ${status}. Use Reopen, Fork, or Respawn to change mode.`
                       : useTmux
                         ? 'Next run starts an interactive tmux session.'
                         : `Next run is headless — each turn its own ${agentType === 'codex' ? 'codex exec' : 'claude -p'} process, no live TUI.`}
