@@ -256,10 +256,10 @@ wait_for_status() {
       200)
         status="$(printf '%s' "$body" | python3 -c \
           'import json,sys;print(json.load(sys.stdin).get("status",""))' 2>/dev/null)"
-        # `case` gives us the alternation for free.
-        case "$status" in
-          $target) return 0 ;;
-        esac
+        # Anchored regex, not a `case` pattern: `case` parses its alternation
+        # at parse time, so a `|` arriving inside an expanded variable is
+        # matched as a literal and every alternation silently never fires.
+        [[ "$status" =~ ^($target)$ ]] && return 0
         ;;
     esac
 
