@@ -4,6 +4,7 @@ import {
   buildSessionDetailSections,
   resumeCommandFor,
   attachCommandFor,
+  usesTmux,
   type DetailSection,
 } from './session-details'
 
@@ -32,6 +33,10 @@ function session(over: Partial<SessionMetadata> = {}): SessionMetadata {
 /** Shape the API actually persists for a headless spawn — see
  *  `spawnHeadless` in apps/api/src/adapters/claude.ts. */
 const HEADLESS_TMUX_NAME = 'headless-52de306e'
+/** codex mints a different shape — `headless-codex-<hex>`, see
+ *  `spawnHeadless` in apps/api/src/adapters/codex.ts. Neither prefix is
+ *  what the gate reads, and covering both is the point. */
+const HEADLESS_CODEX_TMUX_NAME = 'headless-codex-9f2ab411'
 
 const titles = (s: DetailSection[]) => s.map((x) => x.title)
 const section = (s: DetailSection[], title: string) => s.find((x) => x.title === title)
@@ -118,6 +123,20 @@ describe('buildSessionDetailSections', () => {
     // Nothing anywhere in the panel leaks the synthetic name.
     const values = out.flatMap((sec) => sec.rows).flatMap((r) => [r.value, r.copy ?? ''])
     expect(values.some((v) => v.includes(HEADLESS_TMUX_NAME))).toBe(false)
+  })
+
+  it('hides the tmux rows for a headless codex session too', () => {
+    const out = buildSessionDetailSections({
+      session: session({
+        agentType: 'codex',
+        useTmux: false,
+        tmuxName: HEADLESS_CODEX_TMUX_NAME,
+      }),
+      projectPath: '/home/a/work',
+    })
+    expect(row(out, 'Location', 'tmux')).toBeUndefined()
+    expect(row(out, 'Commands', 'attach')).toBeUndefined()
+    expect(row(out, 'Identity', 'mode')?.value).toBe('headless')
   })
 
   it('still shows tmux rows for a codex session, which mints its own name', () => {
@@ -207,5 +226,16 @@ describe('resumeCommandFor / attachCommandFor', () => {
     expect(attachCommandFor(session({ useTmux: false, tmuxName: HEADLESS_TMUX_NAME }))).toBeNull()
     // `undefined` is a legacy tmux record, not a headless one.
     expect(attachCommandFor(session({ useTmux: undefined }))).toBe('tmux attach -rt orchestron-sess-1')
+  })
+})
+
+describe('usesTmux', () => {
+  it('treats a missing field as tmux and only an explicit false as headless', () => {
+    expect(usesTmux(session({ useTmux: true }))).toBe(true)
+    expect(usesTmux(session({ useTmux: false }))).toBe(false)
+    // The whole reason this is not a bare `!session.useTmux`: records
+    // written before the flag existed carry no field at all, and every
+    // one of them runs in tmux.
+    expect(usesTmux(session({ useTmux: undefined }))).toBe(true)
   })
 })
