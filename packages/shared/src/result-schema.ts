@@ -151,6 +151,18 @@ export const STRUCTURED_OUTPUT_TOOL_NAME = 'StructuredOutput'
  *  Fixed string in the CLI bundle, not model-authored. */
 const STRUCTURED_OUTPUT_TOOL_RESULT = 'Structured output provided successfully'
 
+/** Prefix of the nudge Claude Code injects **as a user turn** when the model
+ *  finished a turn without calling the tool: `[structured-output-enforce] You
+ *  MUST call the StructuredOutput tool to complete this request. Call this
+ *  tool now.`
+ *
+ *  It is addressed to the model on Orchestron's behalf — the operator never
+ *  typed it — and the model's reply to it is an acknowledgement of the
+ *  plumbing ("Remembered the number 47 and replied as requested."), not an
+ *  answer to anything the operator asked. Both halves are machinery.
+ *  Verified against Claude Code 2.1.267. */
+const STRUCTURED_OUTPUT_ENFORCE_PREFIX = '[structured-output-enforce]'
+
 /** Minimal shape of a parsed transcript entry — structurally compatible with
  *  the `RolloutEntry` the API's rollout parsers emit. Declared here so the
  *  normaliser stays a pure function with no dependency on the API. */
@@ -204,9 +216,23 @@ function isExactResultDocument(text: string): boolean {
  *  - The canned tool_result is always dropped.
  *  - An assistant message that is exactly a result document is rewritten to
  *    its `summary` — the Codex case.
+ *  - A `[structured-output-enforce]` user turn — Claude Code nudging the model
+ *    to call the tool — is dropped, **together with the assistant turn that
+ *    immediately follows it**. The nudge is written on Orchestron's behalf, and
+ *    the reply is an acknowledgement of the nudge, so leaving either one in the
+ *    pane shows the operator a conversation they were not part of. The reply is
+ *    only taken when it is genuinely adjacent; anything else stays.
+ *
+ * Dropping the pair cannot swallow the answer: the `StructuredOutput` call that
+ * the nudge extracted still follows, and with the acknowledgement gone it either
+ * finds real prose before it (and is dropped as duplication) or finds none (and
+ * is promoted to its `summary`).
  *
  * `seq` values are preserved, not renumbered: they are React keys and stable
- * identifiers for the client, and gaps are harmless.
+ * identifiers for the client, and gaps are harmless. Renumbering would close the
+ * gaps this pass opens, but it would also shift every key after a strip on the
+ * poll where the second half of a pair lands, remounting rows mid-turn to fix
+ * something no one can see. Not worth it — `seq` is never rendered.
  *
  * Only call this for headless sessions. A tmux session never sees the schema,
  * and running the classifier over its transcript could only misfire.
@@ -216,11 +242,24 @@ export function normalizeStructuredOutputTranscript<T extends TranscriptEntryLik
 ): T[] {
   const out: T[] = []
 
-  for (const entry of entries) {
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]!
+
     if (
       entry.kind === 'tool_result' &&
       entry.content.trim() === STRUCTURED_OUTPUT_TOOL_RESULT
     ) {
+      continue
+    }
+
+    if (
+      entry.kind === 'user' &&
+      entry.content.trimStart().startsWith(STRUCTURED_OUTPUT_ENFORCE_PREFIX)
+    ) {
+      // Consume the model's reply to the nudge as well, but only when it is
+      // the very next entry. On a poll that catches the transcript between the
+      // two, the nudge goes and the reply is picked up on the next pass.
+      if (entries[i + 1]?.kind === 'assistant') i++
       continue
     }
 

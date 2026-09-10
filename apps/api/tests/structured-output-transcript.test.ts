@@ -204,3 +204,133 @@ describe('inquiry rendering survives normalisation', () => {
     expect(out[0]!.content).toBe('I need the target environment before I can continue.')
   })
 })
+
+describe('normalizeStructuredOutputTranscript — the enforcement turn (F2)', () => {
+  /** Claude Code's nudge, verbatim from a 2026-09-10 headless run. */
+  const ENFORCE =
+    '[structured-output-enforce] You MUST call the StructuredOutput tool to complete this request. Call this tool now.'
+
+  /** Single-turn headless: prompt → prose → nudge → acknowledgement → tool.
+   *  This is what came back contiguous `0,1,2,3` in the sweep, with the last
+   *  two entries being exactly the pair below. */
+  it('drops the nudge and the reply it provoked, keeping the real answer', () => {
+    const out = normalizeStructuredOutputTranscript([
+      entry({ seq: 0, kind: 'user', content: 'Ingat angka 47.' }),
+      entry({ seq: 1, kind: 'assistant', content: 'Oke, 47 gue inget.' }),
+      entry({ seq: 2, kind: 'user', content: ENFORCE }),
+      entry({ seq: 3, kind: 'assistant', content: 'Remembered the number 47 and replied as requested.' }),
+      entry({ seq: 4, kind: 'tool_use', toolName: STRUCTURED_OUTPUT_TOOL_NAME, content: DOC_JSON }),
+      entry({ seq: 5, kind: 'tool_result', content: 'Structured output provided successfully' }),
+    ])
+    expect(out.map((e) => e.kind)).toEqual(['user', 'assistant'])
+    expect(out[0]!.content).toBe('Ingat angka 47.')
+    expect(out[1]!.content).toBe('Oke, 47 gue inget.')
+  })
+
+  it('leaves no trace of the enforcement string anywhere', () => {
+    const out = normalizeStructuredOutputTranscript([
+      entry({ seq: 0, kind: 'user', content: 'Ingat angka 47.' }),
+      entry({ seq: 1, kind: 'assistant', content: 'Oke.' }),
+      entry({ seq: 2, kind: 'user', content: ENFORCE }),
+      entry({ seq: 3, kind: 'assistant', content: 'Remembered the number 47 and replied as requested.' }),
+    ])
+    expect(out.map((e) => e.content).join('\n')).not.toContain('structured-output-enforce')
+  })
+
+  /** The sub-symptom the sweep found only on the multi-turn session: a `seq`
+   *  gap where a mid-transcript entry was dropped. Pinning the multi-turn
+   *  shape is what makes this test cover it — the single-turn case never
+   *  strips anything but a tail. */
+  it('strips one pair per turn and leaves every real turn intact (multi-turn)', () => {
+    const out = normalizeStructuredOutputTranscript([
+      entry({ seq: 0, kind: 'user', content: 'Ingat angka 47.' }),
+      entry({ seq: 1, kind: 'assistant', content: 'Oke, 47 gue inget.' }),
+      entry({ seq: 2, kind: 'user', content: ENFORCE }),
+      entry({ seq: 3, kind: 'assistant', content: 'Remembered the number 47.' }),
+      entry({ seq: 4, kind: 'tool_use', toolName: STRUCTURED_OUTPUT_TOOL_NAME, content: DOC_JSON }),
+      entry({ seq: 5, kind: 'tool_result', content: 'Structured output provided successfully' }),
+      entry({ seq: 6, kind: 'user', content: 'Angka berapa tadi?' }),
+      entry({ seq: 7, kind: 'assistant', content: '47.' }),
+      entry({ seq: 8, kind: 'user', content: ENFORCE }),
+      entry({ seq: 9, kind: 'assistant', content: 'Recalled the number as requested.' }),
+      entry({ seq: 10, kind: 'tool_use', toolName: STRUCTURED_OUTPUT_TOOL_NAME, content: DOC_JSON }),
+      entry({ seq: 11, kind: 'tool_result', content: 'Structured output provided successfully' }),
+    ])
+    expect(out.map((e) => e.content)).toEqual([
+      'Ingat angka 47.',
+      'Oke, 47 gue inget.',
+      'Angka berapa tadi?',
+      '47.',
+    ])
+    // Gaps are expected and deliberate — `seq` is a React key, never rendered.
+    expect(out.map((e) => e.seq)).toEqual([0, 1, 6, 7])
+  })
+
+  it('drops a trailing nudge whose reply has not landed yet', () => {
+    // The poll can catch the transcript between the two halves.
+    const out = normalizeStructuredOutputTranscript([
+      entry({ seq: 0, kind: 'assistant', content: 'Oke.' }),
+      entry({ seq: 1, kind: 'user', content: ENFORCE }),
+    ])
+    expect(out.map((e) => e.content)).toEqual(['Oke.'])
+  })
+
+  it('takes only the adjacent reply, not the next real user turn', () => {
+    const out = normalizeStructuredOutputTranscript([
+      entry({ seq: 0, kind: 'user', content: ENFORCE }),
+      entry({ seq: 1, kind: 'user', content: 'Angka berapa tadi?' }),
+      entry({ seq: 2, kind: 'assistant', content: '47.' }),
+    ])
+    expect(out.map((e) => e.content)).toEqual(['Angka berapa tadi?', '47.'])
+  })
+
+  it('promotes the summary when the nudge consumed the only prose', () => {
+    // With the acknowledgement gone there is nothing before the tool call, so
+    // the turn must not render empty.
+    const out = normalizeStructuredOutputTranscript([
+      entry({ seq: 0, kind: 'user', content: 'Ingat angka 47.' }),
+      entry({ seq: 1, kind: 'user', content: ENFORCE }),
+      entry({ seq: 2, kind: 'assistant', content: 'Remembered the number 47.' }),
+      entry({ seq: 3, kind: 'tool_use', toolName: STRUCTURED_OUTPUT_TOOL_NAME, content: DOC_JSON }),
+      entry({ seq: 4, kind: 'tool_result', content: 'Structured output provided successfully' }),
+    ])
+    expect(out.map((e) => e.kind)).toEqual(['user', 'assistant'])
+    expect(out[1]!.content).toBe('Listed what I can do.')
+  })
+
+  it('leaves a user turn that merely mentions the marker alone', () => {
+    // The operator asking about the leak is not the leak.
+    const asking = 'kenapa transcript gue ada [structured-output-enforce] ya?'
+    const out = normalizeStructuredOutputTranscript([entry({ seq: 0, kind: 'user', content: asking })])
+    expect(out.map((e) => e.content)).toEqual([asking])
+  })
+
+  it('is idempotent over the enforcement pair', () => {
+    const input = [
+      entry({ seq: 0, kind: 'user', content: 'Ingat angka 47.' }),
+      entry({ seq: 1, kind: 'assistant', content: 'Oke.' }),
+      entry({ seq: 2, kind: 'user', content: ENFORCE }),
+      entry({ seq: 3, kind: 'assistant', content: 'Remembered.' }),
+    ]
+    const once = normalizeStructuredOutputTranscript(input)
+    expect(normalizeStructuredOutputTranscript(once)).toEqual(once)
+  })
+
+  /** Regression guard for the gate in the route: a tmux session never sees
+   *  the schema, so its transcript must reach the client byte-identical. The
+   *  route decides this (`session.useTmux === false`), but a tmux transcript
+   *  put through the normaliser anyway must still come out unchanged — that is
+   *  what makes the gate a belt rather than the only thing holding the trousers
+   *  up. */
+  it('is a no-op on a tmux-shaped transcript', () => {
+    const tmux = [
+      entry({ seq: 0, kind: 'user', content: 'jalanin test dong' }),
+      entry({ seq: 1, kind: 'assistant', content: 'Oke, gue jalanin.' }),
+      entry({ seq: 2, kind: 'tool_use', toolName: 'Bash', content: '{"command":"npm test"}' }),
+      entry({ seq: 3, kind: 'tool_result', content: '42 passed' }),
+      entry({ seq: 4, kind: 'assistant', content: 'Semua 42 test lulus.' }),
+      entry({ seq: 5, kind: 'user', content: 'sip' }),
+    ]
+    expect(normalizeStructuredOutputTranscript(tmux)).toEqual(tmux)
+  })
+})
