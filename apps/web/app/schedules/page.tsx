@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, fetchJson } from '@/lib/fetcher'
 import { Button } from '@/components/ui/button'
@@ -8,6 +9,8 @@ import { ScheduleDialog } from '@/components/ScheduleDialog'
 import { scheduleOverrideBadges, type ScheduleProjectOption } from '@/lib/schedule-fields'
 import { projectConfigDir } from '@/lib/project-info'
 import { useHeadlessEnabled } from '@/lib/server-config'
+import { scheduleRunHref } from '@/lib/schedule-run'
+import { pushNotice } from '@/lib/notice'
 import { Skeleton } from '@/components/Skeleton'
 import { formatRelative } from '@/lib/time'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
@@ -35,6 +38,7 @@ function toScheduleProject(p: ProjectMetadata): ScheduleProjectOption {
 
 export default function SchedulesPage() {
   const qc = useQueryClient()
+  const router = useRouter()
   const headlessEnabled = useHeadlessEnabled()
   const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState<Schedule | null>(null)
@@ -80,12 +84,28 @@ export default function SchedulesPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
   })
 
+  // Run now spawns a session, so it lands the user in that session rather
+  // than leaving them on the list wondering whether anything happened. The
+  // list is still invalidated first — `lastRunAt` just changed, and the user
+  // comes back to it.
   const runMutation = useMutation({
     mutationFn: async (id: string) => {
       const res = await apiFetch(`/api/schedules/${id}/run`, { method: 'POST' })
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      // A run that fired but answered with something unparseable is still a
+      // successful run; `scheduleRunHref` turns that into "stay here".
+      return await res.json().catch(() => null) as unknown
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
+    onSuccess: (body) => {
+      qc.invalidateQueries({ queryKey: ['schedules'] })
+      const href = scheduleRunHref(body)
+      if (href) router.push(href)
+    },
+    onError: (err) => {
+      // Toast rather than alert(): the spawn failed server-side, and the user
+      // stays on the list with the schedule untouched.
+      pushNotice('Run now failed', { detail: (err as Error).message, tone: 'warn' })
+    },
   })
 
   async function handleExport() {
