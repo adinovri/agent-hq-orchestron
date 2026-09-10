@@ -100,6 +100,31 @@ const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
   killed: ['spawning'],
 }
 
+/** States where nothing is executing, so `idleSince` starts ticking. */
+const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
+
+/**
+ * The subset of those the idle sweeper may warm-shut-down.
+ *
+ * `needs_input` is idle in the bookkeeping sense — no child is working — but
+ * it is not idle in the sense the sweeper cares about: the session is blocked
+ * on a person, and it is holding a `pendingInquiry` that person still has to
+ * answer. Sweeping it (E2E smoke finding F5) put a "Sleeping" pill above a
+ * live "Agent needs input" form and dropped the session out of the
+ * dashboard's needs-input stat, which read 0 while two sessions were in fact
+ * waiting on an answer.
+ *
+ * The cost of exempting it is that a session nobody answers never ages out.
+ * For headless that is free — its sleep is symbolic and releases nothing. For
+ * tmux it holds a window open, which is the deliberate trade: the UI is
+ * asking the user for something, so the window is what the answer goes into,
+ * and the pending question is a far better prompt to act than a sleep the
+ * user has to undo with a Reopen. An explicit kill or archive still applies
+ * at any time, and `needs_input → sleeping` remains a legal transition for a
+ * caller that means it.
+ */
+const SWEEPABLE_IDLE_STATES: SessionStatus[] = ['idle']
+
 // Detect whether an assistant text is soliciting user input (question).
 // Cheap heuristic: ends with `?`, or contains typical question phrases.
 const QUESTION_PHRASES = [
@@ -1672,7 +1697,6 @@ export class SessionManager {
 
     const terminal: SessionStatus[] = ['succeeded', 'failed', 'killed']
     const now = new Date().toISOString()
-    const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
     // Track idleSince: set when entering an idle-ish state, clear when leaving.
     let nextIdleSince: string | null | undefined = session.idleSince ?? null
     if (IDLE_STATES.includes(newStatus) && !IDLE_STATES.includes(session.status)) {
@@ -1692,8 +1716,9 @@ export class SessionManager {
 
     // Sweeper arming based on target state. Both modes are armed — for tmux
     // the sweep releases a window, for headless it is symbolic (see
-    // armIdleSweeper).
-    if (IDLE_STATES.includes(newStatus)) {
+    // armIdleSweeper). `needs_input` arms nothing and disarms what is already
+    // armed: it is waiting on a person, not ageing out (SWEEPABLE_IDLE_STATES).
+    if (SWEEPABLE_IDLE_STATES.includes(newStatus)) {
       this.armIdleSweeper(uuid)
     } else {
       this.clearIdleSweeper(uuid)
@@ -1760,8 +1785,7 @@ export class SessionManager {
   async warmShutdown(uuid: string): Promise<void> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) return
-    const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
-    if (!IDLE_STATES.includes(session.status)) return
+    if (!SWEEPABLE_IDLE_STATES.includes(session.status)) return
     if (!resolveUseTmux(session.useTmux)) {
       // Symbolic sleep: record only, nothing to release.
       //
@@ -1772,7 +1796,7 @@ export class SessionManager {
       // nothing is left to reconcile.
       await this.withLock(`state:${uuid}`, async () => {
         const fresh = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
-        if (!fresh || !IDLE_STATES.includes(fresh.status)) return
+        if (!fresh || !SWEEPABLE_IDLE_STATES.includes(fresh.status)) return
         await this._transitionUnlocked(uuid, 'sleeping')
       }).catch(() => { /* race with kill */ })
       return
@@ -1804,10 +1828,9 @@ export class SessionManager {
     }
     if (this.idleTimeoutMs <= 0) return
     const sessions = await this.list()
-    const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
     const now = Date.now()
     for (const s of sessions) {
-      if (!IDLE_STATES.includes(s.status)) continue
+      if (!SWEEPABLE_IDLE_STATES.includes(s.status)) continue
       // Both modes — a headless session sleeps symbolically (armIdleSweeper).
       const since = s.idleSince ? Date.parse(s.idleSince) : Date.parse(s.endedAt ?? s.startedAt)
       const idleFor = now - since
@@ -2050,10 +2073,9 @@ export class SessionManager {
     const sessions = await this.list()
     await this.sweepZombies(sessions)
     if (this.idleTimeoutMs <= 0) return
-    const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
     const now = Date.now()
     for (const s of sessions) {
-      if (!IDLE_STATES.includes(s.status)) continue
+      if (!SWEEPABLE_IDLE_STATES.includes(s.status)) continue
       if (this.idleSweepers.has(s.id)) continue    // covered by primary timer
       const since = s.idleSince ? Date.parse(s.idleSince) : Date.parse(s.endedAt ?? s.startedAt)
       if (now - since >= this.idleTimeoutMs) {
