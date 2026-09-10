@@ -50,8 +50,10 @@ Spec: [USAGE.md § Schedules](../USAGE.md#4-schedules) ·
 - An invalid expression (`* * * *`, four fields) shows *"Invalid cron
   expression"* and blocks save.
 - **Save** is disabled until project, cron and prompt are all present.
-- Run-once spawns a session immediately: it appears on the dashboard in
-  the right project and reaches `idle`.
+- Run-once spawns a session immediately and **navigates you to its
+  detail page** — you do not stay on the Schedules list. The session is
+  in the right project and reaches `idle`. The redirect's full contract
+  is `SCHED-09`.
 - The spawned session's prompt is the schedule's prompt.
 
 **📷 Screenshot**: `sched-01-preview.png` — the dialog with cron typed
@@ -282,8 +284,96 @@ the failed run.
 
 ---
 
+### SCHED-09 — Run now navigates to the session it spawned `[smoke]`
+
+**Covers**: where a one-off run leaves you. Firing a schedule used to
+answer a bare `{ ok: true }` and drop you back on an unchanged list —
+the session existed, but finding it meant going to the dashboard and
+guessing which of the new cards was yours. The run endpoint now returns
+the spawned id and the client navigates to it.
+
+The failure this guards against is silent in both directions: a
+redirect that never fires looks like "the run did nothing", and a
+redirect built from a missing id lands on `/session/undefined`.
+
+**Steps**
+
+1. Have an enabled schedule against `e2e-claude` with the *Fast
+   prompt*. Start on `/schedules`.
+2. Click **run-once** (the circle-play icon) on its row.
+3. Watch the address bar and the page as the mutation settles.
+4. Read the session that opens.
+5. Repeat the whole thing with a schedule that pins *Use tmux* **off**
+   (headless), and watch the status pill through the run.
+
+**Expect**
+
+- `POST /api/schedules/:id/run` answers **`{ ok: true, sessionUuid:
+  "<uuid>" }`**. Confirm in the network panel — `sessionUuid` is the
+  field the redirect is built from.
+- The browser lands on **`/session/<uuid>`**, and the uuid in the URL
+  is the one from the response body. The navigation happens on mutation
+  success, not on click.
+- The session detail page shows **the schedule's prompt** as the
+  opening turn, in the schedule's project.
+- Status transitions follow the spawned session's **mode**, not the
+  schedule's:
+  - tmux → `spawning` → `waiting` → `idle`
+  - headless → `spawning` → `running` → `idle` (**no `waiting`** — see
+    [`spawn-session.md`](spawn-session.md) notes)
+- The redirect is mode-independent: both runs navigate identically. Only
+  what you then watch on the pill differs.
+- The Schedules row's last-run state is updated when you navigate back.
+
+**📷 Screenshot**: `sched-09-run-now-redirect.png` — the session detail
+page immediately after the redirect, address bar in frame.
+
+**Cleanup**: Kill/Archive and Delete record on both spawned sessions.
+
+---
+
+### SCHED-10 — A run that returns no id stays on the list
+
+**Covers**: the fallback half of `SCHED-09`, which is the half that
+keeps an older client working. `sessionUuid` is **additive** — the
+endpoint still answers a bare `{ ok: true }` when the spawn path
+carried no id back, and that is a successful run, not an error.
+
+Hard to provoke through the UI; assert it at the seam instead. The
+decision is a pure function, `scheduleRunHref` in
+`apps/web/lib/schedule-run.ts`, unit-tested there.
+
+**Steps**
+
+1. Fire a schedule and confirm the normal response carries
+   `sessionUuid`.
+2. Read `scheduleRunHref`'s unit tests, or call it directly, for the
+   bodies below.
+
+**Expect**
+
+- `{ ok: true, sessionUuid: '<uuid>' }` → `/session/<uuid>`.
+- `{ ok: true }` → **`null`**. The client stays on `/schedules` and
+  refreshes the list — the pre-existing behaviour, and the correct one.
+  It does **not** navigate to `/session/undefined` and does **not**
+  surface an error.
+- A non-string, empty, or whitespace-only `sessionUuid` → `null`.
+- A `sessionUuid` carrying anything outside `[A-Za-z0-9._-]` (a slash,
+  a `..`, a `?`) → **`null`**, refused rather than escaped. It would
+  otherwise be pasted straight into a router path segment.
+
+**Cleanup**: Kill and Delete record on the session from step 1.
+
+---
+
 ## Notes on current shipped behaviour
 
+- **`sessionUuid` on the run response is additive.** `POST
+  /api/schedules/:id/run` returns `{ ok: true }` and adds `sessionUuid`
+  only when the fire actually produced one — the same shape as
+  `coerced` on `POST /api/sessions`. A bare `{ ok: true }` means the run
+  fired successfully; a scenario treating it as a failure is asserting
+  the wrong thing. See `SCHED-10`.
 - **The fire-time body omits unpinned fields.** A schedule that pins
   nothing sends no `model` / `effort` / `useTmux` at all, so the spawn
   route resolves `?? project.default…` at that moment. There is no
