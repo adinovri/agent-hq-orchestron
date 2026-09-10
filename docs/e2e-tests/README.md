@@ -42,8 +42,8 @@ Read [`00-setup.md`](00-setup.md) first. The rest are independent.
 | [`headless-flow.md`](headless-flow.md) | Headless multi-turn, interrupt, input gating mid-turn, structured `inquiry` form, symbolic sleeping |
 | [`adopt-import.md`](adopt-import.md) | Adopt an outside session (5 validation layers), Import bundle, where *Use tmux* comes from |
 | [`export-import.md`](export-import.md) | Bundle export formats, cross-host round-trip, UUID collision regeneration |
-| [`metadata-edit.md`](metadata-edit.md) | Pencil dialog — model / effort / *Use tmux*, and the state gates on each |
-| [`schedule.md`](schedule.md) | Cron schedules, pinned model/effort/mode, project read-only on edit, YAML export/import |
+| [`metadata-edit.md`](metadata-edit.md) | Pencil dialog — model / effort / *Use tmux*, and the mode+state gates on each |
+| [`schedule.md`](schedule.md) | Cron schedules, pinned model/effort/mode, Run now redirect, project read-only on edit, YAML export/import |
 | [`feature-flag.md`](feature-flag.md) | `enableHeadlessMode: false` — hidden toggles, coercion, toast, badge masking |
 | [`mcp-spawn.md`](mcp-spawn.md) | `spawn_session` from a running agent, mode inheritance, delegation graph, guardrails |
 | [`session-details.md`](session-details.md) | Collapsed details panel — four groups, skip rules, copy buttons |
@@ -91,7 +91,7 @@ which case USAGE.md is stale.
 
 ## Smoke set
 
-The short pre-deploy sweep. Roughly 20 minutes by hand.
+The short pre-deploy sweep — 11 scenarios, roughly 20 minutes by hand.
 
 | Id | Scenario |
 |---|---|
@@ -103,8 +103,22 @@ The short pre-deploy sweep. Roughly 20 minutes by hand.
 | `HEADLESS-04` | Structured inquiry renders as a form |
 | `META-01` | Pencil edits model on a terminal session |
 | `SCHED-01` | Create a schedule, run it once |
+| `SCHED-09` | Run now navigates to the session it spawned |
 | `DASH-01` | Dashboard lists sessions newest-activity first |
 | `DETAIL-01` | Details panel shows four groups |
+
+All eleven run with `enableHeadlessMode` **on** — its default — so the
+sweep needs no config change and no API restart.
+
+**The flag-off pair, run separately.** `FLAG-02` (every *Use tmux*
+control is hidden) and `FLAG-03` (a headless request is coerced, and
+says so) are also marked `[smoke]` but are deliberately **not** in the
+table above: they require `enableHeadlessMode: false` and an API
+restart, which invalidates the preconditions of every other scenario
+here. Run them as their own short sweep when a release touches the
+masking path, following [`feature-flag.md`](feature-flag.md) from its
+preconditions through `FLAG-08` — which restores the switch. Do not
+interleave them with the main sweep.
 
 ---
 

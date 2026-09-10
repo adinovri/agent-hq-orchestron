@@ -33,6 +33,12 @@ Spec: [USAGE.md § Disabling it globally](../USAGE.md#disabling-it-globally)
 **Every scenario below assumes the switch is off unless it says
 otherwise. `FLAG-08` restores it — do not stop before that.**
 
+`FLAG-02` and `FLAG-03` carry `[smoke]` markers but are **not** part of
+the main smoke table in [`README.md`](README.md#smoke-set) — flipping
+the switch and restarting the API breaks every other smoke scenario's
+preconditions. They are their own sweep. Run this file top to bottom,
+or not at all.
+
 ---
 
 ## Scenarios
