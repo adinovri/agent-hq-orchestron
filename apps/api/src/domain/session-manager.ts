@@ -1865,12 +1865,15 @@ export class SessionManager {
     return after ?? session
   }
 
-  /** Patch the model/effort fields on a session record. Restricted to
+  /** Patch the model/effort/useTmux fields on a session record. Restricted to
    *  states where the tmux is NOT live (terminal or sleeping) — active
    *  sessions have claude already bound to a specific model, so metadata
    *  edits alone wouldn't take effect until a Respawn/wake anyway.
    *  Empty string clears the override so the session falls back to the
-   *  project default; `undefined` leaves the field untouched. */
+   *  project default; `undefined` leaves the field untouched.
+   *
+   *  `useTmux` is gated one notch tighter than model/effort — see the comment
+   *  at its assignment below. */
   async updateMetadata(
     uuid: string,
     patch: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel | ''; useTmux?: boolean },
@@ -1903,11 +1906,27 @@ export class SessionManager {
     if (patch.effort !== undefined) {
       next.effort = patch.effort === '' ? undefined : patch.effort
     }
-    // Same EDITABLE gate as model/effort — the mode is baked into argv at
-    // spawn, so changing it mid-flight would desync the record from the
-    // running process. Stored as an explicit boolean (never cleared back to
-    // undefined) so the next spawn reads an unambiguous value.
+    // Stored as an explicit boolean (never cleared back to undefined) so the
+    // next spawn reads an unambiguous value.
+    //
+    // Narrower than the model/effort gate above: mode is editable only from a
+    // TERMINAL or `sleeping` record, never from an at-rest headless one. Both
+    // pass the EDITABLE check, but only the terminal record actually goes
+    // through a spawn before its mode is read again. A headless session at
+    // `idle` / `needs_input` has its next turn delivered by sendInput, which
+    // branches on `useTmux` and — reading `true` — takes the tmux path against
+    // a record whose `tmuxName` is a spent headless handle. Nothing is
+    // listening on it, waitTuiReady swallows its own failure, and the session
+    // transitions to `running` behind no process at all: a zombie that never
+    // lands. Cross-mode change belongs to Reopen / Fork / Respawn, which do
+    // spawn and therefore make the new mode real.
     if (patch.useTmux !== undefined) {
+      if (HEADLESS_AT_REST.includes(session.status)) {
+        throw new Error(
+          `Cannot change mode from metadata edit at idle. ` +
+          `Use Reopen/Fork/Respawn dialog for mode change.`,
+        )
+      }
       next.useTmux = patch.useTmux
     }
     await writeJson(this.sessionPath(uuid), next)

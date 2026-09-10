@@ -341,22 +341,60 @@ describe('SessionManager — headless guards', () => {
     expect(adapter.kill).not.toHaveBeenCalled()
   })
 
-  it('allows editing useTmux between headless turns but not mid-turn', async () => {
+  it('refuses a useTmux edit mid-turn and at rest, for different reasons', async () => {
     const { adapter, releaseExit } = makeHeadlessAdapter({ exitCode: 0 })
     const mgr = makeManager(adapter)
     const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
     await waitForRecord(mgr, s.id, (r) => r.status === 'running', 'running')
-    // Baked into argv at spawn — flipping it mid-flight would desync the
-    // record from the live process.
+    // Mid-turn: nothing is editable at all — the mode is baked into the argv
+    // of a process that is running right now.
     await expect(mgr.updateMetadata(s.id, { useTmux: true })).rejects.toThrow(/Cannot edit/i)
 
     releaseExit()
     await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
-    // Idle headless holds no process, so this is the moment a multi-turn
-    // session is editable at all — refusing here would make the pencil
-    // unreachable for the whole life of the session.
-    const patched = await mgr.updateMetadata(s.id, { useTmux: true })
-    expect(patched.useTmux).toBe(true)
+    // At rest: the record is editable, but not into the other mode. The next
+    // turn here comes from sendInput, which would read useTmux=true and drive
+    // the tmux path against a spent headless handle — a session stuck
+    // `running` behind no process. Reopen / Fork / Respawn own that change
+    // because they actually spawn.
+    await expect(mgr.updateMetadata(s.id, { useTmux: true }))
+      .rejects.toThrow(/Cannot change mode from metadata edit at idle/i)
+    const still = (await mgr.list()).find((r) => r.id === s.id)
+    expect(still?.useTmux).toBe(false)
+  })
+
+  it('still edits model and effort on a headless session at rest', async () => {
+    const { adapter, releaseExit } = makeHeadlessAdapter({ exitCode: 0 })
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    await waitForRecord(mgr, s.id, (r) => r.status === 'running', 'running')
+    releaseExit()
+    await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
+
+    // The mode lock is scoped to the mode. Everything the pencil was opened
+    // for in the first place still goes through, and the mode is untouched.
+    const patched = await mgr.updateMetadata(s.id, { model: 'claude-opus-5', effort: 'high' })
+    expect(patched.model).toBe('claude-opus-5')
+    expect(patched.effort).toBe('high')
+    expect(patched.useTmux).toBe(false)
+  })
+
+  it('refuses a useTmux edit at needs_input too', async () => {
+    const { adapter, releaseExit } = makeHeadlessAdapter({ exitCode: 0 })
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    await waitForRecord(mgr, s.id, (r) => r.status === 'running', 'running')
+    releaseExit()
+    await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
+    await mgr.transition(s.id, 'needs_input')
+
+    // `needs_input` is the other resting state — an inquiry is waiting on the
+    // user. Same reasoning, same refusal.
+    await expect(mgr.updateMetadata(s.id, { useTmux: true }))
+      .rejects.toThrow(/Cannot change mode from metadata edit at idle/i)
+    // And the rest of the patch is still available while it waits.
+    const patched = await mgr.updateMetadata(s.id, { model: 'claude-sonnet-5' })
+    expect(patched.model).toBe('claude-sonnet-5')
   })
 
   it('still refuses a metadata edit on an idle TMUX session', async () => {

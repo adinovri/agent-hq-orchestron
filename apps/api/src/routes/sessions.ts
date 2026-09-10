@@ -923,6 +923,11 @@ export function sessionsPlugin(
       } catch (err: unknown) {
         const msg = (err as Error).message ?? ''
         if (msg.includes('not found')) return reply.code(404).send({ error: msg })
+        // 400, not 409: the record is in a perfectly editable state and the
+        // other fields in this same patch would have gone through. It is the
+        // useTmux field itself that does not belong in a metadata edit here —
+        // a malformed request, not a lost race with the session's lifecycle.
+        if (msg.includes('Cannot change mode')) return reply.code(400).send({ error: msg })
         if (msg.includes('Cannot edit')) return reply.code(409).send({ error: msg })
         throw err
       }
