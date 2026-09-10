@@ -1116,6 +1116,11 @@ Dashboard → **Schedules** page.
   `cron-parser`. The human-readable description under the input comes
   from `cronstrue`.
 - Every entry has: pause/resume, run-once, edit, delete.
+- **Run now** (the circled play) fires the schedule once and then opens the
+  session it spawned — the click leaves you on that session's detail page,
+  not on the list. It does not touch the enabled state, and the next cron
+  fire is unaffected. If the fire fails, a warning toast says why and you
+  stay on the list with the schedule untouched.
 - **Export** → YAML dump you can commit to a repo, share, or back up.
 - **Import** → paste/upload YAML. Query param `?mode=merge|replace`
   controls whether existing entries are kept or wiped first.
@@ -1175,6 +1180,12 @@ schedules:
     effort: high
     useTmux: false
 ```
+
+`POST /api/schedules/:id/run` answers `{ ok: true, sessionUuid: '<uuid>' }`
+— that id is what the Run now button navigates to. `sessionUuid` is present
+only when the fire produced one; a bare `{ ok: true }` still means the
+schedule ran, and a client that gets it should stay where it is rather than
+treat the run as failed.
 
 `effort` must be one of `low | medium | high | xhigh | max | ultra`; an
 entry with anything else is reported in the import summary's `errors` and
