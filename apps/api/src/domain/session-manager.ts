@@ -1731,6 +1731,21 @@ export class SessionManager {
 
   /** Called from server boot — reconcile in-memory timers with disk state. */
   async resumeIdleSweepers(): Promise<void> {
+    // Boot is the likeliest moment to find a zombie: an unclean shutdown
+    // strands whatever was mid-turn, and the record outlives the process. Do
+    // it once here rather than making the fleet wait out a sweep interval.
+    await this.sweepZombies().catch(() => {})
+    // The interval is armed before the idle-timeout guard below, because the
+    // sweep it drives now does two jobs: warm-shutdown of idle orphans, which
+    // is what the timeout configures, and zombie recovery, which is not — a
+    // session stranded `running` behind no process should be reclaimed
+    // whether or not the deployment wants warm shutdowns at all.
+    if (!this.safetyNetSweep) {
+      this.safetyNetSweep = setInterval(() => {
+        this.sweepOrphans().catch(() => {})
+      }, 10 * 60 * 1000)
+      if (typeof this.safetyNetSweep.unref === 'function') this.safetyNetSweep.unref()
+    }
     if (this.idleTimeoutMs <= 0) return
     const sessions = await this.list()
     const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
@@ -1754,13 +1769,6 @@ export class SessionManager {
         if (typeof t.unref === 'function') t.unref()
         this.idleSweepers.set(s.id, t)
       }
-    }
-    // Safety-net sweep — every 10 minutes, catch orphans whose timer got lost.
-    if (!this.safetyNetSweep) {
-      this.safetyNetSweep = setInterval(() => {
-        this.sweepOrphans().catch(() => {})
-      }, 10 * 60 * 1000)
-      if (typeof this.safetyNetSweep.unref === 'function') this.safetyNetSweep.unref()
     }
     // AskUserQuestion pane sweep — every 20s scan tmux panes of running
     // claude sessions for the interactive selector modal and flip to
@@ -1933,9 +1941,52 @@ export class SessionManager {
     return next
   }
 
+  /**
+   * Reclaim sessions stranded `running` behind a tmux window that does not
+   * exist.
+   *
+   * The signature is a tmux-mode record with no `tmuxName` at all. Every path
+   * that puts a tmux session into `running` persists the handle first, so a
+   * live one always carries a name — an empty one means the record was
+   * switched into tmux mode while it held nothing but a spent headless
+   * handle, and then asked to take a turn. That is the shape the metadata
+   * mode lock now prevents, but records written before the lock existed are
+   * already on disk, and a mode change is not the only way to lose a handle.
+   *
+   * Nothing is coming to land these: the tmux turn watcher keys off a JSONL
+   * that is never written, and there is no child process whose exit could
+   * reconcile them. Left alone they sit `running` forever, holding a slot in
+   * the concurrency pool and refusing every action that wants a terminal
+   * state. `failed` is the honest landing — the turn did not happen — and it
+   * restores Respawn as a way out.
+   */
+  async sweepZombies(sessions?: SessionMetadata[]): Promise<void> {
+    for (const s of sessions ?? await this.list()) {
+      if (s.status !== 'running') continue
+      if (!resolveUseTmux(s.useTmux)) continue   // headless holds no window by design
+      if (s.tmuxName) continue
+      console.warn(
+        `[session-manager] orphaned zombie session detected: ${s.id.slice(0, 8)} ` +
+        `is running in tmux mode with no tmux window — landing it in failed`,
+      )
+      try {
+        // failureReason first, then the transition: `transition` re-reads the
+        // record, so writing it afterwards would race the write it does.
+        const rec = await readJson<SessionMetadata | null>(this.sessionPath(s.id), null)
+        if (!rec || rec.status !== 'running' || rec.tmuxName) continue   // moved on since list()
+        await writeJson(this.sessionPath(s.id), {
+          ...rec,
+          failureReason: 'cross-mode transition failed — no tmux window found',
+        })
+        await this.transition(s.id, 'failed')
+      } catch { /* another writer got there first; next sweep re-checks */ }
+    }
+  }
+
   private async sweepOrphans(): Promise<void> {
-    if (this.idleTimeoutMs <= 0) return
     const sessions = await this.list()
+    await this.sweepZombies(sessions)
+    if (this.idleTimeoutMs <= 0) return
     const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
     const now = Date.now()
     for (const s of sessions) {
