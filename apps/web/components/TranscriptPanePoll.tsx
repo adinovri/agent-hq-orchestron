@@ -11,6 +11,7 @@ import { harnessLabel } from '@/lib/models'
 import { Wrench, User, MessageSquare, ChevronDown, ChevronRight, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 import { AskUserQuestionCard } from './AskUserQuestionCard'
+import { resumeMetaRole, type ResumeMetaRole } from '@/lib/transcript-entry'
 
 interface Entry {
   seq: number
@@ -51,12 +52,41 @@ interface Props {
   agentType?: AgentType
 }
 
-function EntryView({ entry, uuid, answered }: { entry: Entry; uuid: string; answered: boolean }) {
+/**
+ * A resume nudge and the model's answer to it, rendered as a system aside
+ * rather than as a turn either party took (NF8).
+ *
+ * Same text, same order, same position in the list — it is still the whole
+ * rollout. What it loses is the avatar, the bubble and the full type size, so
+ * the eye reads the operator's actual conversation and skips the machinery.
+ * `data-entry-role` is the hook the E2E scenarios assert on; the styling is
+ * free to change without breaking them.
+ */
+function ResumeMetaEntry({ entry, role }: { entry: Entry; role: ResumeMetaRole }) {
+  return (
+    <div
+      data-entry-role={`resume-${role}`}
+      className="flex items-baseline gap-2 pl-9 opacity-60 text-[11px] italic text-zinc-500 dark:text-zinc-400"
+    >
+      <span className="shrink-0 not-italic font-mono text-[10px] uppercase tracking-wide text-zinc-400 dark:text-zinc-600">
+        resume
+      </span>
+      <span className="min-w-0 break-words">{entry.content}</span>
+    </div>
+  )
+}
+
+function EntryView({ entry, uuid, answered, prev }: { entry: Entry; uuid: string; answered: boolean; prev?: Entry }) {
   const [expanded, setExpanded] = useState(entry.kind !== 'tool_result')
 
   if (entry.kind === 'tool_use' && entry.toolName === 'AskUserQuestion') {
     return <AskUserQuestionCard uuid={uuid} contentJson={entry.content} answered={answered} />
   }
+
+  // Checked before the user/assistant branches so the harness's own half of a
+  // resume never gets a chat bubble.
+  const metaRole = resumeMetaRole(entry, prev)
+  if (metaRole) return <ResumeMetaEntry entry={entry} role={metaRole} />
 
   if (entry.kind === 'user') {
     return (
@@ -273,7 +303,7 @@ export function TranscriptPanePoll({ uuid, status, agentType }: Props) {
             e.kind === 'tool_use' && e.toolName === 'AskUserQuestion'
               ? entries.slice(idx + 1).some((later) => later.kind === 'tool_result')
               : false
-          return <EntryView key={e.seq} entry={e} uuid={uuid} answered={answered} />
+          return <EntryView key={e.seq} entry={e} uuid={uuid} answered={answered} prev={entries[idx - 1]} />
         })}
         {isThinking && entries.length > 0 && (
           <div className="flex items-center gap-2.5 pl-9 py-2 text-xs text-zinc-500 dark:text-zinc-400">

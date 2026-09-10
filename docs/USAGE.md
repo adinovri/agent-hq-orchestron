@@ -808,6 +808,29 @@ mid-run, or attach to watch it work.
   launch (bad model name, expired credentials) says why instead of just
   going red. A later successful turn clears it.
 
+#### Each resume shows up in the transcript, quietly
+
+`claude -p --resume` opens every turn after the first by injecting
+`Continue from where you left off.` as the user message; the model, with
+nothing pending, usually answers `No response requested.` Neither line was
+written by you or chosen by the agent, but both are genuinely in the
+rollout — and hiding one of them is what once made that reply appear to
+answer a question nobody asked.
+
+So the pane shows both, and styles them as what they are: a small italic
+`resume` aside rather than a chat turn, no avatar and no bubble. They stay
+in `GET /api/sessions/:uuid/transcript` untouched, so `orchestron session
+tail` and any other client still see a complete conversation — this is a
+rendering decision in the web pane, not a filter.
+
+It matters more than it sounds: there is exactly one such pair per resume,
+so on a chatty session with short turns it approaches half of everything in
+the pane. A five-turn session measured 8 of its 18 entries.
+
+The reply half is only treated this way when it sits **immediately after**
+the nudge. An agent that writes "No response requested." in a real answer
+keeps its bubble.
+
 #### How a headless agent asks you a question
 
 A tmux agent that needs input opens a selector modal in its pane, and

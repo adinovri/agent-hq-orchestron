@@ -52,6 +52,14 @@ run `pgrep -af 'claude -p'` during each turn and between them.
 - A `claude -p` process exists **only while a turn is running**. Between
   turns there is none.
 - Both turns are in the transcript as ordinary user/assistant pairs.
+- The resume exchange between them — `Continue from where you left
+  off.` and the model's `No response requested.` — is **present but
+  de-emphasised**: each renders as a small italic aside prefixed
+  `resume`, carrying `data-entry-role="resume-nudge"` and
+  `data-entry-role="resume-reply"`, with no avatar and no chat bubble.
+  Neither is missing from the transcript, and neither is styled as a
+  turn the operator or the agent chose to take. Assert on the
+  `data-entry-role` attribute, not on the classes.
 
 **📷 Screenshot**: `headless-01-two-turns.png` — the transcript showing
 both exchanges, with the header in `idle`.
@@ -333,6 +341,16 @@ Delete record.
 - **Quota is unchanged.** `claude -p` authenticates from the same
   `CLAUDE_CONFIG_DIR` credentials as the interactive TUI. Headless is
   not "the API-billing mode".
+- **Resume machinery is shown, not stripped.** Each `-p --resume`
+  injects `Continue from where you left off.` as the user turn and
+  draws `No response requested.` back. Both are real rollout entries
+  and the parser emits both (`b895d39`); hiding either is what made a
+  reply appear to answer nothing. Because it is exactly one pair per
+  resume, its share of the transcript grows with turn count — measured
+  at 8 of 18 entries in a five-turn session — so the pair is rendered
+  as a system aside rather than as two chat turns. The reply half is
+  recognised only when it sits immediately after the nudge, so a model
+  that writes that sentence in a genuine answer keeps its bubble.
 - **The transcript is the harness's.** Claude writes the same
   `<CLAUDE_CONFIG_DIR>/projects/<mangled-cwd>/<uuid>.jsonl` in `-p`
   mode as it does interactively; `codex exec` writes its rollout under
