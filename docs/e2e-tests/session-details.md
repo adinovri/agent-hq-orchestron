@@ -273,6 +273,13 @@ a value came from.
 - **Cost is USD-only** because `costUsd` is the only field on the
   record. It renders as `$0.1858` with a muted `USD` hint rather than
   pretending to be currency-aware.
+- **`costUsd` on the record is a headless-only floor, not a session
+  total.** It accumulates across turns as of the batch-2 follow-ups, but
+  a tmux session still records `0`: cost is parsed out of the headless
+  `-p` result envelope, which that path never produces. Do not build a
+  budget assertion on this field. `GET /api/metrics` prices tmux turns
+  from the JSONL and accumulates correctly — it is the authority for any
+  figure that has to be right.
 - **Codex sessions have no cost.** Orchestron's pricing table carries
   Claude tier rates and no codex entries, because ChatGPT
   Plus/Pro/Enterprise is flat-rate bundled. Treat codex sessions as

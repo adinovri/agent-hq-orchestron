@@ -1128,7 +1128,17 @@ export class SessionManager {
     const doc = parseHeadlessResultDocument(result.finalResponse)
     if (result.finalResponse != null) patched.finalResponse = doc.summary
     if (result.tokenUsage) patched.tokenUsage = result.tokenUsage
-    if (result.costUsd != null) patched.costUsd = result.costUsd
+    // Accumulate rather than overwrite. Each `-p --resume` turn is its own
+    // process, so `total_cost_usd` is that turn's total, not the session's:
+    // assigning it made turn 2 (0.0062) erase turn 1 (0.0204) and left the
+    // record reading as a fraction of what the session actually cost. Reset to
+    // null on respawn/fork, which is a new run and correctly starts at zero.
+    //
+    // This fixes the field, not the whole picture: a tmux session still records
+    // 0, because cost is parsed out of the headless result envelope that path
+    // never produces. /api/metrics prices tmux turns from the JSONL and is the
+    // authority for anything that has to be right — a budget gate included.
+    if (result.costUsd != null) patched.costUsd = (patched.costUsd ?? 0) + result.costUsd
 
     const ok = result.exitCode === 0 || interrupted
     // An inquiry from a turn that then failed is not actionable — the process

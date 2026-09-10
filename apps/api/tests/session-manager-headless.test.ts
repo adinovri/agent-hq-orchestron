@@ -464,3 +464,92 @@ describe('SessionManager — headless guards', () => {
     await expect(mgr.updateMetadata(s.id, { model: 'x' })).rejects.toThrow(/Cannot edit/i)
   })
 })
+
+describe('SessionManager — headless cost accounting (F7)', () => {
+  /** Adapter that finishes one turn per `releaseTurn()`, handing back the next
+   *  result in the queue. The shared helper's gate is one-shot, which is fine
+   *  for a single turn and useless for the thing under test here. */
+  function makeMultiTurnAdapter(results: HeadlessResult[]) {
+    const gates: Array<() => void> = []
+    let turn = 0
+    const handle: TmuxHandle = {
+      tmuxName: 'headless-abc12345',
+      claudeUuid: 'claude-uuid-1',
+      jsonlPath: '/tmp/claude-uuid-1.jsonl',
+      headless: true,
+    }
+    const adapter: AgentAdapter = {
+      name: 'claude',
+      spawn: vi.fn(async () => handle),
+      resume: vi.fn(async () => handle),
+      sendPrompt: vi.fn(),
+      waitTuiReady: vi.fn(),
+      kill: vi.fn().mockResolvedValue(undefined),
+      awaitHeadlessExit: vi.fn(async () => {
+        const mine = turn++
+        await new Promise<void>((r) => { gates[mine] = r })
+        return results[mine]!
+      }),
+    }
+    const releaseTurn = async (n: number) => {
+      // The gate is registered inside awaitHeadlessExit, which the manager
+      // calls detached, so the test can arrive first.
+      const deadline = Date.now() + 3_000
+      while (!gates[n] && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10))
+      gates[n]!()
+    }
+    return { adapter, releaseTurn }
+  }
+
+  it('adds each turn to the record instead of overwriting it', async () => {
+    // The values are the ones the 2026-09-10 sweep observed on session
+    // 7062c952: turn 2 came back cheaper than turn 1, and assigning it made
+    // the record read 0.0062 for a session that had cost 0.0266.
+    const { adapter, releaseTurn } = makeMultiTurnAdapter([
+      { exitCode: 0, finalResponse: 'turn one', costUsd: 0.0203927 },
+      { exitCode: 0, finalResponse: 'turn two', costUsd: 0.0061577 },
+    ])
+    const mgr = makeManager(adapter)
+    mgr.setProjectResolver(async () => ({ path: '/tmp/ws' }))
+
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    await releaseTurn(0)
+    const afterOne = await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle after turn 1')
+    expect(afterOne.costUsd).toBeCloseTo(0.0203927, 7)
+
+    await mgr.sendInput(s.id, 'and again')
+    await releaseTurn(1)
+    const afterTwo = await waitForRecord(
+      mgr, s.id,
+      (r) => r.status === 'idle' && (r.costUsd ?? 0) > 0.0203927,
+      'idle after turn 2',
+    )
+    expect(afterTwo.costUsd).toBeCloseTo(0.0265504, 7)
+  })
+
+  it('starts a turn from zero when the record has never been priced', async () => {
+    const { adapter, releaseTurn } = makeMultiTurnAdapter([
+      { exitCode: 0, finalResponse: 'only turn', costUsd: 0.5 },
+    ])
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    await releaseTurn(0)
+    const done = await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
+    // null + 0.5 must be 0.5, not NaN and not "0.5" — this is the branch that
+    // every single-turn session takes.
+    expect(done.costUsd).toBe(0.5)
+  })
+
+  it('leaves the record unpriced when the turn reported no cost', async () => {
+    // A turn that never reported a figure must not invent 0 where null means
+    // "not known" — /api/metrics can still price it from the JSONL.
+    const { adapter, releaseTurn } = makeMultiTurnAdapter([
+      { exitCode: 0, finalResponse: 'no envelope' },
+    ])
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    await releaseTurn(0)
+    const done = await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
+    expect(done.costUsd).toBeNull()
+  })
+})
