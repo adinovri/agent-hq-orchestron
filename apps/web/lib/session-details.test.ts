@@ -29,6 +29,10 @@ function session(over: Partial<SessionMetadata> = {}): SessionMetadata {
   } as SessionMetadata
 }
 
+/** Shape the API actually persists for a headless spawn — see
+ *  `spawnHeadless` in apps/api/src/adapters/claude.ts. */
+const HEADLESS_TMUX_NAME = 'headless-52de306e'
+
 const titles = (s: DetailSection[]) => s.map((x) => x.title)
 const section = (s: DetailSection[], title: string) => s.find((x) => x.title === title)
 const labels = (s: DetailSection[], title: string) => section(s, title)?.rows.map((r) => r.label) ?? []
@@ -75,7 +79,9 @@ describe('buildSessionDetailSections', () => {
 
   it('drops the Commands section entirely for a headless session with no transcript', () => {
     const out = buildSessionDetailSections({
-      session: session({ useTmux: false, tmuxName: '', claudeSessionUuid: '' }),
+      // HEADLESS_TMUX_NAME, not '' — a headless record really does carry a
+      // name. Fixturing it blank is what let the tmux row ship visible.
+      session: session({ useTmux: false, tmuxName: HEADLESS_TMUX_NAME, claudeSessionUuid: '' }),
       projectName: 'Sacred HL',
     })
     expect(titles(out)).toEqual(['Identity', 'Location', 'Timing'])
@@ -86,10 +92,40 @@ describe('buildSessionDetailSections', () => {
 
   it('keeps resume but not attach when a headless session has a transcript', () => {
     const out = buildSessionDetailSections({
-      session: session({ useTmux: false, tmuxName: '' }),
+      session: session({ useTmux: false, tmuxName: HEADLESS_TMUX_NAME }),
     })
     expect(labels(out, 'Commands')).toEqual(['resume'])
     expect(labels(out, 'Location')).toEqual(['project'])
+  })
+
+  /**
+   * A headless session has no tmux window, but its record still has a
+   * `tmuxName`: the API mints `headless-<uuid8>` as the ownership token
+   * `stillOwns()` matches against, and keys the child registry on it.
+   * Testing `session.tmuxName` therefore answers the wrong question, and
+   * the panel showed both an attach command that cannot work and a name
+   * with nothing behind it. Guard on the mode instead.
+   */
+  it('hides the tmux name and attach command when the record is headless', () => {
+    const out = buildSessionDetailSections({
+      session: session({ useTmux: false, tmuxName: HEADLESS_TMUX_NAME }),
+      projectPath: '/home/a/work',
+    })
+    expect(labels(out, 'Location')).toEqual(['project', 'workspace'])
+    expect(row(out, 'Location', 'tmux')).toBeUndefined()
+    expect(labels(out, 'Commands')).toEqual(['resume'])
+    expect(row(out, 'Commands', 'attach')).toBeUndefined()
+    // Nothing anywhere in the panel leaks the synthetic name.
+    const values = out.flatMap((sec) => sec.rows).flatMap((r) => [r.value, r.copy ?? ''])
+    expect(values.some((v) => v.includes(HEADLESS_TMUX_NAME))).toBe(false)
+  })
+
+  it('still shows tmux rows for a codex session, which mints its own name', () => {
+    const out = buildSessionDetailSections({
+      session: session({ agentType: 'codex', useTmux: true, tmuxName: 'orchestron-codex-abc123' }),
+    })
+    expect(row(out, 'Location', 'tmux')?.value).toBe('orchestron-codex-abc123')
+    expect(row(out, 'Commands', 'attach')?.value).toBe('tmux attach -rt orchestron-codex-abc123')
   })
 
   it('reads a missing useTmux as tmux so legacy records are not relabelled', () => {
@@ -168,5 +204,8 @@ describe('resumeCommandFor / attachCommandFor', () => {
   it('returns null rather than a half-formed command', () => {
     expect(resumeCommandFor(session({ claudeSessionUuid: '' }))).toBeNull()
     expect(attachCommandFor(session({ tmuxName: '' }))).toBeNull()
+    expect(attachCommandFor(session({ useTmux: false, tmuxName: HEADLESS_TMUX_NAME }))).toBeNull()
+    // `undefined` is a legacy tmux record, not a headless one.
+    expect(attachCommandFor(session({ useTmux: undefined }))).toBe('tmux attach -rt orchestron-sess-1')
   })
 })
