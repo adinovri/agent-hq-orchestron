@@ -16,9 +16,9 @@ import type { AgentAdapter, TmuxHandle } from '@agent-hq-orchestron/shared'
 /**
  * `useTmux` on POST /api/sessions/adopt.
  *
- * Adopt is not a revival: it creates the record, so the field is a plain
- * two-state with tmux as the absent-value default, not the tri-state the
- * reopen/fork/respawn routes carry. What earns a suite of its own is the
+ * Adopt is not a revival: it creates the record, so an absent field falls
+ * to the project's `defaultUseTmux` the way spawn does, rather than to a
+ * previous mode the way reopen/fork/respawn do. What earns a suite of its own is the
  * headless branch launching NOTHING — the assertions below pin that the
  * adapter is never asked to resume, because "adopted headless" quietly
  * spawning a tmux would look identical from the record alone.
@@ -59,7 +59,10 @@ function makeAdapter(): AgentAdapter {
   }
 }
 
-async function makeApp(enableHeadlessMode = true): Promise<Harness> {
+async function makeApp(
+  enableHeadlessMode = true,
+  projectDefaultUseTmux?: boolean,
+): Promise<Harness> {
   const adapter = makeAdapter()
   const adapterRegistry = new AdapterRegistry()
   adapterRegistry.register('claude', adapter)
@@ -83,6 +86,10 @@ async function makeApp(enableHeadlessMode = true): Promise<Harness> {
   const project = await registry.create({
     name: 'Adopt', path: workspace, agentType: 'claude',
     agentConfig: { env: { CLAUDE_CONFIG_DIR: configDir } },
+    // Left undefined by default — a project that expresses no preference,
+    // which is what every test written before the default was sourced from
+    // the project assumes.
+    ...(projectDefaultUseTmux === undefined ? {} : { defaultUseTmux: projectDefaultUseTmux }),
   })
   return { app, projectId: project.id, adapter }
 }
@@ -178,7 +185,52 @@ describe('POST /api/sessions/adopt — useTmux', () => {
   })
 })
 
+describe('POST /api/sessions/adopt — the project default fills the absent field', () => {
+  it('adopts headless when the project runs headless', async () => {
+    harness = await makeApp(true, false)
+    const res = await adopt({})
+    expect(res.statusCode).toBe(201)
+    expect(res.json().useTmux).toBe(false)
+    // Really headless, not just labelled: nothing was launched.
+    expect(harness.adapter.resume).not.toHaveBeenCalled()
+  })
+
+  it('adopts into tmux when the project says tmux', async () => {
+    harness = await makeApp(true, true)
+    const res = await adopt({})
+    expect(res.json().useTmux).toBe(true)
+    expect(harness.adapter.resume).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets an explicit tmux beat a headless project', async () => {
+    harness = await makeApp(true, false)
+    const res = await adopt({ useTmux: true })
+    expect(res.json().useTmux).toBe(true)
+    expect(harness.adapter.resume).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets an explicit headless beat a tmux project', async () => {
+    harness = await makeApp(true, true)
+    const res = await adopt({ useTmux: false })
+    expect(res.json().useTmux).toBe(false)
+    expect(harness.adapter.resume).not.toHaveBeenCalled()
+  })
+})
+
 describe('POST /api/sessions/adopt — the kill switch', () => {
+  it('coerces a headless project default too, and says so', async () => {
+    // The switch masks what the project configured exactly as it masks a
+    // typed request — otherwise flipping it off would leave every adopt in
+    // a headless project running headless.
+    harness = await makeApp(false, false)
+    const res = await adopt({})
+    expect(res.statusCode).toBe(201)
+    expect(res.json().useTmux).toBe(true)
+    expect(res.json().coerced).toEqual({ useTmux: true, reason: HEADLESS_COERCED_REASON })
+    expect(harness.adapter.resume).toHaveBeenCalledTimes(1)
+  })
+
+
   it('coerces a headless adopt to tmux and says so', async () => {
     harness = await makeApp(false)
     const res = await adopt({ useTmux: false })

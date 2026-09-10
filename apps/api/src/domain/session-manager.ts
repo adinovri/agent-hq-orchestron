@@ -2076,7 +2076,11 @@ export class SessionManager {
    * conversation is one transcript store that `-p` and the interactive TUI
    * scan identically, so a session started headless can be adopted into tmux
    * and vice versa (the same cross-mode result Phase 2 measured for reopen).
-   * Absent means tmux, which is what every adopt did before the field.
+   * Absent means tmux here, which is what every adopt did before the field
+   * existed. The manager has no project record to consult — both the adopt
+   * and import routes resolve the destination project's `defaultUseTmux`
+   * before calling, so an absent value reaching this far is a caller that
+   * bypassed them.
    *
    * Adopting into tmux spawns a fresh window with the harness's native resume
    * flag. Adopting into headless spawns NOTHING — a headless session only
@@ -2111,7 +2115,9 @@ export class SessionManager {
     effort?: import('@agent-hq-orchestron/shared').EffortLevel
     harnessSessionId: string
     /** Mode for the adopted record. `undefined` means tmux — every adopt
-     *  predating this field spawned one. Runs through the global switch. */
+     *  predating this field spawned one, and the routes have already
+     *  folded in the project default by the time they call. Runs through
+     *  the global switch. */
     useTmux?: boolean
   }): Promise<SessionMetadata> {
     return this.withLock(`adopt:${config.harnessSessionId}`, () => this._adoptUnlocked(config))

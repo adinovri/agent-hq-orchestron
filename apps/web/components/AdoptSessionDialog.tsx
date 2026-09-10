@@ -18,6 +18,9 @@ interface ProjectSummary {
    *  (CLAUDE_CONFIG_DIR for claude, CODEX_HOME for codex). Falls back to
    *  the harness default when unset so the UI hint stays accurate. */
   configDir?: string
+  /** Project's configured run mode. Undefined means the project expresses
+   *  no preference, which reads as tmux. */
+  defaultUseTmux?: boolean
 }
 
 interface Props {
@@ -44,11 +47,13 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
   const [uuid, setUuid] = useState<string>('')
   const [validation, setValidation] = useState<ValidateResult | null>(null)
   const [validating, setValidating] = useState(false)
-  // Default tmux. Adopt has no source mode to inherit — the record is being
-  // created here — and the user often does not know how the session they are
-  // adopting was started. tmux is the mode that works for every conversation
-  // and the one every adopt produced before this checkbox existed.
-  const [useTmux, setUseTmux] = useState(true)
+  // null = untouched, so the selected project's default shows through and
+  // keeps updating if the user switches project. Same shape as the spawn
+  // dialog: derived rather than mirrored into state via an effect, so there
+  // is no cascading render and no stale value. Adopt has no source mode to
+  // inherit — the record is created here — so the project's setting is the
+  // only default with anything behind it.
+  const [useTmuxOverride, setUseTmuxOverride] = useState<boolean | null>(null)
   const headlessEnabled = useHeadlessEnabled()
 
   useEffect(() => {
@@ -56,12 +61,18 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
       setProjectId(eligible[0]?.id ?? '')
       setUuid('')
       setValidation(null)
-      setUseTmux(true)
+      setUseTmuxOverride(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   const currentProject = eligible.find((p) => p.id === projectId)
+  // `?? true`: a project with no stored preference means tmux.
+  const projectDefaultUseTmux = currentProject?.defaultUseTmux ?? true
+  // With the global switch off, tmux is the only reachable value — force it
+  // over both the user's override and a headless project default. The
+  // checkbox is hidden in that state, so this only feeds the helper text.
+  const useTmux = headlessEnabled ? (useTmuxOverride ?? projectDefaultUseTmux) : true
 
   const doValidate = async () => {
     if (!projectId || !uuid.trim()) {
@@ -89,13 +100,19 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
       const res = await apiFetch(`/api/sessions/adopt`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        // Omitted while the switch is off: the control is not rendered, so
-        // there is no user choice to transmit and the server's own coercion
-        // is the whole story.
+        // Sent only when it differs from the project default, so the
+        // project stays the one place the default lives and the server
+        // resolves it. Must not use `||` anywhere near this — false is
+        // the payload.
+        //
+        // Omitted outright while the switch is off: the control is not
+        // rendered, so there is no user choice to transmit, and letting the
+        // server coerce the project's own headless default is what puts
+        // `coerced` on the response — which is how the user finds out.
         body: JSON.stringify({
           projectId,
           harnessSessionId: uuid.trim(),
-          ...(headlessEnabled ? { useTmux } : {}),
+          ...(headlessEnabled && useTmux !== projectDefaultUseTmux ? { useTmux } : {}),
         }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
@@ -226,7 +243,7 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
                   type="checkbox"
                   checked={useTmux}
                   disabled={adoptMutation.isPending}
-                  onChange={(e) => setUseTmux(e.target.checked)}
+                  onChange={(e) => setUseTmuxOverride(e.target.checked)}
                   className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-violet-600 disabled:opacity-60"
                 />
                 <span>
@@ -236,7 +253,9 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
                       ? 'Resumes now in an interactive tmux session — live transcript, attach, sleeps when idle.'
                       : `Adopts headless: nothing starts until you send a message, and each turn then runs as its own ${currentProject?.agentType === 'codex' ? 'codex exec' : 'claude -p'} process.`}
                     <span className="block italic">
-                      The source session&apos;s own mode does not constrain this — one transcript store, read the same way by both.
+                      {useTmux !== projectDefaultUseTmux
+                        ? 'Overrides the project default.'
+                        : 'Follows the project default. The source session’s own mode does not constrain it — one transcript store, read the same way by both.'}
                     </span>
                   </span>
                 </span>

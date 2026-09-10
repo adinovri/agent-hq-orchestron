@@ -757,15 +757,28 @@ export function sessionsPlugin(
         throw err
       }
 
-      // Same masking flavour as spawn: an explicit headless adopt made while
-      // the switch is off becomes a tmux adopt and succeeds, and the response
-      // says so. The manager coerces again on its own — this pass exists to
-      // produce the `coerced` payload the dialog turns into a toast.
+      // Absent means "whatever this project runs in", exactly as it does on
+      // spawn. Adopt has no source mode to preserve — the record is created
+      // here — so the project's configured policy is the only default with
+      // anything behind it, and a flat tmux would quietly ignore an operator
+      // who set the project headless. Still tmux when the project sets
+      // nothing, which is what every adopt did before either field existed.
+      const requestedUseTmux = body.data.useTmux ?? project.defaultUseTmux
+      // Same masking flavour as spawn: a headless adopt made while the switch
+      // is off becomes a tmux adopt and succeeds, and the response says so.
+      // The manager coerces again on its own — this pass exists to produce
+      // the `coerced` payload the dialog turns into a toast.
       const { useTmux: adoptUseTmux, coerced: adoptCoerced } =
-        applyHeadlessSwitch(body.data.useTmux, headlessEnabled)
+        applyHeadlessSwitch(requestedUseTmux, headlessEnabled)
       if (adoptCoerced) {
         req.log.info(
-          { projectId: project.id, harnessSessionId: body.data.harnessSessionId, requestedUseTmux: false, effectiveUseTmux: true },
+          {
+            projectId: project.id,
+            harnessSessionId: body.data.harnessSessionId,
+            source: body.data.useTmux === undefined ? 'project' : 'request',
+            requestedUseTmux: false,
+            effectiveUseTmux: true,
+          },
           `coerced useTmux=false to true (${HEADLESS_COERCED_REASON})`,
         )
       }
