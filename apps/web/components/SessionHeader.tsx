@@ -10,6 +10,7 @@ import { useState } from 'react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 import { apiFetch } from '@/lib/fetcher'
 import { useHeadlessBadgeVisible } from '@/lib/server-config'
+import { buildSessionDetailSections } from '@/lib/session-details'
 
 interface Props {
   session: SessionMetadata
@@ -293,54 +294,52 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
               {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
             {expanded && (
-              <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 space-y-0.5 font-mono break-all">
-                <div>
-                  id: {session.id}
-                  <CopyButton value={session.id} label="session id" />
-                </div>
-                <div>project: {projectName ?? session.projectId}</div>
-                <div>agent: {session.agentType}</div>
-                {session.claudeSessionUuid && (() => {
-                  const resumeCmd = session.agentType === 'codex'
-                    ? `codex resume ${session.claudeSessionUuid}`
-                    : `claude --resume ${session.claudeSessionUuid}`
-                  return (
-                    <>
-                      <div title={`Resume: ${resumeCmd}`}>
-                        {session.agentType} session: {session.claudeSessionUuid}
-                        <CopyButton value={session.claudeSessionUuid} label="harness session id" />
-                      </div>
-                      <div title="Full resume command">
-                        resume: <span className="text-zinc-600 dark:text-zinc-300">{resumeCmd}</span>
-                        <CopyButton value={resumeCmd} label="resume command" />
-                      </div>
-                    </>
-                  )
-                })()}
-                {projectPath && (
-                  <div title="Workspace directory — cd here before running the resume command">
-                    workspace: {projectPath}
-                    <CopyButton value={projectPath} label="workspace path" />
-                  </div>
-                )}
-                {session.tmuxName && (() => {
-                  const attachCmd = `tmux attach -rt ${session.tmuxName}`
-                  return (
-                    <>
-                      <div title={`Attach read-only: ${attachCmd}`}>
-                        tmux: {session.tmuxName}
-                        <CopyButton value={session.tmuxName} label="tmux name" />
-                      </div>
-                      <div title="Full read-only attach command">
-                        attach: <span className="text-zinc-600 dark:text-zinc-300">{attachCmd}</span>
-                        <CopyButton value={attachCmd} label="attach command" />
-                      </div>
-                    </>
-                  )
-                })()}
-                <div>started: {new Date(session.startedAt).toLocaleString()}</div>
-                {session.endedAt && <div>ended: {new Date(session.endedAt).toLocaleString()}</div>}
-                {session.costUsd != null && <div>cost: ${session.costUsd.toFixed(4)}</div>}
+              <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800 space-y-3">
+                {buildSessionDetailSections({
+                  session,
+                  projectName,
+                  projectPath,
+                  effectiveModel,
+                  effectiveEffort,
+                  modelHint: modelFromHarness ? `harness default (${session.agentType})`
+                    : modelFromProject ? 'project default'
+                    : undefined,
+                  effortHint: effortFromHarness ? `harness default (${session.agentType})`
+                    : effortFromProject ? 'project default'
+                    : undefined,
+                }).map((section) => (
+                  <section key={section.title}>
+                    <h3 className="text-[10px] font-medium uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+                      {section.title}
+                    </h3>
+                    <dl className="mt-1 space-y-2 sm:space-y-0.5">
+                      {section.rows.map((row) => (
+                        <div
+                          key={row.label}
+                          title={row.title}
+                          className="sm:grid sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:gap-x-3"
+                        >
+                          <dt className="text-xs text-zinc-400 dark:text-zinc-500 sm:text-right">
+                            {row.label}
+                          </dt>
+                          <dd className="mt-0.5 sm:mt-0 flex items-start gap-1 min-w-0 text-xs text-zinc-600 dark:text-zinc-300">
+                            <span className={`min-w-0 break-words ${row.mono ? 'font-mono' : ''}`}>
+                              {row.value}
+                            </span>
+                            {row.hint && (
+                              <span className="shrink-0 italic text-zinc-400 dark:text-zinc-500">
+                                {row.hint}
+                              </span>
+                            )}
+                            {row.copy && (
+                              <CopyButton value={row.copy} label={row.copyLabel ?? row.label} />
+                            )}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </section>
+                ))}
               </div>
             )}
           </div>
