@@ -2,8 +2,9 @@
 
 A headless session is not a cheaper tmux session — it is a different
 shape. One `claude -p` / `codex exec` child **per turn**, nothing held
-between turns, no pane to attach to, no sleeping. It is still multi-turn
-and it still only reaches a terminal state when you Kill or Archive it.
+between turns, no pane to attach to, and a sleep that is symbolic — the
+record moves, nothing is released. It is still multi-turn and it still
+only reaches a terminal state when you Kill or Archive it.
 
 Spec: [USAGE.md § Headless mode](../USAGE.md#headless-mode-no-tmux) ·
 [USAGE.md § How a headless agent asks you a question](../USAGE.md#how-a-headless-agent-asks-you-a-question)
@@ -275,12 +276,55 @@ would let a pile of finished sessions block new spawns for nothing.
   no tmux, no pty and no pid, so it is not counted.
 - Sending a turn into several of the resting sessions at once *does*
   count them again — the slot is held only while a turn is in flight.
+- Leaving one long enough to be swept to `sleeping` changes nothing
+  here: that sleep released nothing, so it was never holding a slot.
 
 > On a host with a large `maxConcurrent` this is slow and costs quota.
 > Treat it as a full-sweep scenario, not a smoke one, and consider
 > lowering `maxConcurrent` for the run.
 
 **Cleanup**: Archive and Delete record on all of them.
+
+---
+
+### HEADLESS-09 — Symbolic sleeping, and the wake that costs nothing
+
+**Covers**: the idle sweeper on the headless path. A headless session
+sleeps like a tmux one so the dashboard can tell "finished a turn a
+second ago" from "abandoned since yesterday" — but where the tmux sweep
+kills a window, this one only writes the record.
+
+**Setup**: `idleTimeoutMs` low enough to observe — 60000 (1 min) in
+`~/.orchestron/config.json`, API restarted. Restore afterwards.
+
+**Steps**
+
+1. Spawn a headless session, let the first turn land in `idle`.
+2. Note `tmux list-windows -a` — the session has no window, and must
+   not gain one.
+3. Wait out the timeout without touching the session.
+4. Send a follow-up turn.
+
+**Expect**
+
+- After the timeout the card shows the **Sleeping** badge, same indigo
+  as a sleeping tmux session. The **Headless** badge stays.
+- No tmux window appears or disappears across the whole scenario; the
+  API log shows no kill for this session.
+- The input box stays **enabled** while it sleeps, hinting that sending
+  wakes it and naming no cold start.
+- The follow-up runs immediately — `sleeping → idle → running` with no
+  `spawning` in between, and no ~3s wake delay. The transcript carries
+  on the same conversation.
+- The ✎ pencil is available while sleeping, but its **Use tmux**
+  checkbox is greyed out and names Reopen / Fork / Respawn — waking
+  takes no spawn, so a mode flip there could never become real. Model
+  and Effort still save.
+- After the second turn lands, the session sleeps again on the same
+  timeout.
+
+**Cleanup**: restore `idleTimeoutMs`, restart the API, then Archive and
+Delete record.
 
 ---
 
