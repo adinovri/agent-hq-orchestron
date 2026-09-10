@@ -402,8 +402,16 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
                 : effortFromProject ? 'project default'
                 : undefined,
             }).map((section) => (
-              <section key={section.title}>
-                <h3 className="text-[10px] font-medium uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+              // A rule between groups, not just a gap: at `space-y-3` the
+              // 12px between sections was the same order as the gap between
+              // rows, so the four groups read as one flat list. `pt-3` puts
+              // the same 12px on the far side of the rule, which centres it
+              // between the groups it divides.
+              <section
+                key={section.title}
+                className="border-t border-zinc-100 pt-3 first:border-0 first:pt-0 dark:border-zinc-800"
+              >
+                <h3 className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-zinc-400">
                   {section.title}
                 </h3>
                 <dl className="mt-1 space-y-2 sm:space-y-0.5">
