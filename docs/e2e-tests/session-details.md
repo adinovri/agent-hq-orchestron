@@ -284,8 +284,12 @@ a value came from.
   headless session.** They are two different measurements: the record
   sums the harness-reported `total_cost_usd` of each `-p` envelope, while
   `/api/metrics` prices the JSONL token counts against Orchestron's own
-  rate table. Measured over the 2026-09-10 sweep the record ran 12–25%
-  *under* the endpoint, and the gap widened with turn count. Neither is
+  rate table. The record runs *under* the endpoint: 12–25% over the
+  2026-09-10 sweep, 2.8–26.6% over the 2026-09-11 one. **The size of the
+  gap does not track turn count** — the 2026-09-11 sweep put two
+  single-turn sessions at opposite ends of that spread (−2.8% and
+  −26.6%) with the five-turn session in between, so treat the gap as a
+  range, not as something that grows with the session. Neither figure is
   wrong; they are simply not interchangeable, so reconciling them is not
   a bug hunt worth starting. **Gate budgets on `/api/metrics`.**
 - **Codex sessions have no cost.** Orchestron's pricing table carries
