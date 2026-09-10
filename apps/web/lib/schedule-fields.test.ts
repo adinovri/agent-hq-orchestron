@@ -1,21 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import {
-  scheduleFieldDefaults,
-  defaultRowLabel,
   buildSchedulePayload,
   scheduleOverrideBadges,
   type ScheduleFormValues,
-  type ScheduleProjectOption,
 } from './schedule-fields'
 
-const claudeProject: ScheduleProjectOption = {
-  id: 'p1', name: 'Claude project', agentType: 'claude',
-  defaultModel: 'claude-opus-5', defaultEffort: 'high', defaultUseTmux: false,
-}
-
-const bareCodexProject: ScheduleProjectOption = {
-  id: 'p2', name: 'Codex project', agentType: 'codex',
-}
+// The project-shaped helpers the form also uses — what a field left on
+// "Default" resolves to, and how that is labelled — live in lib/project-info
+// and are covered by project-info.test.ts.
 
 const form = (over: Partial<ScheduleFormValues> = {}): ScheduleFormValues => ({
   projectId: 'p1',
@@ -26,52 +18,6 @@ const form = (over: Partial<ScheduleFormValues> = {}): ScheduleFormValues => ({
   effort: '',
   useTmuxOverride: null,
   ...over,
-})
-
-describe('scheduleFieldDefaults', () => {
-  it("reports the project's own settings when it has them", () => {
-    expect(scheduleFieldDefaults(claudeProject)).toEqual({
-      model: 'claude-opus-5', modelSource: 'project',
-      effort: 'high', effortSource: 'project',
-      useTmux: false,
-    })
-  })
-
-  it('falls back to the harness defaults for a project that pins nothing', () => {
-    expect(scheduleFieldDefaults(bareCodexProject)).toEqual({
-      model: 'gpt-6-astra', modelSource: 'harness',
-      effort: 'medium', effortSource: 'harness',
-      useTmux: true,
-    })
-  })
-
-  it('changes with the project, which is what re-labels the dropdowns', () => {
-    expect(scheduleFieldDefaults(claudeProject).model)
-      .not.toBe(scheduleFieldDefaults(bareCodexProject).model)
-  })
-
-  it('leaves the model unknown for a claude project with no default', () => {
-    // The harness fallback there depends on the operator's own settings, so
-    // the dialog shows a blank rather than guessing.
-    const d = scheduleFieldDefaults({ id: 'p3', name: 'Bare', agentType: 'claude' })
-    expect(d.model).toBeUndefined()
-    expect(d.useTmux).toBe(true)
-  })
-
-  it('treats no project at all as the empty case', () => {
-    expect(scheduleFieldDefaults(undefined).useTmux).toBe(true)
-  })
-})
-
-describe('defaultRowLabel', () => {
-  it('names the value the schedule will fire with, and where it came from', () => {
-    expect(defaultRowLabel('claude-opus-5', 'project')).toBe('Default — claude-opus-5 (project)')
-    expect(defaultRowLabel('gpt-6-astra', 'harness')).toBe('Default — gpt-6-astra (harness)')
-  })
-
-  it('falls back to a bare label when there is no value to name', () => {
-    expect(defaultRowLabel(undefined, 'harness')).toBe('Default (project setting)')
-  })
 })
 
 describe('buildSchedulePayload — create', () => {
