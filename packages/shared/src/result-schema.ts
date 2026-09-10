@@ -148,7 +148,15 @@ export function parseHeadlessResultDocument(raw: string | undefined | null): Hea
 export const STRUCTURED_OUTPUT_TOOL_NAME = 'StructuredOutput'
 
 /** The tool_result Claude Code writes back after accepting the document.
- *  Fixed string in the CLI bundle, not model-authored. */
+ *  Fixed string in the CLI bundle, not model-authored.
+ *
+ *  It is **not** the only thing that comes back. When the document fails the
+ *  schema the harness writes a rejection instead — `Output does not match
+ *  required schema: root: must have required property 'summary'` — carried on
+ *  an `is_error: true` result the rollout parser does not preserve. Matching
+ *  this string alone therefore only ever caught the happy path; the pairing
+ *  rule in the normaliser is what covers both. Kept as a second line of
+ *  defence for a result that arrives without its call. */
 const STRUCTURED_OUTPUT_TOOL_RESULT = 'Structured output provided successfully'
 
 /** Prefix of the nudge Claude Code injects **as a user turn** when the model
@@ -193,6 +201,26 @@ function isExactResultDocument(text: string): boolean {
   return keys.every((k) => k === 'summary' || k === 'inquiry')
 }
 
+/** The `summary` of a document we can actually render, or `null`.
+ *
+ *  Distinct from `parseHeadlessResultDocument`, which is a forgiving reader:
+ *  handed a payload with no `summary` key it returns the raw text, so a caller
+ *  that trusts it renders the JSON envelope. That is fine for a final result —
+ *  something is better than nothing — and wrong for the transcript, where the
+ *  envelope is precisely what must never be shown. Here a payload that is not
+ *  an object with a string `summary` has nothing to promote. */
+function promotableSummary(text: string): string | null {
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('{')) return null
+  let doc: unknown
+  try { doc = JSON.parse(trimmed) } catch { return null }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return null
+  const summary = (doc as Record<string, unknown>)['summary']
+  if (typeof summary !== 'string') return null
+  const t = summary.trim()
+  return t ? t : null
+}
+
 /**
  * Strip the structured-output plumbing out of a headless transcript.
  *
@@ -209,11 +237,18 @@ function isExactResultDocument(text: string): boolean {
  * The two therefore need opposite treatment, which is why this is one pass
  * over the entries rather than a per-entry filter:
  *
- *  - A `StructuredOutput` tool_use that follows the model's own prose is pure
- *    duplication → dropped. When there is no prose (the model answered only
+ *  - A `StructuredOutput` tool_use is machinery whatever its payload says, so
+ *    it never reaches the pane. Following the model's own prose it is pure
+ *    duplication → dropped. With no prose before it (the model answered only
  *    through the tool) its `summary` is promoted to an assistant message, so
- *    the turn is never rendered empty.
- *  - The canned tool_result is always dropped.
+ *    the turn is never rendered empty — but only when the payload really
+ *    carries one. A call the harness *rejected* has no summary to promote, and
+ *    falling back to its raw text would render the JSON envelope this pass
+ *    exists to hide, so that call is dropped outright.
+ *  - The tool_result answering a `StructuredOutput` call goes with it,
+ *    acceptance or rejection alike. Only the accepted wording is a fixed
+ *    string; a schema rejection is generated text and cannot be matched by
+ *    content, so the pairing is what makes it reliable.
  *  - An assistant message that is exactly a result document is rewritten to
  *    its `summary` — the Codex case.
  *  - A `[structured-output-enforce]` user turn — Claude Code nudging the model
@@ -264,11 +299,19 @@ export function normalizeStructuredOutputTranscript<T extends TranscriptEntryLik
     }
 
     if (entry.kind === 'tool_use' && entry.toolName === STRUCTURED_OUTPUT_TOOL_NAME) {
+      // Every call gets an answer written back. Take it with the call rather
+      // than by its wording: acceptance is a fixed string, but a schema
+      // rejection is generated prose and would otherwise survive.
+      if (entries[i + 1]?.kind === 'tool_result') i++
+
       const prev = out[out.length - 1]
       const prosePrecedes = prev?.kind === 'assistant' && prev.content.trim().length > 0
       if (prosePrecedes) continue
 
-      const summary = parseHeadlessResultDocument(entry.content).summary.trim()
+      // Nothing to promote from a payload the schema turned down. Dropping it
+      // can cost at most a turn that renders empty; the alternative costs the
+      // operator a wall of raw JSON, which is the bug.
+      const summary = promotableSummary(entry.content)
       if (!summary) continue
       out.push({ ...entry, kind: 'assistant', toolName: undefined, content: summary })
       continue

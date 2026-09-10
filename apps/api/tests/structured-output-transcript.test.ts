@@ -334,3 +334,132 @@ describe('normalizeStructuredOutputTranscript — the enforcement turn (F2)', ()
     expect(normalizeStructuredOutputTranscript(tmux)).toEqual(tmux)
   })
 })
+
+describe('normalizeStructuredOutputTranscript — a rejected call (NF4)', () => {
+  /** Verbatim from the sweep on 2026-09-10: the model's first
+   *  `StructuredOutput` call omitted `summary`, so the harness rejected it and
+   *  asked again. Both halves of that exchange rendered — a wall of raw JSON
+   *  followed by a schema error, neither of them addressed to the operator. */
+  const REJECTION =
+    "Output does not match required schema: root: must have required property 'summary'"
+
+  /** The payload that provoked it: an inquiry with no summary alongside it. */
+  const INVALID_DOC = JSON.stringify({
+    inquiry: {
+      message: 'I need to know where you want to deploy before we proceed.',
+      fields: [{ name: 'environment', label: 'Environment', type: 'choice', options: ['dev', 'stg'] }],
+    },
+  })
+
+  it('strips the rejected call and the rejection, promoting nothing', () => {
+    const out = normalizeStructuredOutputTranscript([
+      entry({ seq: 0, kind: 'user', content: 'Deploy the thing.' }),
+      entry({ seq: 1, kind: 'tool_use', toolName: STRUCTURED_OUTPUT_TOOL_NAME, content: INVALID_DOC }),
+      entry({ seq: 2, kind: 'tool_result', content: REJECTION }),
+    ])
+    // Only the operator's own turn survives. An empty turn is the acceptable
+    // cost; the raw envelope is not.
+    expect(out.map((e) => e.kind)).toEqual(['user'])
+  })
+
+  it('leaves no raw JSON and no schema error in the pane', () => {
+    const out = normalizeStructuredOutputTranscript([
+      entry({ seq: 0, kind: 'assistant', content: 'Working on it.' }),
+      entry({ seq: 1, kind: 'tool_use', toolName: STRUCTURED_OUTPUT_TOOL_NAME, content: INVALID_DOC }),
+      entry({ seq: 2, kind: 'tool_result', content: REJECTION }),
+    ])
+    const all = out.map((e) => e.content).join('\n')
+    expect(all).not.toContain('"inquiry"')
+    expect(all).not.toContain('does not match required schema')
+    expect(out.map((e) => e.content)).toEqual(['Working on it.'])
+  })
+
+  it('drops a tool_result whatever it says, as long as it answers our call', () => {
+    // The wording is model- and harness-dependent; the pairing is not.
+    const out = normalizeStructuredOutputTranscript([
+      entry({ seq: 0, kind: 'tool_use', toolName: STRUCTURED_OUTPUT_TOOL_NAME, content: DOC_JSON }),
+      entry({ seq: 1, kind: 'tool_result', content: 'some future wording nobody has seen yet' }),
+    ])
+    expect(out.map((e) => e.kind)).toEqual(['assistant'])
+    expect(out[0]!.content).toBe('Listed what I can do.')
+  })
+
+  it('survives the retry: the accepted call is what reaches the pane', () => {
+    // The real multi-entry shape — reject, retry, accept.
+    const out = normalizeStructuredOutputTranscript([
+      entry({ seq: 0, kind: 'user', content: 'Deploy the thing.' }),
+      entry({ seq: 1, kind: 'tool_use', toolName: STRUCTURED_OUTPUT_TOOL_NAME, content: INVALID_DOC }),
+      entry({ seq: 2, kind: 'tool_result', content: REJECTION }),
+      entry({ seq: 3, kind: 'tool_use', toolName: STRUCTURED_OUTPUT_TOOL_NAME, content: DOC_JSON }),
+      entry({ seq: 4, kind: 'tool_result', content: 'Structured output provided successfully' }),
+    ])
+    expect(out.map((e) => e.kind)).toEqual(['user', 'assistant'])
+    expect(out[1]!.content).toBe('Listed what I can do.')
+  })
+
+  it('drops a payload that is not JSON at all rather than rendering it', () => {
+    const out = normalizeStructuredOutputTranscript([
+      entry({ seq: 0, kind: 'user', content: 'go' }),
+      entry({ seq: 1, kind: 'tool_use', toolName: STRUCTURED_OUTPUT_TOOL_NAME, content: 'not json' }),
+    ])
+    expect(out.map((e) => e.content)).toEqual(['go'])
+  })
+
+  it('promotes a document carrying keys beyond ours — it is still our tool', () => {
+    // Unlike an assistant message, whose extra keys mean "somebody else's
+    // answer", a StructuredOutput payload is ours by construction. A harness
+    // that grows the schema must not silently lose the summary.
+    const out = normalizeStructuredOutputTranscript([
+      entry({
+        seq: 0,
+        kind: 'tool_use',
+        toolName: STRUCTURED_OUTPUT_TOOL_NAME,
+        content: '{"summary":"Done.","inquiry":null,"confidence":0.9}',
+      }),
+    ])
+    expect(out.map((e) => e.kind)).toEqual(['assistant'])
+    expect(out[0]!.content).toBe('Done.')
+  })
+
+  it('does not eat the result of an unrelated tool', () => {
+    const out = normalizeStructuredOutputTranscript([
+      entry({ seq: 0, kind: 'tool_use', toolName: 'Bash', content: '{"command":"ls"}' }),
+      entry({ seq: 1, kind: 'tool_result', content: 'a.txt' }),
+      entry({ seq: 2, kind: 'assistant', content: 'One file.' }),
+      entry({ seq: 3, kind: 'tool_use', toolName: STRUCTURED_OUTPUT_TOOL_NAME, content: DOC_JSON }),
+      entry({ seq: 4, kind: 'tool_result', content: REJECTION }),
+    ])
+    expect(out.map((e) => e.kind)).toEqual(['tool_use', 'tool_result', 'assistant'])
+    expect(out[1]!.content).toBe('a.txt')
+  })
+
+  it('is idempotent over a rejected call', () => {
+    const once = normalizeStructuredOutputTranscript([
+      entry({ seq: 0, kind: 'user', content: 'Deploy the thing.' }),
+      entry({ seq: 1, kind: 'tool_use', toolName: STRUCTURED_OUTPUT_TOOL_NAME, content: INVALID_DOC }),
+      entry({ seq: 2, kind: 'tool_result', content: REJECTION }),
+    ])
+    expect(normalizeStructuredOutputTranscript(once)).toEqual(once)
+  })
+
+  it('works end to end from the raw claude JSONL', () => {
+    const jsonl = [
+      '{"type":"user","timestamp":"2026-09-10T06:00:00.000Z","message":{"content":"Deploy the thing."}}',
+      `{"type":"assistant","timestamp":"2026-09-10T06:00:06.000Z","message":{"content":[{"type":"tool_use","name":"StructuredOutput","input":${INVALID_DOC}}],"usage":{"input_tokens":3,"output_tokens":9}}}`,
+      `{"type":"user","timestamp":"2026-09-10T06:00:06.200Z","message":{"content":[{"type":"tool_result","content":${JSON.stringify(REJECTION)},"is_error":true}]}}`,
+      `{"type":"assistant","timestamp":"2026-09-10T06:00:08.000Z","message":{"content":[{"type":"tool_use","name":"StructuredOutput","input":${DOC_JSON}}],"usage":{"input_tokens":4,"output_tokens":9}}}`,
+      '{"type":"user","timestamp":"2026-09-10T06:00:08.200Z","message":{"content":[{"type":"tool_result","content":"Structured output provided successfully"}]}}',
+    ].join('\n')
+
+    const parsed = parseClaudeRollout(jsonl)
+    // The parser still hands over everything; the normaliser is what decides.
+    expect(parsed.entries.map((e) => e.kind)).toEqual([
+      'user', 'tool_use', 'tool_result', 'tool_use', 'tool_result',
+    ])
+
+    const out = normalizeStructuredOutputTranscript(parsed.entries)
+    expect(out.map((e) => e.kind)).toEqual(['user', 'assistant'])
+    expect(out[1]!.content).toBe('Listed what I can do.')
+    expect(out.map((e) => e.content).join('\n')).not.toContain('required property')
+  })
+})
