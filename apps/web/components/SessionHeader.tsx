@@ -427,18 +427,25 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
                         {row.label}
                       </dt>
                       <dd className="mt-0.5 sm:mt-0 flex items-start gap-1 min-w-0 text-xs text-zinc-600 dark:text-zinc-300">
-                        {/* `flex-1` so the value owns the rest of the row.
-                            Sized to its content it left a short value's copy
-                            button stranded mid-row and the right half of the
-                            panel empty; grown, every button in the panel
-                            lands on the same right edge. `min-w-0` is what
-                            keeps `break-words` able to wrap a long path.
-                            The hint sits inside the growing span rather than
+                        {/* Deliberately NOT `flex-1`: the value sits at its
+                            content width so the copy button lands right
+                            after the text it copies, one `gap-1` away.
+                            Grown to fill the row instead, the button was
+                            flung to the panel's right edge with a stretch of
+                            dead space between it and a short value — a
+                            column of buttons aligned to nothing. Whitespace
+                            to the right of a short row is the expected
+                            trade. `min-w-0` still lets the span shrink below
+                            its content so `break-words` can wrap a long
+                            path — a value that does fill the row still puts
+                            its button at the edge, which is fine: there is
+                            no dead space left to cross.
+                            The hint stays inside this span rather than
                             beside it — it annotates the value ($0.1234 USD),
-                            so pushing it to the right edge would read as a
-                            second value, and inline it wraps with the text
-                            instead of squeezing it. */}
-                        <span className="flex-1 min-w-0 break-words">
+                            so a separate flex item would read as a second
+                            value, and inline it wraps with the text instead
+                            of squeezing it. */}
+                        <span className="min-w-0 break-words">
                           <span className={row.mono ? 'font-mono' : ''}>{row.value}</span>
                           {row.hint && (
                             <span className="ml-1.5 italic text-zinc-400 dark:text-zinc-500">
