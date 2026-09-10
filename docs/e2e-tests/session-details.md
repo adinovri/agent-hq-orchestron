@@ -49,15 +49,28 @@ stops it reading as a terminal dump.
 **Expect**
 
 - Four group headings in order: **Identity**, **Location**,
-  **Commands**, **Timing**, each visually separated (a rule between
-  groups, not just whitespace).
-- Two-column grid with labels **right-aligned** against their values.
+  **Commands**, **Timing**.
+- **A rule between groups, not just whitespace.** Each group after the
+  first carries a top border (`border-t` + `pt-3`); the **first group
+  has none** (`first:border-0 first:pt-0`) so the panel does not open
+  with a doubled line under the one it already sits below.
+- **Two-column grid at `sm` and up**, `sm:grid-cols-[7.5rem_minmax(0,1fr)]`
+  — a fixed 7.5rem label column and a value column that takes
+  everything else. Labels are **right-aligned** against their values.
+- **The value fills the rest of the row.** The value span is `flex-1
+  min-w-0`, so a short value's row still reaches the right edge of the
+  card and a copy button sits at a consistent x across every row.
+  Measure it: the values in two adjacent rows start at the same x, and
+  the row's right edge is the card's, not the end of the text.
+- **The panel occupies the full card width.** It renders as a sibling
+  *below* the flex row that holds the action buttons, not inside it —
+  so the 5 × 32px `shrink-0` button column takes nothing from it. Check
+  by eye at desktop width: the panel's left and right edges line up
+  with the card's padding, not with the text block left of the buttons.
 - **Mono font only on** the ids, paths and commands. Labels, dates and
   the status value use the body font.
 - Long values **wrap** (`break-words`) rather than breaking
   mid-character at arbitrary points.
-- The panel occupies the full card width — it is not squeezed into a
-  narrow column beside the action buttons.
 - Collapsing and re-expanding restores the same content.
 
 **📷 Screenshot**: `detail-01-expanded.png` — the whole expanded panel.
@@ -81,10 +94,22 @@ command against a tmux window that does not exist.
 
 - **Identity → mode** reads `headless`, with a hover title describing
   one-shot processes and nothing to attach to.
-- **Location** has **no `tmux` row**.
-- **Commands** has **no `attach` row**. If `resume` is also absent
-  there is no **Commands heading at all** — an empty group is dropped
-  entirely rather than rendered as a bare title.
+- **Location has no `tmux` row** — not a blank one, not one reading
+  the record's `tmuxName`. The row is gated on the resolved mode
+  (`session.useTmux ?? true`), **not** on whether `tmuxName` is set.
+- **Commands has no `attach` row**, and there is **no attach command
+  anywhere on the page** for this session — no copy button offering
+  `tmux attach -rt …`, and nothing in the header's action row either.
+  Same gate.
+- Confirm the gate is really the mode, not an empty field: a headless
+  record **still carries a `tmuxName`** (it doubles as an ownership
+  token). Read it from
+  `GET /api/sessions/<uuid>` — it is non-null, and both rows are still
+  correctly absent. A scenario that gets these rows to disappear by
+  clearing `tmuxName` has tested the wrong condition.
+- If `resume` is also absent there is no **Commands heading at all** —
+  an empty group is dropped entirely rather than rendered as a bare
+  title.
 - The tmux session, by contrast, shows `mode: tmux`, a `tmux` row and
   an `attach` row.
 
@@ -196,8 +221,14 @@ into an unreadable run.
 
 **Expect**
 
-- Each row stacks **label over value** instead of side by side.
-- Group headings and their separators survive.
+- Each row stacks **label over value** instead of side by side — the
+  grid is `sm:`-prefixed, so below the breakpoint there is no grid at
+  all and the row falls back to normal flow.
+- Group headings and their separators survive; the first group still
+  has no top rule.
+- Values still use the **full card width** here — this is the
+  breakpoint the full-width fix was made for. On a 390px phone no value
+  should be wrapping at ~20 characters against a half-empty card.
 - No horizontal scrolling. Long paths and commands wrap within the
   card.
 - The copy buttons remain tappable — they do not shrink below a usable
@@ -247,6 +278,14 @@ a value came from.
   Plus/Pro/Enterprise is flat-rate bundled. Treat codex sessions as
   N/A for cost, **not** `$0` — a scenario asserting `$0.0000` on a
   codex session is asserting the wrong thing.
+- **The layout assertions in `DETAIL-01` name classes on purpose.**
+  Full-width and the rules between groups are the kind of regression
+  that reads as "looks slightly off" rather than as a failure, so the
+  scenario pins the mechanism (`grid-cols-[7.5rem_minmax(0,1fr)]`,
+  `flex-1` on the value, `border-t` + `first:border-0`, panel as a
+  sibling of the button row) and not just the impression. If a redesign
+  reaches the same look another way, update the scenario — do not
+  delete the assertion.
 - **`tmuxName` is not cleared on a headless session** — it doubles as
   an ownership token. The panel gates the tmux and attach rows on the
   session's **mode**, not on whether the field happens to be set.
