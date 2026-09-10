@@ -205,7 +205,9 @@ showing the tmux and attach rows that were absent while headless.
 ### LIFE-06 — Sleep on idle, wake on send `[smoke]`
 
 **Covers**: the idle sweeper releasing tmux, and the transparent
-cold-start resume.
+cold-start resume. The headless counterpart — a sleep that releases
+nothing and a wake that costs no spawn — is
+[`headless-flow.md`](headless-flow.md) `HEADLESS-09`.
 
 **Steps**
 
@@ -221,8 +223,11 @@ cold-start resume.
   window is gone from `tmux ls`.
 - The transcript is still fully readable while sleeping — nothing was
   lost.
-- The pencil icon appears in the header (sleeping is an editable state
-  — see [`metadata-edit.md`](metadata-edit.md)).
+- The pencil icon appears in the header, and because this is a **tmux**
+  session its *Use tmux* checkbox is live — a sleeping tmux record gave
+  up its window, so the wake spawns and a mode change would be real.
+  (A sleeping *headless* record has the same pill and a **locked**
+  checkbox — see [`metadata-edit.md`](metadata-edit.md) `META-08`.)
 - On send: status goes `spawning` → `running` within a few seconds
   without any manual reopen, and the session id is unchanged.
 - The reply shows the earlier conversation is still in context.
@@ -373,12 +378,17 @@ counterpart — where this is refused — is
 
 ## Notes on current shipped behaviour
 
-- **Reopen and Fork are available for headless sessions.** An earlier
-  Phase 1 gate hid them; it was removed once cross-mode resume was
-  verified on both harnesses. A stale paragraph to that effect still
-  sits in [USAGE.md § Reopen vs Fork vs Respawn](../USAGE.md#reopen-vs-fork-vs-respawn)
-  — the authoritative statement is the *across modes* section below it.
-  Scenarios here follow the shipped behaviour.
+- **Reopen and Fork are available for headless sessions,** with a
+  **Use tmux** checkbox in the dialog to pick the mode the revival runs
+  in. An earlier Phase 1 gate hid both buttons; it was removed once
+  cross-mode resume was verified on both harnesses.
+  [USAGE.md § Reopen vs Fork vs Respawn](../USAGE.md#reopen-vs-fork-vs-respawn)
+  agreed with the old gate for a while and now agrees with the shipped
+  behaviour — it names the visibility rule as terminal states **plus
+  `idle` / `needs_input` for headless**, and points at
+  [Reopen, Fork and Respawn across modes](../USAGE.md#reopen-fork-and-respawn-across-modes)
+  for the checkbox. If you are reading a scenario that says these
+  buttons are hidden for headless, that scenario is the stale one.
 - **No context is lost crossing the mode boundary in either
   direction.** Claude's `-p` and interactive TUI share one JSONL store;
   codex writes both the rollout JSONL and the `thread_history` SQLite

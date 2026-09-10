@@ -24,11 +24,24 @@ Spec: [USAGE.md § Session detail page](../USAGE.md#session-detail-page) ·
 
 | Session state | Pencil visible | Model / Effort | *Use tmux* |
 |---|---|---|---|
-| `succeeded` / `killed` / `failed` | yes | editable | **editable** |
-| `sleeping` | yes | editable | **editable** |
-| headless at `idle` / `needs_input` | yes | editable | **locked** (greyed; API 400) |
+| `succeeded` / `killed` / `failed` (either mode) | yes | editable | **editable** |
+| **tmux** at `sleeping` | yes | editable | **editable** |
+| **headless** at `sleeping` | yes | editable | **locked** (greyed; API 400) |
+| **headless** at `idle` / `needs_input` | yes | editable | **locked** (greyed; API 400) |
 | tmux at `idle` / `needs_input` | **no** | — (API 409) | — |
 | `running` / `spawning` / `waiting` | **no** | — (API 409) | — |
+
+**Read the mode column first.** The lock is not a property of a state,
+it is `!useTmux && status ∈ {idle, needs_input, sleeping}` — the three
+resting states of a *headless* record. Model and effort are never
+locked by mode; wherever the pencil is reachable at all, they save.
+
+The asymmetry at `sleeping` is the part worth remembering. A sleeping
+**tmux** session really did give up its window, so waking it spawns —
+and a spawn is exactly what makes a new mode real. A sleeping
+**headless** session released nothing (see
+[`headless-flow.md`](headless-flow.md) `HEADLESS-09`), so its wake
+costs no spawn and a mode flip there would never become real.
 
 ---
 
@@ -172,13 +185,22 @@ curl -s -X PATCH "$ORCH/api/sessions/<uuid>" \
 
 **Expect**
 
-- The checkbox is **greyed out** and the dialog points at Reopen, Fork
-  and Respawn instead — *"Mode is locked while session is idle. Use
-  Reopen, Fork, or Respawn to change mode."*
+- The checkbox is **greyed out** (`disabled`, and the whole label drops
+  to `cursor-default`) and the dialog points at Reopen, Fork and
+  Respawn instead — *"Mode is locked while the session is idle. Use
+  Reopen, Fork, or Respawn to change mode."* The state name in that
+  sentence is interpolated, so at `needs_input` it reads *"…while the
+  session is needs_input"*.
+- The dialog also **never sends the field** while locked: a locked
+  checkbox is excluded from the dirty check, so Save on a
+  model-only change puts no `useTmux` in the patch at all. The 400
+  below is the enforcement layer, not the everyday path.
 - Model and Effort in the same dialog are still live and still save.
 - The API call returns **400** — not 409. The record is in a perfectly
   editable state; it is the `useTmux` field that does not belong in a
-  metadata edit here.
+  metadata edit here. The body carries *"Cannot change mode from
+  metadata edit at idle. Use Reopen/Fork/Respawn dialog for mode
+  change."*
 - **Nothing landed.** The `model` in that same patch was *not* applied
   — the patch is refused whole so nothing lands half-applied. Confirm
   by re-reading the record.
@@ -201,9 +223,10 @@ thing that reads the field is a spawn.
 2. Open the pencil. **Tick** *Use tmux*. Save.
 3. Read the header and the details panel.
 4. Respawn with the dialog untouched.
-5. Repeat steps 2–4 from `sleeping`: spawn a tmux session with a short
-   `ORCHESTRON_IDLE_TIMEOUT_MS`, wait for `sleeping`, then untick *Use
-   tmux* and send a turn to wake it.
+5. Repeat steps 2–4 from `sleeping`, on a **tmux** session: spawn one
+   with a short `ORCHESTRON_IDLE_TIMEOUT_MS`, wait for `sleeping`, then
+   untick *Use tmux* and send a turn to wake it. (A *headless* session
+   at `sleeping` is the locked case — `META-08`.)
 
 **Expect**
 
@@ -213,9 +236,12 @@ thing that reads the field is a spawn.
 - After saving, the details panel's `mode` row flips to `tmux` and the
   Headless badge state follows.
 - The respawn actually runs in tmux — a window exists.
-- From `sleeping`, unticking and then waking delivers the next turn as
-  a headless child rather than a tmux paste, and no tmux window is
-  created.
+- From a **tmux** `sleeping` record, unticking and then waking delivers
+  the next turn as a headless child rather than a tmux paste, and no
+  tmux window is created. The wake was going to spawn either way; the
+  edit only changed what it spawns.
+- This is the whole reason the state alone does not decide the gate. The
+  same `sleeping` pill on a headless record refuses the same edit.
 
 **Cleanup**: Kill, Delete record on both.
 
@@ -249,3 +275,85 @@ an explicit `claude-opus-5` from an inherited one.
 before and after.
 
 **Cleanup**: Delete record.
+
+---
+
+### META-08 — *Use tmux* is locked on a **sleeping headless** session
+
+**Covers**: the state symbolic sleeping added to the lock. Before
+headless sessions could sleep, `sleeping` meant "tmux, window
+released", and the pencil treated it as freely editable. A headless
+record now reaches the same pill by a different road — its sleep
+released nothing — and the mode gate has to tell the two apart.
+
+Get this wrong and the bug is quiet: the edit saves, then the next
+send takes the tmux cold-start branch and tries to resume a transcript
+the TUI never wrote.
+
+The sleep itself, and the wake that costs nothing, are
+[`headless-flow.md`](headless-flow.md) `HEADLESS-09`. This scenario is
+only the pencil.
+
+**Setup**: `idleTimeoutMs` low enough to observe — 60000 (1 min) in
+`~/.orchestron/config.json`, API restarted. Restore afterwards.
+
+**Steps**
+
+1. Spawn a **headless** session in `e2e-claude`, let the first turn
+   land in `idle`.
+2. Wait out the timeout. Confirm the pill reads **`sleeping`** and the
+   Headless badge is still there.
+3. Open the pencil. Inspect the **Use tmux** checkbox.
+4. Change **Model** only, and Save.
+5. Attempt the mode change through the API:
+
+```bash
+curl -s -X PATCH "$ORCH/api/sessions/<uuid>" \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"useTmux":true}' -i | head -5
+```
+
+6. Send a turn to wake the session.
+
+**Expect**
+
+- The pencil **is** present at `sleeping` — this is a lock on one
+  field, not a hidden dialog.
+- The **Use tmux** checkbox is **greyed out**, with the same Reopen /
+  Fork / Respawn text as `META-05`, reading *"…while the session is
+  sleeping"*.
+- Step 4's model edit **saves normally**. The header chip updates.
+- Step 5 returns **400**, *"Cannot change mode from metadata edit at
+  sleeping."* The stored `useTmux` is still `false` — re-read the
+  record.
+- The wake in step 6 runs **headless**, on the **new model**, with no
+  `spawning` and no tmux window created.
+- Compare against `META-06` step 5: a *tmux* session at `sleeping`
+  offers the same checkbox **live**. Same pill, opposite gate.
+
+**📷 Screenshot**: `meta-08-sleeping-headless-locked.png` — the dialog
+over a header showing `sleeping` + Headless, greyed checkbox and its
+text in frame.
+
+**Cleanup**: restore `idleTimeoutMs`, restart the API, then Archive and
+Delete record.
+
+---
+
+## Notes on current shipped behaviour
+
+- **The lock is keyed on the mode, not the state.** The condition is
+  `!useTmux && status ∈ {idle, needs_input, sleeping}` in both the
+  dialog (`MODE_LOCKED_STATES`) and the manager. A scenario that
+  asserts "sleeping is editable" without naming a mode is asserting
+  half the rule — true for tmux, false for headless since symbolic
+  sleeping shipped.
+- **400 and 409 are different failures and stay different.** 409 means
+  the record is not editable at all right now (a live tmux session,
+  anything mid-spawn) and the pencil is hidden to match. 400 means the
+  record *is* editable and this one field is not — every other field in
+  the same patch would have gone through.
+- **A refused patch lands nothing.** The mode check runs before
+  anything is written, so a `{model, useTmux}` patch that trips it
+  leaves the model alone too. This is deliberate; do not write a
+  scenario expecting a partial apply.
