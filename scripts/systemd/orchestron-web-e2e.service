@@ -1,0 +1,35 @@
+# Orchestron Web — E2E instance.
+#
+# Installed (with @PLACEHOLDERS@ substituted) to
+# ~/.config/systemd/user/orchestron-web-e2e.service by `scripts/e2e-env.sh up`.
+# Do not edit the installed copy — `up` overwrites it. Edit this template.
+[Unit]
+Description=Orchestron Web (E2E) — isolated Next.js frontend for E2E runs
+After=network-online.target orchestron-api-e2e.service
+Requires=orchestron-api-e2e.service
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@/apps/web
+Environment="NODE_ENV=production"
+Environment="PATH=@PATH@"
+# NEXT_PUBLIC_API_URL is baked into the client bundle at BUILD time and read
+# again here for the server-side /api/* rewrite. It MUST match what
+# `e2e-env.sh build` used, or the dashboard renders a 500 from the rewrite
+# rather than failing visibly. `e2e-env.sh status` checks the built value
+# against this one.
+Environment="NEXT_PUBLIC_API_URL=http://127.0.0.1:@API_PORT@"
+# Serve the E2E build, not the deployed one. `next start` reads distDir from
+# next.config.ts, which reads this.
+Environment="NEXT_DIST_DIR=@DIST_DIR@"
+# Bind loopback only. Nothing about an E2E instance should be reachable from
+# the tailnet, and -H is explicit because Next 16 ignores HOSTNAME.
+ExecStart=@NPX@ next start -H 127.0.0.1 -p @WEB_PORT@
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=orchestron-web-e2e
+
+[Install]
+WantedBy=default.target

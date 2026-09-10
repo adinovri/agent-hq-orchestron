@@ -1,0 +1,55 @@
+# Orchestron API — E2E instance.
+#
+# Installed (with @PLACEHOLDERS@ substituted) to
+# ~/.config/systemd/user/orchestron-api-e2e.service by `scripts/e2e-env.sh up`.
+# Do not edit the installed copy — `up` overwrites it. Edit this template.
+#
+# Runs the SAME build as the deployed instance (same WorkingDirectory, same
+# dist/server.js) against a different data dir, port and bearer token. That
+# is deliberate: an E2E run is meant to exercise the code under review, not
+# a copy of it.
+[Unit]
+Description=Orchestron API (E2E) — isolated instance for end-to-end test runs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Same reason as the deployed unit: without Delegate=yes systemd denies
+# tmux's StartTransientUnit for tmux-spawn-*.scope and every spawned pane
+# dies within seconds.
+Delegate=yes
+WorkingDirectory=@REPO@/apps/api
+Environment="NODE_ENV=production"
+Environment="PATH=@PATH@"
+# --- isolation ---------------------------------------------------------
+# The data dir moves every session/project/schedule record AND, since
+# `resolveConfigPath`, the config.json this process reads. That file is what
+# carries port 8091 and the E2E-only bearer, so this one variable is the
+# whole separation from the deployed instance.
+Environment="ORCHESTRON_DATA_DIR=@DATA_DIR@"
+# Belt and braces: name the config file outright so a future change to the
+# data-dir derivation cannot silently point E2E at the deployed config.
+Environment="ORCHESTRON_CONFIG=@DATA_DIR@/config.json"
+# Agent auth. Adapters fall back to this env var when a project does not
+# name a config dir, and pass it through to both the headless child and the
+# tmux pane — so one login in this dir covers every E2E spawn.
+Environment="CLAUDE_CONFIG_DIR=@CLAUDE_CONFIG_DIR@"
+Environment="CODEX_HOME=@DATA_DIR@/codex-home"
+# Keep E2E agents out of the real derived-memory pools. Without these, a
+# throwaway test session writes into the memory dir the human's own CLI
+# sessions read.
+Environment="ORCHESTRON_SHARED_MEMORY_DIR=@DATA_DIR@/shared-memory"
+Environment="ORCHESTRON_SHARED_CODEX_MEMORY_DIR=@DATA_DIR@/codex-shared-memory"
+# The web bundle E2E serves lives in a separate dist dir; /api/version reads
+# BUILD_ID from it.
+Environment="NEXT_DIST_DIR=@DIST_DIR@"
+ExecStart=@NODE@ dist/server.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=orchestron-api-e2e
+
+[Install]
+WantedBy=default.target
