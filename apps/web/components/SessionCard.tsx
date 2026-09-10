@@ -86,7 +86,7 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
             {showHeadlessBadge && (
               <span
                 className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-mono uppercase bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
-                title={`Headless session — each turn runs as its own ${session.agentType === 'codex' ? 'codex exec' : 'claude -p'} process, with no tmux. Takes follow-up input and rests in idle between turns; no live TUI to attach to and no sleeping.`}
+                title={`Headless session — each turn runs as its own ${session.agentType === 'codex' ? 'codex exec' : 'claude -p'} process, with no tmux. Takes follow-up input and rests in idle between turns, then sleeps once left alone — symbolically, since it holds nothing to release. No live TUI to attach to.`}
               >
                 <Zap className="w-3 h-3" />
                 headless

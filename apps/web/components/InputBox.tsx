@@ -36,8 +36,9 @@ const ENABLED: SessionStatus[] = ['needs_input', 'idle', 'waiting', 'running', '
 // Headless has no input queue. Each turn is its own process with no stdin,
 // so there is nothing to paste into while one is running — the API refuses
 // it, and greying the box out says so before the user types a paragraph.
-// `sleeping` and `waiting` never occur headless.
-const ENABLED_HEADLESS: SessionStatus[] = ['needs_input', 'idle']
+// `sleeping` IS reachable (the idle sweeper gets there symbolically) and
+// sending is what wakes it; `waiting` never occurs headless.
+const ENABLED_HEADLESS: SessionStatus[] = ['needs_input', 'idle', 'sleeping']
 
 /** Hint text per status, harness-labelled. */
 function hintFor(status: SessionStatus, label: string, useTmux: boolean): string {
@@ -49,7 +50,9 @@ function hintFor(status: SessionStatus, label: string, useTmux: boolean): string
       : `${label} is running this turn — headless takes no queued input. Wait, or interrupt.`
     case 'needs_input': return `Type your reply`
     case 'idle':        return useTmux ? `Send a follow-up` : `Send the next turn`
-    case 'sleeping':    return `Session is sleeping — send to wake it up (~3s cold start)`
+    case 'sleeping':    return useTmux
+      ? `Session is sleeping — send to wake it up (~3s cold start)`
+      : `Session is sleeping — send to wake it up (nothing was released, so no cold start)`
     case 'succeeded':   return `Session succeeded (archived)`
     case 'failed':      return `Session failed`
     case 'killed':      return `Session killed`

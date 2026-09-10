@@ -330,7 +330,7 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
                     <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
                       {effectiveUseTmux
                         ? 'Each run is an interactive session — live transcript, attach to the TUI, sleeps when idle.'
-                        : `Each run is headless — one ${agentType === 'codex' ? 'codex exec' : 'claude -p'} process per turn, then idle. No live TUI and no sleeping.`}
+                        : `Each run is headless — one ${agentType === 'codex' ? 'codex exec' : 'claude -p'} process per turn, then idle, then sleeping once left alone. No live TUI, and the sleep releases nothing.`}
                       {useTmuxOverride !== null && useTmuxOverride !== defaults.useTmux && (
                         <span className="italic"> Overrides the project default.</span>
                       )}
