@@ -15,6 +15,28 @@ export class ScheduleNotFoundError extends Error {
   }
 }
 
+/**
+ * Pull the spawned session's UUID out of a POST /api/sessions response body.
+ *
+ * Takes the raw text rather than calling `resp.json()` so a fire never fails
+ * on a body that isn't the session record: the scheduler's job is to spawn,
+ * and the UUID is a convenience for the caller (the "Run now" button wants
+ * somewhere to navigate). A body we can't read means "no target", not "the
+ * run broke" — hence `null` instead of a throw.
+ *
+ * `id` is the field name because SessionRecord.id *is* the harness UUID; see
+ * the transcript-path comment in shared/types.ts.
+ */
+export function spawnedSessionUuid(raw: string): string | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as { id?: unknown }
+    return typeof parsed.id === 'string' && parsed.id.length > 0 ? parsed.id : null
+  } catch {
+    return null
+  }
+}
+
 export class Scheduler {
   private readonly schedulesDir: string
   private readonly apiBaseUrl: string
@@ -74,9 +96,14 @@ export class Scheduler {
     await fs.unlink(this.schedulePath(id)).catch(() => {})
   }
 
-  async run(id: string): Promise<void> {
+  /**
+   * Fire a schedule once, out of band. Returns the spawned session's UUID so
+   * the caller can point the user at it, or `null` when the spawn response
+   * carried no id (see `spawnedSessionUuid`) — the run still happened.
+   */
+  async run(id: string): Promise<string | null> {
     const entry = await this.get(id)
-    await this.fireEntry(entry)
+    return this.fireEntry(entry)
   }
 
   async start(): Promise<void> {
@@ -152,7 +179,7 @@ export class Scheduler {
     await writeJson(this.schedulePath(id), entry)
   }
 
-  private async fireEntry(entry: ScheduleEntry): Promise<void> {
+  private async fireEntry(entry: ScheduleEntry): Promise<string | null> {
     // Overrides ride along only when the schedule actually set one. An absent
     // field must stay absent in the body: POST /api/sessions resolves each of
     // these as `body ?? project.default…`, so omitting is what makes an
@@ -178,11 +205,15 @@ export class Scheduler {
       body: JSON.stringify(body),
     })
 
+    // Read the body once, before the ok-check: the failure path wants it for
+    // the error message and the success path wants the session id out of it.
+    const text = await resp.text().catch(() => '')
+
     if (!resp.ok) {
-      const text = await resp.text().catch(() => '')
       throw new Error(`Scheduler: POST /api/sessions returned ${resp.status} for schedule ${entry.id}: ${text.slice(0, 200)}`)
     }
 
     await this.markRun(entry.id)
+    return spawnedSessionUuid(text)
   }
 }

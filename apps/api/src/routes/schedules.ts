@@ -421,8 +421,14 @@ export function schedulesPlugin(
     app.post('/api/schedules/:id/run', async (req, reply) => {
       const { id } = req.params as { id: string }
       try {
-        await scheduler.run(id)
-        return { ok: true }
+        const sessionUuid = await scheduler.run(id)
+        // `sessionUuid` rides along only when the spawn response actually
+        // carried one, same additive shape as `coerced` on POST /api/sessions.
+        // Its presence is the client's signal that there is somewhere to
+        // navigate; a bare `{ ok: true }` still means the run fired, so an
+        // older client — or one talking to a spawn path that returns no id —
+        // keeps working unchanged.
+        return sessionUuid ? { ok: true, sessionUuid } : { ok: true }
       } catch (err) {
         if (err instanceof ScheduleNotFoundError) return reply.code(404).send({ error: err.message })
         throw err
