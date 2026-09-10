@@ -544,7 +544,8 @@ terminal state only when you Kill or Archive it.
 | Where | Effect |
 |---|---|
 | Nothing set | tmux — the default, and what every pre-existing session is |
-| Project → **Use tmux by default** | applies to every session-creating path in that project — spawns (scheduled ones included), Adopt and Import |
+| Project → **Use tmux by default** | applies to every session-creating path in that project — spawns, Adopt, Import, and any schedule that does not pin a mode of its own |
+| Schedule dialog → **Use tmux** | every run of that schedule; unset follows the project — see [Schedules](#4-schedules) |
 | Spawn / Adopt / Import dialog → **Use tmux** | this session only; the box starts on the project's setting |
 | Reopen / Fork / Respawn dialog → **Use tmux** | the mode the session comes back in — see below |
 | Session detail → ✎ (pencil) | changes the mode the session will use on its next spawn — **terminal or sleeping only** |
@@ -1120,6 +1121,69 @@ Dashboard → **Schedules** page.
 - Each schedule fires by calling the local `POST /api/sessions` with
   the same Bearer token, so guardrails and project checks apply
   identically to interactive spawns.
+
+### 4.1 Model, effort and run mode
+
+A schedule can pin **Model**, **Effort** and **Use tmux** for the sessions
+it spawns, or leave any of them to its project.
+
+They are *overrides*, not a snapshot:
+
+| Field on the schedule | What fires |
+|---|---|
+| Left at **Default** | whatever the project is set to **at the moment the schedule fires** — change the project's default model and every schedule that did not pin one follows |
+| Pinned | that value, permanently. Nothing tracks the project back afterwards; change it on the schedule itself |
+
+The dropdowns name what "Default" currently resolves to (`Default —
+claude-opus-5 (project)`), so the choice is between two concrete values
+rather than between a value and a blank. Model and effort catalogs are
+per-harness, taken from the project's `agentType`.
+
+The list page badges only the fields a schedule pins. A schedule that
+follows its project for everything shows no badges at all.
+
+**Project is fixed once a schedule exists.** Moving one to another project
+would change what every other field on it means — the catalogs are
+per-harness and the defaults it falls back to belong to the old project —
+so that is a delete and recreate rather than an edit.
+
+**With the global headless kill switch off** (`enableHeadlessMode: false`),
+the **Use tmux** checkbox is hidden and the mode is left out of what the
+dialog saves: a schedule already configured headless keeps that stored
+preference and gets it back when the switch is flipped on. Until then it
+fires in tmux — an explicit `useTmux: false` sent by a script or an older
+client is coerced on the way in, and the fire-time `POST /api/sessions` is
+a second pass over the same rule.
+
+### 4.2 YAML shape
+
+Export writes the three fields only for schedules that pin them, so a
+document round-trips unchanged and one written before these fields existed
+imports fine — every schedule in it simply follows its project.
+
+```yaml
+schedules:
+  - id: 3f2b1a4c-…
+    cron: 0 9 * * 1
+    projectId: 8c1d…
+    prompt: Weekly dependency review
+    enabled: true
+    createdAt: 2026-09-10T02:00:00.000Z
+    # all three optional — omit to follow the project
+    model: claude-opus-5
+    effort: high
+    useTmux: false
+```
+
+`effort` must be one of `low | medium | high | xhigh | max | ultra`; an
+entry with anything else is reported in the import summary's `errors` and
+skipped rather than stored. Entries whose `useTmux: false` was forced to
+tmux by the kill switch are counted in the summary's `coerced`.
+
+Over the API, `PATCH /api/schedules/:id` takes `''` (or `null` for
+`useTmux`) to *clear* an override — an absent key means "leave whatever is
+stored alone", so there has to be a separate spelling for taking one back
+off.
 
 ---
 
