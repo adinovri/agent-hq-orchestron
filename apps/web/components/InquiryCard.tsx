@@ -9,6 +9,15 @@ import type { Inquiry, InquiryField } from '@agent-hq-orchestron/shared'
 interface Props {
   uuid: string
   inquiry: Inquiry
+  /** True once this client has answered — the card renders "Answer sent" and
+   *  disabled. Owned by the page rather than the card because the page is what
+   *  decides whether the card is mounted at all: the server clears
+   *  `pendingInquiry` on submit, and a purely local flag loses the race with
+   *  the poll that notices. See `lib/inquiry-card.ts`. */
+  answered?: boolean
+  /** Told to the page on a successful submit, so it can hold the card open
+   *  through the grace window. */
+  onAnswered?: (inquiry: Inquiry) => void
 }
 
 /**
@@ -39,10 +48,15 @@ function formatAnswer(fields: InquiryField[], values: Map<string, string>): stri
   return answered.map(({ f, v }) => `${f.label}: ${v}`).join('\n')
 }
 
-export function InquiryCard({ uuid, inquiry }: Props) {
+export function InquiryCard({ uuid, inquiry, answered = false, onAnswered }: Props) {
   const qc = useQueryClient()
   const [values, setValues] = useState<Map<string, string>>(new Map())
-  const [submitted, setSubmitted] = useState(false)
+  const [locallySubmitted, setLocallySubmitted] = useState(false)
+
+  // Either source is enough. The local flag covers the instant between the
+  // mutation resolving and the page's state updating; the prop covers the
+  // remounts and re-renders that follow.
+  const submitted = answered || locallySubmitted
 
   const send = useMutation({
     mutationFn: async (prompt: string) => {
@@ -55,7 +69,8 @@ export function InquiryCard({ uuid, inquiry }: Props) {
       return res.json()
     },
     onSuccess: () => {
-      setSubmitted(true)
+      setLocallySubmitted(true)
+      onAnswered?.(inquiry)
       qc.invalidateQueries({ queryKey: ['session', uuid] })
       qc.invalidateQueries({ queryKey: ['transcript', uuid] })
     },

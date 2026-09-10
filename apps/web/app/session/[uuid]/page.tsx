@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useState } from 'react'
+import { use, useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { SessionHeader } from '@/components/SessionHeader'
@@ -15,6 +15,11 @@ import { DeleteRecordDialog } from '@/components/DeleteRecordDialog'
 import { SessionMetadataEditDialog } from '@/components/SessionMetadataEditDialog'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
 import { noticeIfCoerced } from '@/lib/notice'
+import {
+  resolveInquiryCard,
+  INQUIRY_ANSWER_GRACE_MS,
+  type AnsweredInquiry,
+} from '@/lib/inquiry-card'
 import type { SessionMetadata, DelegationEdges, ProjectMetadata } from '@agent-hq-orchestron/shared'
 
 interface PageProps {
@@ -33,6 +38,7 @@ export default function SessionDetailPage({ params }: PageProps) {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deletingRecord, setDeletingRecord] = useState(false)
   const [editMetaOpen, setEditMetaOpen] = useState(false)
+  const [answeredInquiry, setAnsweredInquiry] = useState<AnsweredInquiry | null>(null)
 
   const { data: session, isLoading } = useQuery<SessionMetadata>({
     queryKey: ['session', uuid],
@@ -73,6 +79,25 @@ export default function SessionDetailPage({ params }: PageProps) {
   const parentPrompt = session?.parentSessionId
     ? (allSessions.find((s) => s.id === session.parentSessionId)?.initialPrompt ?? '').trim().slice(0, 100)
     : undefined
+
+  // The grace window that keeps the answered inquiry card on screen needs its
+  // own clock. Nothing else re-renders this page at the moment it expires —
+  // the session poll runs on its own 3s cadence — so without this timer the
+  // card would linger until the next tick instead of leaving when it said it
+  // would. Held while `pendingInquiry` is still set: the server has not caught
+  // up yet, and dropping the snapshot there would flip the card back to an
+  // open form after the operator already sent an answer.
+  const pendingInquiry = session?.pendingInquiry ?? null
+  useEffect(() => {
+    if (!answeredInquiry || pendingInquiry) return
+    const remaining = answeredInquiry.at + INQUIRY_ANSWER_GRACE_MS - Date.now()
+    if (remaining <= 0) {
+      setAnsweredInquiry(null)
+      return
+    }
+    const timer = setTimeout(() => setAnsweredInquiry(null), remaining)
+    return () => clearTimeout(timer)
+  }, [answeredInquiry, pendingInquiry])
 
   const killMutation = useMutation({
     mutationFn: () => apiFetch(`/api/sessions/${uuid}`, { method: 'DELETE' }),
@@ -224,6 +249,15 @@ export default function SessionDetailPage({ params }: PageProps) {
 
   const readOnly = (session.metadata as Record<string, unknown>)?.readOnly === true
 
+  // Survives the moment the server clears `pendingInquiry`, so a submitted
+  // card switches to "Answer sent" instead of vanishing mid-confirmation.
+  const inquiryCard = resolveInquiryCard({
+    pending: session.pendingInquiry,
+    answered: answeredInquiry,
+    readOnly,
+    now: Date.now(),
+  })
+
   return (
     <div className="flex flex-col h-full">
       <SessionHeader
@@ -262,8 +296,13 @@ export default function SessionDetailPage({ params }: PageProps) {
         * agent returned in its final response, answered as text that becomes
         * the next turn. The two are mutually exclusive in practice — a
         * pendingPrompt is scraped off a live tmux pane. */}
-      {session.pendingInquiry && !readOnly && (
-        <InquiryCard uuid={uuid} inquiry={session.pendingInquiry} />
+      {inquiryCard && (
+        <InquiryCard
+          uuid={uuid}
+          inquiry={inquiryCard.inquiry}
+          answered={inquiryCard.answered}
+          onAnswered={(inquiry) => setAnsweredInquiry({ inquiry, at: Date.now() })}
+        />
       )}
 
       <div className="flex-1 overflow-hidden">
