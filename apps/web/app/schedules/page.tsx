@@ -5,7 +5,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, fetchJson } from '@/lib/fetcher'
 import { Button } from '@/components/ui/button'
 import { ScheduleDialog } from '@/components/ScheduleDialog'
-import { type ScheduleProjectOption } from '@/lib/schedule-fields'
+import { scheduleOverrideBadges, type ScheduleProjectOption } from '@/lib/schedule-fields'
+import { useHeadlessEnabled } from '@/lib/server-config'
 import { Skeleton } from '@/components/Skeleton'
 import { formatRelative } from '@/lib/time'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
@@ -30,6 +31,7 @@ function toScheduleProject(p: ProjectMetadata): ScheduleProjectOption {
 
 export default function SchedulesPage() {
   const qc = useQueryClient()
+  const headlessEnabled = useHeadlessEnabled()
   const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState<Schedule | null>(null)
   const [importBusy, setImportBusy] = useState(false)
@@ -199,6 +201,19 @@ export default function SchedulesPage() {
                       {s.enabled ? 'Active' : 'Paused'}
                     </span>
                     <span className="text-xs text-zinc-500 dark:text-zinc-400">{projectName(s.projectId)}</span>
+                    {/* One badge per field this schedule pins for itself.
+                        Nothing shown for a field it leaves to the project —
+                        which is most schedules, and a row of "default,
+                        default, default" on every card would be noise. */}
+                    {scheduleOverrideBadges(s, headlessEnabled).map((b) => (
+                      <span
+                        key={b.key}
+                        title={b.title}
+                        className="text-[10px] px-1.5 py-0.5 rounded border border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 font-mono"
+                      >
+                        {b.label}
+                      </span>
+                    ))}
                   </div>
                   {s.prompt && (
                     <p className="mt-2 text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2">{s.prompt}</p>
