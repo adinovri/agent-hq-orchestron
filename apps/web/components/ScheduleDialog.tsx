@@ -5,11 +5,20 @@ import cronstrue from 'cronstrue'
 import { Button } from '@/components/ui/button'
 import { apiFetch } from '@/lib/fetcher'
 import { X, CalendarClock, AlertCircle } from 'lucide-react'
+import { modelsFor, effortsFor } from '@/lib/models'
+import { useHeadlessEnabled } from '@/lib/server-config'
+import { noticeIfCoerced } from '@/lib/notice'
+import {
+  scheduleFieldDefaults,
+  defaultRowLabel,
+  buildSchedulePayload,
+  type ScheduleProjectOption,
+} from '@/lib/schedule-fields'
 
 interface Props {
   open: boolean
   onClose: () => void
-  projects: Array<{ id: string; name: string }>
+  projects: ScheduleProjectOption[]
   onCreated: () => void
   initial?: {
     id: string
@@ -18,6 +27,9 @@ interface Props {
     prompt?: string
     template?: string
     enabled?: boolean
+    model?: string
+    effort?: string
+    useTmux?: boolean
   }
 }
 
@@ -97,10 +109,22 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
   const [cron, setCron] = useState(initial?.cron ?? '0 9 * * 1')
   const [prompt, setPrompt] = useState(initial?.prompt ?? '')
   const [enabled, setEnabled] = useState(initial?.enabled ?? true)
+  const [model, setModel] = useState(initial?.model ?? '')
+  const [effort, setEffort] = useState(initial?.effort ?? '')
+  // null = no override, so the selected project's default shows through and
+  // keeps updating if the project changes. Same tri-state as SpawnDialog.
+  const [useTmuxOverride, setUseTmuxOverride] = useState<boolean | null>(initial?.useTmux ?? null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const isEdit = !!initial?.id
+  const headlessEnabled = useHeadlessEnabled()
+  const currentProject = projects.find((p) => p.id === projectId)
+  const agentType = currentProject?.agentType
+  const defaults = scheduleFieldDefaults(currentProject)
+  // With the switch off the checkbox is hidden, so tmux is the only value
+  // there is left to describe in the helper text.
+  const effectiveUseTmux = headlessEnabled ? (useTmuxOverride ?? defaults.useTmux) : true
 
   // Rehydrate local state each time the dialog reopens with a different
   // `initial`. useState only captures its argument on first mount, and this
@@ -113,6 +137,9 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
     setCron(initial?.cron ?? '0 9 * * 1')
     setPrompt(initial?.prompt ?? '')
     setEnabled(initial?.enabled ?? true)
+    setModel(initial?.model ?? '')
+    setEffort(initial?.effort ?? '')
+    setUseTmuxOverride(initial?.useTmux ?? null)
     setError(null)
     // Track by identity so switching between Edit rows also rehydrates.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -160,7 +187,10 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
     setSaving(true)
     setError(null)
     try {
-      const payload = { projectId, cron: cron.trim(), prompt: prompt.trim(), enabled }
+      const payload = buildSchedulePayload(
+        { projectId, cron, prompt, enabled, model, effort, useTmuxOverride },
+        { isEdit, headlessEnabled },
+      )
       const url = isEdit ? `/api/schedules/${initial!.id}` : '/api/schedules'
       const method = isEdit ? 'PATCH' : 'POST'
       const res = await apiFetch(url, {
@@ -169,10 +199,16 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
         body: JSON.stringify(payload),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      // The dialog closes right after this, so a coerced run mode has to be
+      // raised on the app-level toast stack rather than shown inline.
+      noticeIfCoerced(await res.json())
       onCreated()
       onClose()
       setPrompt('')
       setCron('0 9 * * 1')
+      setModel('')
+      setEffort('')
+      setUseTmuxOverride(null)
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -204,7 +240,21 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
         <div className="px-4 py-4 space-y-4">
           <div>
             <label className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Project</label>
-            {projects.length === 0 ? (
+            {isEdit ? (
+              /* Read-only once the schedule exists. Moving one to another
+                 project changes what every field on it means — the model and
+                 effort catalogs are per-harness, and the defaults it falls
+                 back to belong to the old project — so that is a delete and
+                 recreate, not an edit. */
+              <>
+                <div className="w-full h-9 px-2 flex items-center rounded-md border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 text-sm text-zinc-600 dark:text-zinc-400">
+                  {currentProject?.name ?? projectId}
+                </div>
+                <p className="text-[10px] text-zinc-400 mt-1">
+                  Fixed for an existing schedule — delete and recreate to move it.
+                </p>
+              </>
+            ) : projects.length === 0 ? (
               <p className="text-sm text-zinc-500">
                 No projects. <a href="/projects" className="underline text-blue-600" onClick={onClose}>Register first →</a>
               </p>
@@ -289,6 +339,63 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
               className="w-full px-3 py-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100 resize-none"
             />
           </div>
+
+          {/* Model + Effort. Blank means "whatever the project is set to when
+              this fires" — the override is deliberately not a snapshot, so a
+              project that changes model carries its schedules with it. */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Model</label>
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"
+              >
+                <option value="">{defaultRowLabel(defaults.model, defaults.modelSource)}</option>
+                {modelsFor(agentType).map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Effort</label>
+              <select
+                value={effort}
+                onChange={(e) => setEffort(e.target.value)}
+                className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"
+              >
+                <option value="">{defaultRowLabel(defaults.effort, defaults.effortSource)}</option>
+                {effortsFor(agentType).map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+              </select>
+            </div>
+          </div>
+
+          {/* Run mode. Hidden outright while the global switch is off — with
+              headless unavailable there is one mode left and nothing to
+              choose. Hidden also means the field is left out of the payload,
+              so a schedule already stored as headless keeps that preference
+              until the switch comes back on. */}
+          {headlessEnabled && (
+            <div>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={effectiveUseTmux}
+                  onChange={(e) => setUseTmuxOverride(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600"
+                />
+                <span>
+                  <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
+                  <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
+                    {effectiveUseTmux
+                      ? 'Each run is an interactive session — live transcript, attach to the TUI, sleeps when idle.'
+                      : `Each run is headless — one ${agentType === 'codex' ? 'codex exec' : 'claude -p'} process per turn, then idle. No live TUI and no sleeping.`}
+                    {useTmuxOverride !== null && useTmuxOverride !== defaults.useTmux && (
+                      <span className="italic"> Overrides the project default.</span>
+                    )}
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
 
           <div className="flex items-center gap-2">
             <input

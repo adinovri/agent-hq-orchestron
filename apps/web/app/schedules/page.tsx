@@ -5,22 +5,27 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch, fetchJson } from '@/lib/fetcher'
 import { Button } from '@/components/ui/button'
 import { ScheduleDialog } from '@/components/ScheduleDialog'
+import { type ScheduleProjectOption } from '@/lib/schedule-fields'
 import { Skeleton } from '@/components/Skeleton'
 import { formatRelative } from '@/lib/time'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
 import { Plus, Clock, Play, PlayCircle, Pencil, Trash2, Pause, Download, Upload } from 'lucide-react'
 
-interface Schedule {
-  id: string
-  cron: string
-  projectId: string
-  template?: string
-  prompt?: string
-  vars?: Record<string, string>
-  enabled: boolean
-  createdAt: string
-  lastRunAt?: string
-  nextRunAt?: string
+import type { ScheduleEntry } from '@agent-hq-orchestron/shared'
+
+type Schedule = ScheduleEntry
+
+/** The dialog needs the project's harness and its three defaults, not just a
+ *  label — that is what the "Default — …" rows in its dropdowns name. */
+function toScheduleProject(p: ProjectMetadata): ScheduleProjectOption {
+  return {
+    id: p.id,
+    name: p.name,
+    agentType: p.agentType,
+    defaultModel: p.defaultModel,
+    defaultEffort: p.defaultEffort,
+    defaultUseTmux: p.defaultUseTmux,
+  }
 }
 
 export default function SchedulesPage() {
@@ -268,14 +273,14 @@ export default function SchedulesPage() {
       <ScheduleDialog
         open={createOpen}
         onClose={() => setCreateOpen(false)}
-        projects={projects.map((p) => ({ id: p.id, name: p.name }))}
+        projects={projects.map(toScheduleProject)}
         onCreated={() => qc.invalidateQueries({ queryKey: ['schedules'] })}
       />
 
       <ScheduleDialog
         open={!!editing}
         onClose={() => setEditing(null)}
-        projects={projects.map((p) => ({ id: p.id, name: p.name }))}
+        projects={projects.map(toScheduleProject)}
         onCreated={() => qc.invalidateQueries({ queryKey: ['schedules'] })}
         initial={editing ? {
           id: editing.id,
@@ -284,6 +289,9 @@ export default function SchedulesPage() {
           prompt: editing.prompt,
           template: editing.template,
           enabled: editing.enabled,
+          model: editing.model,
+          effort: editing.effort,
+          useTmux: editing.useTmux,
         } : undefined}
       />
     </div>
