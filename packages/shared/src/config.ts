@@ -8,7 +8,9 @@ import { z } from 'zod'
  *
  * Precedence (highest wins):
  *   1. process.env (via env-var mapping)
- *   2. ~/.orchestron/config.json
+ *   2. the config file — `~/.orchestron/config.json` unless
+ *      `ORCHESTRON_CONFIG` or `ORCHESTRON_DATA_DIR` moves it; see
+ *      `resolveConfigPath`
  *   3. Built-in defaults
  *
  * Boot guard: bind non-loopback + no ORCHESTRON_REMOTE_TOKEN → refuse to start.
@@ -183,6 +185,42 @@ function defaultDataDir(): string {
   return path.join(os.homedir(), '.orchestron')
 }
 
+/** Basename of the config file inside a data dir. Exported so the E2E
+ *  tooling and the web build can name the same file without repeating
+ *  the string. */
+export const CONFIG_FILENAME = 'config.json'
+
+/**
+ * Which `config.json` this process should read.
+ *
+ * Precedence (highest wins):
+ *   1. an explicit path from the caller (tests pass one)
+ *   2. `ORCHESTRON_CONFIG` — a full path to the file
+ *   3. `<ORCHESTRON_DATA_DIR>/config.json` (or the legacy `AHQ_DATA_DIR`)
+ *   4. `~/.orchestron/config.json`
+ *
+ * Arm 3 is the one that matters. `ORCHESTRON_DATA_DIR` already moved every
+ * *record* a run writes, but the config file itself stayed pinned to
+ * `~/.orchestron/config.json` — so a second instance pointed at its own
+ * data dir still booted on the primary instance's port and, worse, its
+ * bearer token. Deriving the config path from the data dir is what makes
+ * "a whole second orchestron on this host" a matter of two env vars, which
+ * is what the E2E environment needs.
+ *
+ * With neither env var set this returns exactly what the previous
+ * hard-coded expression returned, so no existing deploy changes behaviour.
+ */
+export function resolveConfigPath(
+  env: NodeJS.ProcessEnv = process.env,
+  explicit?: string,
+): string {
+  if (explicit) return explicit
+  if (env.ORCHESTRON_CONFIG) return env.ORCHESTRON_CONFIG
+  const dataDir = env.ORCHESTRON_DATA_DIR || env.AHQ_DATA_DIR
+  if (dataDir) return path.join(dataDir, CONFIG_FILENAME)
+  return path.join(defaultDataDir(), CONFIG_FILENAME)
+}
+
 function readConfigFile(configPath: string): unknown {
   if (!fs.existsSync(configPath)) return {}
   try {
@@ -234,7 +272,7 @@ export function loadConfig(opts: {
   env?: NodeJS.ProcessEnv
 } = {}): Config {
   const env = opts.env ?? process.env
-  const configPath = opts.configPath ?? path.join(defaultDataDir(), 'config.json')
+  const configPath = resolveConfigPath(env, opts.configPath)
 
   const fileRaw = readConfigFile(configPath) as Record<string, unknown>
   const envRaw = envOverrides(env)
