@@ -28,9 +28,11 @@ Spec: [USAGE.md § Dashboard tour](../USAGE.md#6-dashboard-tour) ·
 
 ### DASH-01 — Ordering is last-activity descending `[smoke]`
 
-**Covers**: the sort key — `endedAt ?? startedAt`. Notably,
-`needs_input` does **not** float to the top; it rises naturally because
-a status transition updates the timestamps.
+**Covers**: the sort key — `lastActivityAt ?? endedAt ?? startedAt`,
+where the last two are only the fallback for records written before
+`lastActivityAt` existed (pre-2026-09-06). Notably, `needs_input` does
+**not** float to the top; it rises naturally because a status
+transition updates `lastActivityAt`.
 
 **Steps**
 

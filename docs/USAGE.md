@@ -899,12 +899,22 @@ way for the agent to raise a question. Defaults to `true`.
 
 ### Sleep / wake-up (idle sweeper)
 
-Sessions in `idle` or `needs_input` for longer than `idleTimeoutMs`
-(default **15 min**) automatically warm-shutdown:
+Sessions in `idle` for longer than `idleTimeoutMs` (default **15 min**)
+automatically warm-shutdown:
 
 - Tmux window is killed → no resources held.
 - Session status transitions to `sleeping`.
 - Claude session state stays intact in JSONL — nothing is lost.
+
+`needs_input` is **exempt**. It is idle in the sense that no child is
+working, but the session is blocked on a person and still holds the
+`pendingInquiry` they have to answer — sweeping it put a *Sleeping* pill
+above a live *Agent needs input* form and dropped the session out of the
+dashboard's needs-input stat. The cost is a tmux window held for as long
+as nobody answers, which is the trade: the window is where the answer
+goes. Entering `needs_input` also disarms the timer `idle` had armed. An
+explicit kill or archive still applies, and `needs_input → sleeping`
+remains a legal transition for a caller that means it.
 
 **Waking one up:** just send input. `POST /api/sessions/:uuid/input`
 (or the MCP `send_input` tool, or typing into the composer in the UI)
@@ -920,7 +930,7 @@ new session id.
 Env override: `ORCHESTRON_IDLE_TIMEOUT_MS=<ms>`.
 
 **Restart safety:** on API boot, `resumeIdleSweepers()` scans every
-`idle`/`needs_input` session and either warm-shuts-down immediately
+`idle` session and either warm-shuts-down immediately
 (if past threshold) or arms a shortened timer for the remaining time.
 A safety-net sweep every 10 min catches orphans whose primary timer
 was somehow lost.
@@ -1134,8 +1144,13 @@ Prerequisites:
 
 Dashboard → **Schedules** page.
 
-- Cron expressions are full 5-field (`min hour day month dow`). Preset
-  buttons cover the common ones (hourly, daily 9am, weekly Mon 9am, …).
+- Cron expressions are full 5-field (`min hour day month dow`), and the
+  API enforces exactly that on create, edit and import — `cron-parser`
+  would otherwise *pad* a short expression, turning `* * * *` into an
+  every-minute schedule nobody asked for. Six fields (seconds), seven
+  (year) and the `@daily` family are rejected for the same reason: the
+  dialog can render none of them. Preset buttons cover the common ones
+  (hourly, daily 9am, weekly Mon 9am, …).
 - Live-preview shows the **next 3 fires** while you type, using
   `cron-parser`. The human-readable description under the input comes
   from `cronstrue`.
@@ -1385,9 +1400,11 @@ In grouped mode each project header is **collapsible**:
   surfaces urgency.
 
 **Session ordering** (both flat and within groups): last activity
-descending — `endedAt ?? startedAt` — matches Tycho's `finished_at ||
-started_at || created_at`. Needs-input does NOT float to top; it rises
-naturally because status transitions update timestamps.
+descending — `lastActivityAt ?? endedAt ?? startedAt`, the latter two
+being the fallback for pre-2026-09-06 records that predate the field —
+in the spirit of Tycho's `finished_at || started_at || created_at`.
+Needs-input does NOT float to top; it rises naturally because status
+transitions update `lastActivityAt`.
 
 **Filter bar:** status multi-select, project dropdown (shows names, not
 uuids), tag multi-select, date range, fuzzy search on prompt or session

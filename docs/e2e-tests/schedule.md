@@ -48,7 +48,10 @@ Spec: [USAGE.md § Schedules](../USAGE.md#4-schedules) ·
   human-readable description of the expression underneath.
 - Preset buttons (hourly, daily 9am, weekly Mon 9am, …) fill the field.
 - An invalid expression (`* * * *`, four fields) shows *"Invalid cron
-  expression"* and blocks save.
+  expression"* and blocks save. The API is not looser than the dialog:
+  `POST /api/schedules` with that cron answers **400**, and so do PATCH
+  and import (it used to answer 200 and create an every-minute
+  schedule).
 - **Save** is disabled until project, cron and prompt are all present.
 - Run-once spawns a session immediately and **navigates you to its
   detail page** — you do not stay on the Schedules list. The session is
