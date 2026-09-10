@@ -262,6 +262,40 @@ describe('SessionManager — headless lifecycle', () => {
     await expect(mgr.spawn({ ...baseSpawn, useTmux: false })).resolves.toBeTruthy()
   })
 
+  it('does not count a sleeping headless session against the pool cap', async () => {
+    // Sleeping was already exempt for every mode (it is in countActiveSessions'
+    // NON_LIVE list), and it has to stay that way here for the same reason
+    // `idle` is exempt: the sweep released nothing, so there is nothing left
+    // holding a slot. Pinned so a future cap change cannot quietly make a pile
+    // of dormant one-shots block new spawns.
+    const { adapter, releaseExit } = makeHeadlessAdapter({ exitCode: 0 })
+    const registry = new AdapterRegistry()
+    registry.register('claude', adapter)
+    const mgr = new SessionManager({ dataDir: tmpDir, maxConcurrent: 1, idleTimeoutMs: 1 }, registry)
+    const first = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    releaseExit()
+    await waitForRecord(mgr, first.id, (r) => r.status === 'sleeping', 'sleeping')
+    await expect(mgr.spawn({ ...baseSpawn, useTmux: false })).resolves.toBeTruthy()
+  })
+
+  it('still kills the tmux window when a TMUX session is swept to sleeping', async () => {
+    // The counterpart to the symbolic sweep above: for tmux the sleep IS the
+    // release, and arming both modes must not have turned that into a no-op.
+    const { adapter } = makeHeadlessAdapter({ exitCode: 0 })
+    adapter.spawn.mockResolvedValue({ tmuxName: 't1', claudeUuid: 'u1', jsonlPath: '/tmp/u1.jsonl' })
+    const registry = new AdapterRegistry()
+    registry.register('claude', adapter)
+    const mgr = new SessionManager({ dataDir: tmpDir, maxConcurrent: 3, idleTimeoutMs: 1 }, registry)
+    const s = await mgr.spawn(baseSpawn)
+    await mgr.transition(s.id, 'waiting')
+    await mgr.transition(s.id, 'running')
+    await mgr.transition(s.id, 'idle')
+    await waitForRecord(mgr, s.id, (r) => r.status === 'sleeping', 'tmux sleeping')
+    expect(adapter.kill).toHaveBeenCalled()
+    // And with a tmux handle — a headless one would leave the window behind.
+    expect(adapter.kill.mock.calls[0]![0]!.headless).toBe(false)
+  })
+
   it('still counts an idle TMUX session against the pool cap', async () => {
     // The counterpart to the test above — the exemption must be scoped to
     // headless, not applied to every idle session.
@@ -389,10 +423,34 @@ describe('SessionManager — headless guards', () => {
     // `needs_input` is the other resting state — an inquiry is waiting on the
     // user. Same reasoning, same refusal.
     await expect(mgr.updateMetadata(s.id, { useTmux: true }))
-      .rejects.toThrow(/Cannot change mode from metadata edit at idle/i)
+      .rejects.toThrow(/Cannot change mode from metadata edit at needs_input/i)
     // And the rest of the patch is still available while it waits.
     const patched = await mgr.updateMetadata(s.id, { model: 'claude-sonnet-5' })
     expect(patched.model).toBe('claude-sonnet-5')
+  })
+
+  it('refuses a useTmux edit on a headless session that has gone to sleep', async () => {
+    // Symbolic sleeping opened this door from the other side: `sleeping` is in
+    // updateMetadata's EDITABLE list, which was written for tmux — where the
+    // sleep really did release the window, so the next send has to spawn and
+    // the new mode becomes real. A headless sleep releases nothing and wakes
+    // without a spawn, so a flip to tmux here would hand the next input to the
+    // cold-start branch, resuming a transcript the TUI never created.
+    const { adapter, releaseExit } = makeHeadlessAdapter({ exitCode: 0 })
+    const registry = new AdapterRegistry()
+    registry.register('claude', adapter)
+    const mgr = new SessionManager({ dataDir: tmpDir, maxConcurrent: 3, idleTimeoutMs: 1 }, registry)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    releaseExit()
+    await waitForRecord(mgr, s.id, (r) => r.status === 'sleeping', 'sleeping')
+
+    await expect(mgr.updateMetadata(s.id, { useTmux: true }))
+      .rejects.toThrow(/Cannot change mode from metadata edit at sleeping/i)
+    const still = (await mgr.list()).find((r) => r.id === s.id)
+    expect(still?.useTmux).toBe(false)
+    // Model/effort are still editable there — the lock is scoped to the mode.
+    const patched = await mgr.updateMetadata(s.id, { model: 'claude-opus-5' })
+    expect(patched.model).toBe('claude-opus-5')
   })
 
   it('still refuses a metadata edit on an idle TMUX session', async () => {

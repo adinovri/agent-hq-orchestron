@@ -58,11 +58,14 @@ function makeTurnAdapter(agentType: 'claude' | 'codex' = 'claude') {
   }
 }
 
-function makeManager(adapter: AgentAdapter) {
+function makeManager(adapter: AgentAdapter, opts: { idleTimeoutMs?: number } = {}) {
   const registry = new AdapterRegistry()
   registry.register('claude', adapter)
   registry.register('codex', adapter)
-  const mgr = new SessionManager({ dataDir: tmpDir, maxConcurrent: 5 }, registry)
+  const mgr = new SessionManager(
+    { dataDir: tmpDir, maxConcurrent: 5, idleTimeoutMs: opts.idleTimeoutMs ?? 0 },
+    registry,
+  )
   mgr.setProjectResolver(async () => ({ path: '/tmp/ws', defaultModel: 'm', defaultEffort: 'high' }))
   return mgr
 }
@@ -229,6 +232,84 @@ describe('headless multi-turn', () => {
     await mgr.sendInput(s.id, 'turn two')
     expect(adapter.resume.mock.calls[0]![0]).toBe('thread-abc')
     finish(2)
+  })
+
+  it('wakes a sleeping session into the next turn with no cold start', async () => {
+    // Headless sleep is symbolic — nothing was released — so waking is a
+    // record write and then the ordinary --resume turn. No second spawn, and
+    // above all no waitTuiReady: there is no TUI, and the tmux wake branch
+    // would be aimed at a spent synthetic handle.
+    const { adapter, finish } = makeTurnAdapter()
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn(baseSpawn)
+    finish(1, { exitCode: 0 })
+    await waitFor(mgr, s.id, (r) => r.status === 'idle', 'idle after turn 1')
+    await mgr.transition(s.id, 'sleeping')
+
+    const after = await mgr.sendInput(s.id, 'turn two')
+    expect(after.status).toBe('running')
+    expect(adapter.spawn).toHaveBeenCalledTimes(1)
+    expect(adapter.resume).toHaveBeenCalledTimes(1)
+    const [, cfg] = adapter.resume.mock.calls[0]!
+    expect(cfg.useTmux).toBe(false)
+    expect(cfg.prompt).toBe('turn two')
+    expect(adapter.waitTuiReady).not.toHaveBeenCalled()
+
+    finish(2, { exitCode: 0 })
+    await waitFor(mgr, s.id, (r) => r.status === 'idle', 'idle after turn 2')
+  })
+
+  it('sweeps to sleeping and back through a full second turn', async () => {
+    // End to end on the real sweeper rather than a hand-written transition:
+    // turn lands idle, the 1ms timer sleeps it, a send wakes it, turn two runs.
+    const { adapter, finish } = makeTurnAdapter()
+    const mgr = makeManager(adapter, { idleTimeoutMs: 1 })
+    const s = await mgr.spawn(baseSpawn)
+    finish(1, { exitCode: 0 })
+    await waitFor(mgr, s.id, (r) => r.status === 'sleeping', 'swept to sleeping')
+    expect(adapter.kill).not.toHaveBeenCalled()
+
+    await mgr.sendInput(s.id, 'turn two')
+    finish(2, { exitCode: 0 })
+    await waitFor(mgr, s.id, (r) => r.status === 'idle', 'idle after turn 2')
+    // ...and straight back to sleep, since the sweeper re-arms on every idle.
+    await waitFor(mgr, s.id, (r) => r.status === 'sleeping', 'asleep again')
+  })
+
+  it('leaves a session asleep when the wake cannot be honoured', async () => {
+    // The guards run before the symbolic wake, so a refused send must not
+    // leave the record half-woken in `idle` with a fresh sweeper armed.
+    const { adapter, finish } = makeTurnAdapter('codex')
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn({ ...baseSpawn, agentType: 'codex' })
+    finish(1, { exitCode: 0 })   // no sessionId — nothing to resume
+    await waitFor(mgr, s.id, (r) => r.status === 'idle', 'idle')
+    await mgr.transition(s.id, 'sleeping')
+
+    await expect(mgr.sendInput(s.id, 'again')).rejects.toThrow(/no harness session id|Respawn/i)
+    const still = (await mgr.list()).find((r) => r.id === s.id)
+    expect(still?.status).toBe('sleeping')
+  })
+
+  it('still cold-starts a tmux session on wake', async () => {
+    // The tmux wake is unchanged: its sleep really did release the window, so
+    // waking spawns, waits for the TUI, and pastes.
+    const { adapter } = makeTurnAdapter()
+    adapter.spawn.mockResolvedValue({ tmuxName: 't1', claudeUuid: 'u1', jsonlPath: '/tmp/u1.jsonl' })
+    adapter.resume.mockResolvedValue({ tmuxName: 't2', claudeUuid: 'u1', jsonlPath: '/tmp/u1.jsonl' })
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: true })
+    await waitFor(mgr, s.id, (r) => r.status === 'running', 'running')
+    await mgr.transition(s.id, 'idle')
+    await mgr.transition(s.id, 'sleeping')
+
+    await mgr.sendInput(s.id, 'hello again')
+    const [, cfg] = adapter.resume.mock.calls[0]!
+    expect(cfg.useTmux).toBeUndefined()   // tmux resume, not a headless one
+    expect(adapter.waitTuiReady).toHaveBeenCalled()
+    expect(adapter.sendPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ tmuxName: 't2' }), 'hello again',
+    )
   })
 
   it('leaves the tmux send path untouched', async () => {
