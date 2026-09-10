@@ -293,55 +293,6 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
               <span>{formatRelative(session.startedAt)} · {formatDuration(session.startedAt, session.endedAt)}</span>
               {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
-            {expanded && (
-              <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800 space-y-3">
-                {buildSessionDetailSections({
-                  session,
-                  projectName,
-                  projectPath,
-                  effectiveModel,
-                  effectiveEffort,
-                  modelHint: modelFromHarness ? `harness default (${session.agentType})`
-                    : modelFromProject ? 'project default'
-                    : undefined,
-                  effortHint: effortFromHarness ? `harness default (${session.agentType})`
-                    : effortFromProject ? 'project default'
-                    : undefined,
-                }).map((section) => (
-                  <section key={section.title}>
-                    <h3 className="text-[10px] font-medium uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
-                      {section.title}
-                    </h3>
-                    <dl className="mt-1 space-y-2 sm:space-y-0.5">
-                      {section.rows.map((row) => (
-                        <div
-                          key={row.label}
-                          title={row.title}
-                          className="sm:grid sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:gap-x-3"
-                        >
-                          <dt className="text-xs text-zinc-400 dark:text-zinc-500 sm:text-right">
-                            {row.label}
-                          </dt>
-                          <dd className="mt-0.5 sm:mt-0 flex items-start gap-1 min-w-0 text-xs text-zinc-600 dark:text-zinc-300">
-                            <span className={`min-w-0 break-words ${row.mono ? 'font-mono' : ''}`}>
-                              {row.value}
-                            </span>
-                            {row.hint && (
-                              <span className="shrink-0 italic text-zinc-400 dark:text-zinc-500">
-                                {row.hint}
-                              </span>
-                            )}
-                            {row.copy && (
-                              <CopyButton value={row.copy} label={row.copyLabel ?? row.label} />
-                            )}
-                          </dd>
-                        </div>
-                      ))}
-                    </dl>
-                  </section>
-                ))}
-              </div>
-            )}
           </div>
           {!readOnly && (
             <div className="flex items-center gap-1 shrink-0">
@@ -429,6 +380,73 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
             </div>
           )}
         </div>
+        {/* Full width, and deliberately outside the flex row above: as a
+         *  sibling of the action-button column this panel only ever got
+         *  `flex-1` of the leftovers, and the column is `shrink-0` at
+         *  5 x 32px. On a 390px phone that is 184px of a 334px card spent
+         *  on buttons, so every value wrapped at ~20 characters against a
+         *  half-empty card. Out here it gets the whole width at every
+         *  breakpoint, and the buttons keep their row untouched. */}
+        {expanded && (
+          <div className="mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800 space-y-3">
+            {buildSessionDetailSections({
+              session,
+              projectName,
+              projectPath,
+              effectiveModel,
+              effectiveEffort,
+              modelHint: modelFromHarness ? `harness default (${session.agentType})`
+                : modelFromProject ? 'project default'
+                : undefined,
+              effortHint: effortFromHarness ? `harness default (${session.agentType})`
+                : effortFromProject ? 'project default'
+                : undefined,
+            }).map((section) => (
+              <section key={section.title}>
+                <h3 className="text-[10px] font-medium uppercase tracking-widest text-zinc-400 dark:text-zinc-500">
+                  {section.title}
+                </h3>
+                <dl className="mt-1 space-y-2 sm:space-y-0.5">
+                  {section.rows.map((row) => (
+                    <div
+                      key={row.label}
+                      title={row.title}
+                      className="sm:grid sm:grid-cols-[7.5rem_minmax(0,1fr)] sm:gap-x-3"
+                    >
+                      <dt className="text-xs text-zinc-400 dark:text-zinc-500 sm:text-right">
+                        {row.label}
+                      </dt>
+                      <dd className="mt-0.5 sm:mt-0 flex items-start gap-1 min-w-0 text-xs text-zinc-600 dark:text-zinc-300">
+                        {/* `flex-1` so the value owns the rest of the row.
+                            Sized to its content it left a short value's copy
+                            button stranded mid-row and the right half of the
+                            panel empty; grown, every button in the panel
+                            lands on the same right edge. `min-w-0` is what
+                            keeps `break-words` able to wrap a long path.
+                            The hint sits inside the growing span rather than
+                            beside it — it annotates the value ($0.1234 USD),
+                            so pushing it to the right edge would read as a
+                            second value, and inline it wraps with the text
+                            instead of squeezing it. */}
+                        <span className="flex-1 min-w-0 break-words">
+                          <span className={row.mono ? 'font-mono' : ''}>{row.value}</span>
+                          {row.hint && (
+                            <span className="ml-1.5 italic text-zinc-400 dark:text-zinc-500">
+                              {row.hint}
+                            </span>
+                          )}
+                        </span>
+                        {row.copy && (
+                          <CopyButton value={row.copy} label={row.copyLabel ?? row.label} />
+                        )}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
