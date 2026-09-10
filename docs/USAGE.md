@@ -371,12 +371,21 @@ Action buttons (based on state):
 
 Inline edit: a small **pencil** icon renders next to the effort chip in
 the header when the session has no live tmux (`succeeded` / `killed` /
-`failed` / `sleeping`). It opens a metadata-only dialog with Model +
-Effort selects (plus a *Reset to project default* option). The change
-is written to the session record via `PATCH /api/sessions/:uuid` and
-takes effect on the next spawn — Reopen, Respawn, or wake from sleep.
-Active sessions have claude already bound to a specific model, so the
-server refuses the patch (409) and the UI hides the button.
+`failed` / `sleeping`, plus `idle` / `needs_input` on a headless session,
+which holds no process between turns). It opens a metadata-only dialog
+with Model + Effort selects (plus a *Reset to project default* option)
+and a **Use tmux** checkbox. The change is written to the session record
+via `PATCH /api/sessions/:uuid` and takes effect on the next spawn —
+Reopen, Respawn, or wake from sleep. Active sessions have claude already
+bound to a specific model, so the server refuses the patch (409) and the
+UI hides the button.
+
+**Use tmux is locked at `idle` / `needs_input`.** The checkbox greys out
+and the dialog points at Reopen, Fork and Respawn instead; a `PATCH`
+carrying `useTmux` in those states is refused with **400** and nothing in
+the patch lands, model and effort included. Everything else in the dialog
+still applies there — see [Mode is locked while a session
+rests](#mode-is-locked-while-a-session-rests).
 
 Expand the header (chevron under the timestamps) for id/project/agent/
 started/ended/cost detail.
@@ -538,13 +547,44 @@ terminal state only when you Kill or Archive it.
 | Project → **Use tmux by default** | applies to every session-creating path in that project — spawns (scheduled ones included), Adopt and Import |
 | Spawn / Adopt / Import dialog → **Use tmux** | this session only; the box starts on the project's setting |
 | Reopen / Fork / Respawn dialog → **Use tmux** | the mode the session comes back in — see below |
-| Session detail → ✎ (pencil) | changes the mode the session will use on its next spawn |
+| Session detail → ✎ (pencil) | changes the mode the session will use on its next spawn — **terminal or sleeping only** |
 
 The mode is baked into the process arguments when a turn starts, so it
 cannot change mid-flight. The pencil is editable whenever nothing live is
 bound to the current values: terminal or sleeping for a tmux session, and
 also `idle` / `needs_input` for a headless one, which holds no process
 between turns.
+
+#### Mode is locked while a session rests
+
+The pencil's **Use tmux** checkbox is narrower than its Model and Effort
+selects. It is live on a **terminal or sleeping** record and greyed out on
+a headless one at `idle` / `needs_input`, where the dialog names Reopen,
+Fork and Respawn instead. `PATCH /api/sessions/:uuid` enforces the same
+rule: `useTmux` in those states is **400**, and the whole patch is refused
+so nothing lands half-applied.
+
+The two field groups are read at different moments, which is the whole
+reason for the split. Model and effort are read at the next **spawn**.
+`useTmux` is read first, by whatever delivers the next turn — and on a
+resting headless session that is `send input`, which branches on the field
+to choose between a headless child and a tmux paste. Flip the record to
+tmux while it rests and the next message takes the tmux branch against a
+`tmuxName` that is a spent headless handle: nothing is listening, the TUI
+wait swallows its own failure, and the session moves to `running` behind no
+process at all. It never lands, because nothing is coming to land it.
+
+Reopen, Fork and Respawn do not have this problem — they spawn, so the mode
+they write becomes real immediately. That is where a cross-mode change
+belongs, and the dialog says so.
+
+Records stranded this way before the lock existed are recovered
+automatically: a sweep at server boot, and every 10 minutes after, moves any
+tmux-mode `running` session that has no `tmuxName` into `failed` with
+`failureReason: "cross-mode transition failed — no tmux window found"`,
+which frees its pool slot and makes Respawn reachable again. The check is
+deliberately narrow — a running *headless* turn holds no window by design
+and is never touched.
 
 #### Reopen, Fork and Respawn across modes
 
@@ -609,7 +649,7 @@ With the switch off:
 | Spawn, Adopt or Import in a project whose default is headless | runs in **tmux**, `201` — response carries `coerced` |
 | **Import** of a bundle that recorded headless | runs in **tmux**, `201` — response carries `coerced` |
 | `PATCH /api/sessions/:uuid` with `useTmux: false` | saved as **tmux**, `200` — response carries `coerced` |
-| `PATCH` with `useTmux: true` on a headless record | allowed, so records can be unwound while the switch is off |
+| `PATCH` with `useTmux: true` on a headless record | allowed on terminal / sleeping, so records can be unwound while the switch is off; **400** at `idle` / `needs_input` |
 | `PATCH` of model or effort only | mode field untouched — a headless record stays headless on disk |
 | **Reopen** / **Fork** / **Respawn** with **Use tmux** unticked | comes back in **tmux** — response carries `coerced` |
 | **Reopen** / **Fork** / **Respawn** with no mode given | comes back in **tmux** whatever the record says |
