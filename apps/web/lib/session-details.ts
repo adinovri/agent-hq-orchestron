@@ -1,5 +1,25 @@
 import type { SessionMetadata } from '@agent-hq-orchestron/shared'
 
+/**
+ * Whether this record runs in tmux — the web-side twin of `resolveUseTmux`
+ * in `packages/shared/src/config.ts`.
+ *
+ * Not imported from there, and it cannot be: shared ships as one bundled
+ * barrel whose `config.ts` opens with `import fs from 'node:fs'`, so a
+ * runtime import pulls `fs` into the browser bundle and the webpack build
+ * fails outright. Every `@agent-hq-orchestron/shared` import in apps/web is
+ * an `import type` for exactly this reason. (Giving shared a browser-safe
+ * subpath entry would let the real helper cross over, but that is a change
+ * to the package's build and exports map, not to this panel.)
+ *
+ * `undefined` MUST read as tmux: records written before the flag existed
+ * carry no field at all, and a bare `!useTmux` would relabel every one of
+ * them headless.
+ */
+export function usesTmux(session: SessionMetadata): boolean {
+  return session.useTmux ?? true
+}
+
 /** One label/value pair in the collapsed session details panel. */
 export interface DetailRow {
   /** Left column of the grid. Rendered sans-serif, right-aligned. */
@@ -54,8 +74,18 @@ export function resumeCommandFor(session: SessionMetadata): string | null {
     : `claude --resume ${session.claudeSessionUuid}`
 }
 
-/** Read-only tmux attach command, or null for a headless session. */
+/**
+ * Read-only tmux attach command, or null for a headless session.
+ *
+ * The gate is the mode, not `tmuxName`. A headless record carries a name
+ * too — the API mints `headless-<uuid8>` as the ownership token
+ * `stillOwns()` compares against and as the key of the child-process
+ * registry — so a truthiness test on the name reads as "has a window"
+ * when it only means "has a handle", and offers an attach that cannot
+ * connect to anything.
+ */
 export function attachCommandFor(session: SessionMetadata): string | null {
+  if (!usesTmux(session)) return null
   if (!session.tmuxName) return null
   return `tmux attach -rt ${session.tmuxName}`
 }
@@ -100,11 +130,12 @@ export function buildSessionDetailSections(input: SessionDetailInput): DetailSec
   }
 
   identity.push({ label: 'status', value: session.status })
-  // `?? true` — records written before the flag existed are all tmux.
+  // One resolved read, shared by the mode row and the tmux gate below.
+  const isTmux = usesTmux(session)
   identity.push({
     label: 'mode',
-    value: (session.useTmux ?? true) ? 'tmux' : 'headless',
-    title: (session.useTmux ?? true)
+    value: isTmux ? 'tmux' : 'headless',
+    title: isTmux
       ? 'Runs in a long-lived tmux window with a live TUI'
       : 'Each turn runs as its own one-shot process — no tmux, nothing to attach to',
   })
@@ -133,7 +164,10 @@ export function buildSessionDetailSections(input: SessionDetailInput): DetailSec
       title: 'CLAUDE_CONFIG_DIR captured at spawn — resume must use the same one or the transcript will not be found',
     })
   }
-  if (session.tmuxName) {
+  // Mode-gated for the same reason as `attachCommandFor`: the synthetic
+  // headless handle is an internal token, and showing it invites an
+  // attach against a window that was never created.
+  if (isTmux && session.tmuxName) {
     location.push({
       label: 'tmux',
       value: session.tmuxName,
