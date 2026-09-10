@@ -1,5 +1,9 @@
 node_modules/
 .next/
+# Alternate Next.js dist dirs (NEXT_DIST_DIR) — the E2E environment builds
+# the same tree into .next-e2e so its `next start` and the deployed one do
+# not share output.
+.next-*/
 dist/
 .env
 .env.local
@@ -19,4 +23,6 @@ apps/web/public/swe-worker-*.js
 # handoff summaries, batch implementation scripts). Not production docs.
 scratchpad/
 scripts/*.md
+# ...but scripts/README.md documents the checked-in scripts and IS a doc.
+!scripts/README.md
 *.tsbuildinfo

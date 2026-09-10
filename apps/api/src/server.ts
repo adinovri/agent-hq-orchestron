@@ -253,7 +253,13 @@ fastify.get('/api/version', async () => {
   const { resolve } = await import('node:path')
   let buildId = 'unknown'
   try {
-    const buildIdPath = resolve(process.cwd(), '../web/.next/BUILD_ID')
+    // The web bundle's dist dir is `.next` unless NEXT_DIST_DIR moved it —
+    // which the E2E environment does, so that its `next start` and the
+    // deployed one do not share build output. An API told to look at the
+    // wrong one would report the other instance's build id, and the client
+    // staleness check would compare a bundle against a stranger.
+    const distDir = process.env['NEXT_DIST_DIR'] || '.next'
+    const buildIdPath = resolve(process.cwd(), '../web', distDir, 'BUILD_ID')
     buildId = (await readFile(buildIdPath, 'utf8')).trim()
   } catch { /* web not built */ }
   return { buildId, serverStartedAt: new Date(process.uptime() * -1000 + Date.now()).toISOString() }
