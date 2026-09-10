@@ -128,3 +128,99 @@ describe('parseClaudeRollout — resilience', () => {
     })
   })
 })
+
+/**
+ * Regression cover for the `"No response requested."` phantom.
+ *
+ * On `--resume`, Claude Code injects its own user turn — "Continue from where
+ * you left off." — and writes it as a **block list**, not the plain string a
+ * typed turn produces. The parser only emitted user content from the string
+ * shape, so the injected turn vanished and the model's reply to it was left
+ * standing alone in the pane: an answer with no visible question, once per
+ * resume, 27% of the entries in a four-turn transcript.
+ *
+ * Fixtures are trimmed from the real rollouts in
+ * `scratchpad/e2e-smoke-sweep-post-batch2.md` (Claude Code 2.1.267).
+ */
+describe('parseClaudeRollout — list-form user content', () => {
+  it('leaves a plain-string user turn exactly as it was', () => {
+    const jsonl =
+      '{"type":"user","timestamp":"2026-09-10T00:00:00.000Z","message":{"content":"Remember the number 47."}}'
+    const p = parseClaudeRollout(jsonl)
+    expect(p.entries).toHaveLength(1)
+    expect(p.entries[0]).toMatchObject({ kind: 'user', content: 'Remember the number 47.' })
+  })
+
+  it('emits a user turn written as a list of text blocks', () => {
+    const jsonl =
+      '{"type":"user","timestamp":"2026-09-10T00:00:00.000Z","message":{"content":[{"type":"text","text":"Continue from where you left off."}]}}'
+    const p = parseClaudeRollout(jsonl)
+    expect(p.entries).toHaveLength(1)
+    expect(p.entries[0]).toMatchObject({
+      kind: 'user',
+      content: 'Continue from where you left off.',
+    })
+  })
+
+  it('concatenates only the text blocks of a mixed-type list', () => {
+    const jsonl = [
+      '{"type":"user","timestamp":"2026-09-10T00:00:00.000Z","message":{"content":[',
+      '{"type":"text","text":"first "},',
+      '{"type":"image","source":{"type":"base64","data":"iVBOR"}},',
+      '{"type":"text","text":"second"},',
+      '{"type":"tool_result","content":"a.txt"}',
+      ']}}',
+    ].join('')
+    const p = parseClaudeRollout(jsonl)
+    // One user turn carrying the joined prose, then the tool_result as before.
+    expect(p.entries.map((e) => e.kind)).toEqual(['user', 'tool_result'])
+    expect(p.entries[0]!.content).toBe('first second')
+    expect(p.entries[1]!.content).toBe('a.txt')
+  })
+
+  it('still emits no user turn for a list that is only a tool_result', () => {
+    const jsonl =
+      '{"type":"user","timestamp":"2026-09-10T00:00:00.000Z","message":{"content":[{"type":"tool_result","content":"a.txt"}]}}'
+    const p = parseClaudeRollout(jsonl)
+    expect(p.entries.map((e) => e.kind)).toEqual(['tool_result'])
+  })
+
+  it('keeps both halves of a resumed turn, so no reply stands alone', () => {
+    const resumed = [
+      '{"type":"user","timestamp":"2026-09-10T00:00:00.000Z","message":{"content":"Remember the number 47. Reply with just: ok."}}',
+      '{"type":"assistant","timestamp":"2026-09-10T00:00:01.000Z","message":{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}}',
+      '{"type":"user","timestamp":"2026-09-10T00:00:02.000Z","message":{"content":[{"type":"text","text":"Continue from where you left off."}]}}',
+      '{"type":"assistant","timestamp":"2026-09-10T00:00:03.000Z","message":{"content":[{"type":"text","text":"No response requested."}],"usage":{"input_tokens":2,"output_tokens":1}}}',
+      '{"type":"user","timestamp":"2026-09-10T00:00:04.000Z","message":{"content":"What number did I ask you to remember?"}}',
+      '{"type":"assistant","timestamp":"2026-09-10T00:00:05.000Z","message":{"content":[{"type":"text","text":"47"}],"usage":{"input_tokens":3,"output_tokens":1}}}',
+      '{"type":"user","timestamp":"2026-09-10T00:00:06.000Z","message":{"content":[{"type":"text","text":"Continue from where you left off."}]}}',
+      '{"type":"assistant","timestamp":"2026-09-10T00:00:07.000Z","message":{"content":[{"type":"text","text":"No response requested."}],"usage":{"input_tokens":4,"output_tokens":1}}}',
+    ].join('\n')
+    const p = parseClaudeRollout(resumed)
+
+    // Strict alternation: every assistant entry is preceded by its user turn.
+    expect(p.entries.map((e) => e.kind)).toEqual([
+      'user', 'assistant', 'user', 'assistant', 'user', 'assistant', 'user', 'assistant',
+    ])
+    expect(p.entries.filter((e) => e.kind === 'user').map((e) => e.content)).toEqual([
+      'Remember the number 47. Reply with just: ok.',
+      'Continue from where you left off.',
+      'What number did I ask you to remember?',
+      'Continue from where you left off.',
+    ])
+    // Both resumes are accounted for — neither reply is an orphan.
+    expect(p.entries.filter((e) => e.content === 'No response requested.')).toHaveLength(2)
+  })
+
+  it('does not treat an injected turn as operator activity', () => {
+    // `lastUserTs` drives idle detection: a turn ends when the harness reports
+    // a duration *after* the last thing the operator sent. Injected and
+    // tool_result blocks are the harness talking to itself, so they must not
+    // move the mark — otherwise a resumed session reads as still busy.
+    const jsonl = [
+      '{"type":"user","timestamp":"2026-09-10T00:00:00.000Z","message":{"content":"go"}}',
+      '{"type":"user","timestamp":"2026-09-10T00:00:02.000Z","message":{"content":[{"type":"text","text":"Continue from where you left off."}]}}',
+    ].join('\n')
+    expect(parseClaudeRollout(jsonl).lastUserTs).toBe('2026-09-10T00:00:00.000Z')
+  })
+})

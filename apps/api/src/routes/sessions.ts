@@ -169,6 +169,20 @@ export function parseClaudeRollout(raw: string): RolloutParsed {
         }
       }
     } else if (t === 'user' && Array.isArray(content)) {
+      // A user message reaches the rollout in two shapes. A turn the operator
+      // typed arrives as a plain string; anything the harness composes on their
+      // behalf arrives as a block list — a tool result, or the
+      // "Continue from where you left off." injection Claude Code writes on
+      // `--resume`. Text blocks in that list are still the user half of the
+      // exchange, so they are emitted as one turn, joined in document order.
+      // Dropping them left the model's reply standing alone, which is how
+      // "No response requested." reached the pane looking like an answer to
+      // nothing the operator could see.
+      const userText = content
+        .filter((b) => b.type === 'text' && b.text)
+        .map((b) => b.text)
+        .join('')
+      if (userText) entries.push({ seq: seq++, timestamp: ts, kind: 'user', content: userText })
       for (const b of content) {
         if (b.type === 'tool_result') {
           const c = b.content
