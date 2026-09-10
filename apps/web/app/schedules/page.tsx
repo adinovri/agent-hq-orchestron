@@ -6,6 +6,7 @@ import { apiFetch, fetchJson } from '@/lib/fetcher'
 import { Button } from '@/components/ui/button'
 import { ScheduleDialog } from '@/components/ScheduleDialog'
 import { scheduleOverrideBadges, type ScheduleProjectOption } from '@/lib/schedule-fields'
+import { projectConfigDir } from '@/lib/project-info'
 import { useHeadlessEnabled } from '@/lib/server-config'
 import { Skeleton } from '@/components/Skeleton'
 import { formatRelative } from '@/lib/time'
@@ -16,13 +17,16 @@ import type { ScheduleEntry } from '@agent-hq-orchestron/shared'
 
 type Schedule = ScheduleEntry
 
-/** The dialog needs the project's harness and its three defaults, not just a
- *  label — that is what the "Default — …" rows in its dropdowns name. */
+/** The dialog needs the project's harness, where it runs, and its three
+ *  defaults — not just a label. That is what the info panel under the project
+ *  dropdown shows and what the "Default — …" rows name. */
 function toScheduleProject(p: ProjectMetadata): ScheduleProjectOption {
   return {
     id: p.id,
     name: p.name,
     agentType: p.agentType,
+    path: p.path,
+    configDir: projectConfigDir(p),
     defaultModel: p.defaultModel,
     defaultEffort: p.defaultEffort,
     defaultUseTmux: p.defaultUseTmux,
