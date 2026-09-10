@@ -152,14 +152,20 @@ The dialog:
   until validation is green. Every check applies in headless mode too —
   a headless adopt starts no process, but its first turn will, so the
   race is deferred rather than avoided.
-- **Use tmux** — checkbox, default **checked**. Ticked, adopting spawns
-  a live tmux immediately. Unticked, the session is adopted headless:
-  nothing starts, the record lands `idle`, and your next message is its
-  first `claude -p --resume` / `codex exec resume`. Hidden when
-  `enableHeadlessMode` is off, in which case the adopt runs in tmux and
-  a toast says so.
+- **Use tmux** — checkbox, defaulted to the destination project's **Use
+  tmux by default** setting (tmux for a project that sets none), and it
+  re-defaults as you switch project in the dropdown. Ticked, adopting
+  spawns a live tmux immediately. Unticked, the session is adopted
+  headless: nothing starts, the record lands `idle`, and your next
+  message is its first `claude -p --resume` / `codex exec resume`.
+  Overriding the box is per-adopt and changes nothing about the project.
+  Hidden when `enableHeadlessMode` is off, in which case the adopt runs
+  in tmux and a toast says so — including when the project's own default
+  was the headless one.
 
-  The source session's own mode does not constrain this. Both harnesses
+  Adopt has no *source* mode to preserve — the orchestron record is
+  created here — which is why the project's policy is what fills the
+  box. The source session's own mode does not constrain it either. Both harnesses
   keep one transcript store that `-p` and the interactive TUI scan
   identically, so a conversation started headless adopts into tmux and
   vice versa — the same cross-mode behaviour Reopen and Fork rely on.
@@ -256,7 +262,9 @@ Bundle format picked automatically per harness:
 `metadata.json` in a `.tar.gz` bundle records `useTmux`, so the session's
 run mode travels between hosts alongside its uuid and workspace. The
 `.jsonl` formats have no envelope to put it in — they are the raw
-transcript — so a jsonl bundle carries no mode.
+transcript — so a jsonl bundle carries no mode. On import that recorded
+mode is a *fallback*, not a mandate: the destination project's own
+setting outranks it (see below).
 
 Filename convention: `orchestron-<agentType>-<uuid>.jsonl` or
 `orchestron-codex-tui-<uuid>.tar.gz`. Content-Disposition drives it;
@@ -274,16 +282,24 @@ dialog:
   source UUID before you submit. If the detected harness disagrees with
   the destination project, an amber banner warns you the server will
   refuse with 409.
-- **Use tmux** — checkbox, shown checked but only sent once you touch
-  it, because the dialog cannot read a bundle's metadata without
-  unpacking a gzip in the browser. Left alone, a `.tar.gz` is restored
-  in whatever mode it recorded, and anything else (a `.jsonl`, or a
-  bundle exported before the field existed) is restored in tmux. Touch
-  it and it becomes an explicit override that wins over the bundle. The
-  hint under the box says which of those two situations you are in.
-  Hidden when `enableHeadlessMode` is off, in which case the import
-  runs in tmux and a toast says so — including when it was the *bundle*
-  that asked for headless.
+- **Use tmux** — checkbox, defaulted to the destination project's **Use
+  tmux by default** setting, and it re-defaults as you switch project in
+  the dropdown. It is sent only once you touch it, because the dialog
+  cannot read a bundle's metadata without unpacking a gzip in the
+  browser. The mode is settled in this order:
+
+  1. an explicit choice — you touched the box, or a direct API caller
+     sent the field;
+  2. the destination project's `defaultUseTmux`;
+  3. the mode the bundle recorded (`.tar.gz` only);
+  4. tmux.
+
+  So a project that configures a mode gets it, and a bundle's recorded
+  mode decides only for a project that expresses no preference. The
+  hint under the box says which of those applies to the bundle and
+  project in front of you. Hidden when `enableHeadlessMode` is off, in
+  which case the import runs in tmux and a toast says so — including
+  when it was the *project* or the *bundle* that asked for headless.
 - **Import session** — orchestron:
   1. Parses the first ~10 JSONL lines (or `metadata.json` inside the
      tar) to confirm harness + source UUID.
@@ -317,7 +333,7 @@ turned a headless import into a tmux one.
 Calling the endpoint directly, `useTmux` is an optional multipart field
 accepting exactly `"true"` or `"false"` — multipart carries no types, so
 anything else is a 400 rather than a guess. Omit it to get the
-bundle-then-tmux fallback described above.
+project-then-bundle-then-tmux fallback described above.
 
 Round-trip verified: export on host A → import on host B → the
 resumed conversation carries its full history exactly as it did on A.
@@ -519,8 +535,8 @@ terminal state only when you Kill or Archive it.
 | Where | Effect |
 |---|---|
 | Nothing set | tmux — the default, and what every pre-existing session is |
-| Project → **Use tmux by default** | applies to new spawns in that project, including scheduled ones |
-| Spawn dialog → **Use tmux** | this session only |
+| Project → **Use tmux by default** | applies to every session-creating path in that project — spawns (scheduled ones included), Adopt and Import |
+| Spawn / Adopt / Import dialog → **Use tmux** | this session only; the box starts on the project's setting |
 | Reopen / Fork / Respawn dialog → **Use tmux** | the mode the session comes back in — see below |
 | Session detail → ✎ (pencil) | changes the mode the session will use on its next spawn |
 
@@ -590,7 +606,8 @@ With the switch off:
 | Action | Result |
 |---|---|
 | Spawn with `useTmux: false` | runs in **tmux**, `201` — response carries `coerced` |
-| Spawn in a project whose default is headless | runs in **tmux**, `201` — response carries `coerced` |
+| Spawn, Adopt or Import in a project whose default is headless | runs in **tmux**, `201` — response carries `coerced` |
+| **Import** of a bundle that recorded headless | runs in **tmux**, `201` — response carries `coerced` |
 | `PATCH /api/sessions/:uuid` with `useTmux: false` | saved as **tmux**, `200` — response carries `coerced` |
 | `PATCH` with `useTmux: true` on a headless record | allowed, so records can be unwound while the switch is off |
 | `PATCH` of model or effort only | mode field untouched — a headless record stays headless on disk |
