@@ -18,6 +18,8 @@
 #   ./scripts/e2e-env.sh logs [api|web]   tail a service
 #   ./scripts/e2e-env.sh token       print the E2E bearer token
 #   ./scripts/e2e-env.sh env         print shell exports for a scenario run
+#   ./scripts/e2e-env.sh wait <uuid> <status> [timeout]
+#                                    poll a session to a status, honouring 429
 #   ./scripts/e2e-env.sh test-self   self-check: up → assert → down → assert
 #
 # Everything is overridable from the environment; see CONFIG below. Nothing
@@ -196,6 +198,82 @@ api_post() {
   curl -fsS --max-time 20 -X POST \
     -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
     -d "$body" "$(api_base)$path"
+}
+
+# Authenticated GET that keeps the status code *and* the body, so a 429 can be
+# told apart from a transport failure. `api_get` uses `curl -f`, which throws
+# both away. Prints the body, then the code on its own final line.
+api_get_code() {
+  local path="$1" tok
+  tok="$(e2e_token)"
+  curl -sS --max-time 15 -w '\n%{http_code}' \
+    -H "Authorization: Bearer $tok" "$(api_base)$path"
+}
+
+# Seconds the API asked us to back off for, read out of a 429 body
+# ("Rate limit exceeded, retry in 4 seconds"). Falls back to 4 — the value the
+# API has been observed to send — when the body says nothing useful.
+retry_after_secs() {
+  local body="$1" n
+  n="$(printf '%s' "$body" | sed -n 's/.*retry in \([0-9][0-9]*\) second.*/\1/p' | head -1)"
+  printf '%s' "${n:-4}"
+}
+
+# Poll a session until it reaches a status, or give up.
+#
+#   wait_for_status <uuid> <status[|status...]> [timeout-secs]
+#
+# The API rate-limits fast polling — a tight curl loop over
+# GET /api/sessions/:uuid earns a 429 asking for a 4s back-off, and briefly
+# makes the environment look wedged rather than busy. That is correct product
+# behaviour, so this paces itself around it instead: 500ms between polls, and
+# on a 429 it sleeps for as long as the response asked before trying again.
+# Time spent backing off still counts against the timeout.
+#
+# `status` may be an alternation, which is what a real wait usually needs:
+#   wait_for_status "$id" 'idle|needs_input' 120
+#
+# Returns 0 on arrival, 1 on timeout or on a session that has gone away.
+wait_for_status() {
+  local uuid="$1" target="$2" timeout="${3:-60}"
+  local deadline=$((SECONDS + timeout))
+  local out code body status
+
+  while [ $SECONDS -lt $deadline ]; do
+    out="$(api_get_code "/api/sessions/$uuid" 2>/dev/null)"
+    code="${out##*$'\n'}"
+    body="${out%$'\n'*}"
+
+    case "$code" in
+      429)
+        sleep "$(retry_after_secs "$body")"
+        continue
+        ;;
+      404)
+        bad "session $uuid is gone — cannot wait for '$target'"
+        return 1
+        ;;
+      200)
+        status="$(printf '%s' "$body" | python3 -c \
+          'import json,sys;print(json.load(sys.stdin).get("status",""))' 2>/dev/null)"
+        # `case` gives us the alternation for free.
+        case "$status" in
+          $target) return 0 ;;
+        esac
+        ;;
+    esac
+
+    sleep 0.5
+  done
+
+  bad "session $uuid did not reach '$target' within ${timeout}s (last: ${status:-unknown})"
+  return 1
+}
+
+cmd_wait() {
+  local uuid="${1:-}" target="${2:-}" timeout="${3:-60}"
+  [ -n "$uuid" ] && [ -n "$target" ] || die "usage: $0 wait <uuid> <status[|status]> [timeout]"
+  wait_for_status "$uuid" "$target" "$timeout" && ok "session $uuid reached '$target'"
 }
 
 # ---------------------------------------------------------------------------
@@ -841,6 +919,10 @@ cmd_test_self() {
   info "test-self: exercising up → assert → down → assert"
   warn "this wipes $E2E_DATA_DIR twice; it never touches $PROD_DATA_DIR"
 
+  # Before anything is built: the deployed web build's content, so phase 3 can
+  # assert it is unchanged rather than merely old.
+  snapshot_prod_web_build
+
   # Record the deployed instance's state so we can prove we did not disturb
   # it. If it is not running, the checks below degrade to "still not running",
   # which is still the right assertion.
@@ -980,20 +1062,48 @@ test_prod_dir_intact() {
 }
 
 # The `.next` build the deployed unit serves, and the service worker beside
-# it, must be exactly as old as they were. This is what proves the E2E build
-# went to its own distDir and that NEXT_DISABLE_SW kept it out of
-# public/sw.js — the two shared-artifact traps in this setup.
+# it, must be exactly as they were. This is what proves the E2E build went to
+# its own distDir and that NEXT_DISABLE_SW kept it out of public/sw.js — the
+# two shared-artifact traps in this setup.
+#
+# Asserted by content, against a snapshot this run takes before it builds
+# anything. The previous version used recency (`-newermt '-5 minutes'`), which
+# is a proxy for causation rather than causation itself: a deploy that happened
+# five minutes ago is indistinguishable from this run clobbering the build, and
+# test-self false-failed twice on exactly that during the 2026-09-10 sweep.
+PROD_WEB_SNAPSHOT=''
+
+# Content fingerprint of the two shared artifacts. Prints one line per file
+# that exists; a missing file simply contributes nothing, so appearing and
+# disappearing both register as a change.
+prod_web_fingerprint() {
+  local d="$PROD_REPO/apps/web" f
+  [ -d "$d" ] || return 0
+  for f in "$d/.next/BUILD_ID" "$d/public/sw.js"; do
+    [ -f "$f" ] && sha256sum "$f" 2>/dev/null
+  done
+  return 0
+}
+
+# Called at the top of test-self, before anything is built.
+snapshot_prod_web_build() {
+  PROD_WEB_SNAPSHOT="$(prod_web_fingerprint)"
+  if [ -z "$PROD_WEB_SNAPSHOT" ]; then
+    dim 'deployed web build — nothing to fingerprint (no build on this host yet)'
+  fi
+}
+
 test_prod_web_build_intact() {
   local d="$PROD_REPO/apps/web"
   [ -d "$d" ] || return 0   # no deployed checkout on this host — nothing to protect
-  if [ -f "$d/.next/BUILD_ID" ]; then
-    # Untouched in the last 5 minutes, i.e. not rewritten by this run.
-    [ -z "$(find "$d/.next/BUILD_ID" -newermt '-5 minutes' 2>/dev/null)" ] || return 1
+  if [ -z "$PROD_WEB_SNAPSHOT" ]; then
+    # Never built here, so there is nothing this run could have clobbered.
+    # Warn rather than fail: a green check would claim an assertion that was
+    # not actually made.
+    warn 'no pre-run fingerprint of the deployed web build — check skipped'
+    return 0
   fi
-  if [ -f "$d/public/sw.js" ]; then
-    [ -z "$(find "$d/public/sw.js" -newermt '-5 minutes' 2>/dev/null)" ] || return 1
-  fi
-  return 0
+  [ "$(prod_web_fingerprint)" = "$PROD_WEB_SNAPSHOT" ]
 }
 
 test_fixture_count() {
@@ -1024,7 +1134,7 @@ self_report() {
 
 usage() {
   # The header block above, minus the shebang and the trailing bare `#`.
-  sed -n '3,25p' "${BASH_SOURCE[0]}" | sed 's|^# \?||'
+  sed -n '3,27p' "${BASH_SOURCE[0]}" | sed 's|^# \?||'
 }
 
 main() {
@@ -1040,6 +1150,7 @@ main() {
     logs)       cmd_logs "$@" ;;
     token)      cmd_token "$@" ;;
     env)        cmd_env "$@" ;;
+    wait)       cmd_wait "$@" ;;
     test-self)  cmd_test_self "$@" ;;
     ''|-h|--help|help) usage ;;
     *) die "unknown command '$cmd' — try: $0 --help" ;;

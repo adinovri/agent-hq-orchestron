@@ -227,6 +227,44 @@ that is deliberate, and it is what makes a session re-adoptable. It also
 means a run leaves JSONL behind under the config dir. That is fine and
 does not need cleaning between scenarios.
 
+### Waiting for a status, without tripping the rate limiter
+
+The API rate-limits fast polling. A tight `curl` loop over
+`GET /api/sessions/:uuid` earns
+
+```
+429 {"message":"Rate limit exceeded, retry in 4 seconds"}
+```
+
+and so does `DELETE /api/sessions/:uuid` when a cleanup loop runs flat out.
+This is correct product behaviour, not a fault — but a scenario that does not
+expect it reads the 429 as a wedged environment and starts debugging the wrong
+thing. It cost real time in the 2026-09-10 sweep.
+
+Two rules for anything that polls: **leave at least 500ms between polls**, and
+**when a 429 comes back, honour the delay it names** (4s, as of this writing)
+rather than retrying immediately.
+
+The helper does both:
+
+```bash
+./scripts/e2e-env.sh wait <uuid> <status> [timeout-secs]
+
+# a status alternation is usually what you actually want
+./scripts/e2e-env.sh wait "$SESSION" 'idle|needs_input' 120
+```
+
+It polls every 500ms, backs off for as long as a 429 asks, treats a 404 as a
+hard failure (the session is gone — waiting longer will not help), and gives up
+after the timeout, which defaults to 60s. Exit status is 0 on arrival and 1
+otherwise, so it drops straight into a scenario's control flow. Time spent
+backing off counts against the timeout, so a run cannot silently double its own
+budget by being throttled.
+
+Scenario steps that spawn a session and then assert on its state should use it
+instead of a bare `sleep` — a fixed sleep is either too short on a cold cache or
+wasted wall-clock on a warm one.
+
 ## 8. Isolation
 
 `scripts/e2e-env.sh` brings up a second, complete Orchestron so a sweep
