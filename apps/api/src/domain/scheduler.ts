@@ -1,19 +1,12 @@
 import path from 'node:path'
 import { readJson, writeJson, listDir } from '@agent-hq-orchestron/file-store'
 import { CronExpressionParser } from 'cron-parser'
+import type { ScheduleEntry } from '@agent-hq-orchestron/shared'
 
-export interface ScheduleEntry {
-  id: string
-  cron: string
-  projectId: string
-  template?: string
-  prompt?: string
-  vars?: Record<string, string>
-  enabled: boolean
-  createdAt: string
-  lastRunAt?: string
-  nextRunAt?: string
-}
+// The record itself lives in shared so the web list page and the API agree on
+// one shape. Re-exported here because every existing importer reaches for it
+// through the scheduler module.
+export type { ScheduleEntry }
 
 export class ScheduleNotFoundError extends Error {
   constructor(id: string) {
@@ -160,9 +153,20 @@ export class Scheduler {
   }
 
   private async fireEntry(entry: ScheduleEntry): Promise<void> {
+    // Overrides ride along only when the schedule actually set one. An absent
+    // field must stay absent in the body: POST /api/sessions resolves each of
+    // these as `body ?? project.default…`, so omitting is what makes an
+    // unpinned schedule follow the project as it is *at fire time* rather than
+    // as it was when the schedule was written. Sending `undefined` explicitly
+    // would be equivalent here (JSON.stringify drops it) but the intent is
+    // worth spelling out — and `useTmux: false` is a meaningful value, so this
+    // can never collapse into a truthiness check.
     const body = {
       projectId: entry.projectId,
       ...(entry.template ? { template: entry.template, vars: entry.vars } : { prompt: entry.prompt }),
+      ...(entry.model !== undefined ? { model: entry.model } : {}),
+      ...(entry.effort !== undefined ? { effort: entry.effort } : {}),
+      ...(entry.useTmux !== undefined ? { useTmux: entry.useTmux } : {}),
     }
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }

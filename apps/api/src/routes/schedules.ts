@@ -4,6 +4,13 @@ import fp from 'fastify-plugin'
 import { z } from 'zod'
 import YAML from 'yaml'
 import { CronExpressionParser } from 'cron-parser'
+import {
+  applyHeadlessSwitch,
+  headlessCoercion,
+  DEFAULT_ENABLE_HEADLESS_MODE,
+  HEADLESS_COERCED_REASON,
+  type EffortLevel,
+} from '@agent-hq-orchestron/shared'
 import { Scheduler, ScheduleNotFoundError, type ScheduleEntry } from '../domain/scheduler.js'
 
 // Reject cron expressions that don't parse. Pass-2 finding #6: without
@@ -15,6 +22,37 @@ function isValidCron(expr: string): boolean {
   try { CronExpressionParser.parse(expr); return true } catch { return false }
 }
 
+/**
+ * The three per-schedule spawn overrides, in the shape a request body carries
+ * them.
+ *
+ * Every field is three-valued rather than two: present with a value pins it,
+ * *absent* leaves whatever is stored alone, and the empty string (or `null`
+ * for the boolean, which has no empty string) clears the override so the
+ * schedule goes back to following its project. Without that third state an
+ * edit dialog could set an override but never take one back off — an absent
+ * key and a cleared key would look identical on the wire.
+ *
+ * `clearableToUndefined` folds the clear forms to `undefined`; storage writes
+ * JSON, and `JSON.stringify` drops an `undefined` value, so "cleared" lands on
+ * disk as a genuinely absent field. The web dialog builds the same spellings —
+ * it cannot import this helper, because a runtime import from `shared` drags
+ * that package's config module (and `node:fs`) into the client bundle.
+ */
+const ScheduleOverridesShape = {
+  model: z.union([z.string(), z.literal('')]).optional(),
+  effort: z.union([z.enum(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']), z.literal('')]).optional(),
+  useTmux: z.union([z.boolean(), z.null()]).optional(),
+}
+
+const ScheduleOverridesSchema = z.object(ScheduleOverridesShape)
+
+/** `''` / `null` → `undefined`. Leaves a real value, `false` included. */
+function clearableToUndefined<T>(value: T | '' | null | undefined): T | undefined {
+  if (value === '' || value === null || value === undefined) return undefined
+  return value
+}
+
 const CreateScheduleSchema = z.object({
   cron: z.string().min(1).refine(isValidCron, { message: 'invalid cron expression' }),
   projectId: z.string().min(1),
@@ -22,11 +60,68 @@ const CreateScheduleSchema = z.object({
   prompt: z.string().optional(),
   vars: z.record(z.string(), z.string()).optional(),
   enabled: z.boolean().default(true),
-})
+}).extend(ScheduleOverridesShape)
 
-type CreateScheduleInput = z.infer<typeof CreateScheduleSchema>
+/** PATCH was previously handed `req.body` straight through to
+ *  `scheduler.update()`, which spreads it over the stored record — any key at
+ *  all landed in the JSON file. Validating here whitelists the editable
+ *  fields; zod drops the absent ones, which is exactly patch semantics
+ *  (absent = leave alone) once the "clear" spellings are handled separately. */
+const PatchScheduleSchema = z.object({
+  cron: z.string().min(1).refine(isValidCron, { message: 'invalid cron expression' }).optional(),
+  projectId: z.string().min(1).optional(),
+  template: z.string().optional(),
+  prompt: z.string().optional(),
+  vars: z.record(z.string(), z.string()).optional(),
+  enabled: z.boolean().optional(),
+}).extend(ScheduleOverridesShape)
 
-export function schedulesPlugin(scheduler: Scheduler) {
+/** The stored shape of the three overrides, plus whether the global headless
+ *  switch had to rewrite one on the way in. */
+interface ResolvedOverrides {
+  model: string | undefined
+  effort: EffortLevel | undefined
+  useTmux: boolean | undefined
+  coerced: boolean
+}
+
+/**
+ * Normalise the override triple out of a request body.
+ *
+ * The headless kill switch is applied the same way the session routes apply
+ * it: only an *explicit* `useTmux: false` can be coerced, so a body that says
+ * nothing about the mode is never quietly pinned to tmux. A schedule that
+ * leaves the mode unset keeps following its project, and the coercion that
+ * matters for it happens later at `POST /api/sessions` when the schedule
+ * actually fires — this pass is the earlier of the two, not the only one.
+ */
+function resolveOverrides(
+  input: z.infer<typeof ScheduleOverridesSchema>,
+  headlessEnabled: boolean,
+): ResolvedOverrides {
+  const useTmux = clearableToUndefined(input.useTmux)
+  if (useTmux === undefined) {
+    return {
+      model: clearableToUndefined(input.model),
+      effort: clearableToUndefined(input.effort),
+      useTmux: undefined,
+      coerced: false,
+    }
+  }
+  const applied = applyHeadlessSwitch(useTmux, headlessEnabled)
+  return {
+    model: clearableToUndefined(input.model),
+    effort: clearableToUndefined(input.effort),
+    useTmux: applied.useTmux,
+    coerced: applied.coerced,
+  }
+}
+
+export function schedulesPlugin(
+  scheduler: Scheduler,
+  serverConfig: { enableHeadlessMode?: boolean } = {},
+) {
+  const headlessEnabled = serverConfig.enableHeadlessMode ?? DEFAULT_ENABLE_HEADLESS_MODE
   return fp(async (app: FastifyInstance) => {
     app.get('/api/schedules', async () => {
       const entries = await scheduler.list()
@@ -51,6 +146,14 @@ export function schedulesPlugin(scheduler: Scheduler) {
         return reply.code(422).send({ error: 'prompt or template required' })
       }
 
+      const overrides = resolveOverrides(body.data, headlessEnabled)
+      if (overrides.coerced) {
+        req.log.info(
+          { projectId: body.data.projectId, requestedUseTmux: false, effectiveUseTmux: true },
+          `coerced useTmux=false to true (${HEADLESS_COERCED_REASON})`,
+        )
+      }
+
       const entry = await scheduler.create({
         id: crypto.randomUUID(),
         cron: body.data.cron,
@@ -60,16 +163,56 @@ export function schedulesPlugin(scheduler: Scheduler) {
         vars: body.data.vars,
         enabled: body.data.enabled,
         createdAt: new Date().toISOString(),
+        model: overrides.model,
+        effort: overrides.effort,
+        useTmux: overrides.useTmux,
       })
 
-      return reply.code(201).send(entry)
+      // Rides along only when something was actually coerced, so a client can
+      // treat its presence as "raise the notice" — same contract as the
+      // session routes.
+      const coerced = headlessCoercion(overrides.coerced)
+      return reply.code(201).send(coerced ? { ...entry, coerced } : entry)
     })
 
     app.patch('/api/schedules/:id', async (req, reply) => {
       const { id } = req.params as { id: string }
+      const body = PatchScheduleSchema.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      // Copy across only the keys the caller actually sent. `undefined` is a
+      // meaningful assignment for the three overrides — writeJson serialises
+      // through JSON.stringify, which drops an undefined value, so the field
+      // comes back off the record entirely and the schedule resumes following
+      // its project.
+      const patch: Partial<ScheduleEntry> = {}
+      const data = body.data
+      if (data.cron !== undefined) patch.cron = data.cron
+      if (data.projectId !== undefined) patch.projectId = data.projectId
+      if (data.template !== undefined) patch.template = data.template
+      if (data.prompt !== undefined) patch.prompt = data.prompt
+      if (data.vars !== undefined) patch.vars = data.vars
+      if (data.enabled !== undefined) patch.enabled = data.enabled
+
+      let patchCoerced = false
+      if ('model' in data) patch.model = clearableToUndefined(data.model)
+      if ('effort' in data) patch.effort = clearableToUndefined(data.effort)
+      if ('useTmux' in data) {
+        const resolved = resolveOverrides({ useTmux: data.useTmux }, headlessEnabled)
+        patch.useTmux = resolved.useTmux
+        patchCoerced = resolved.coerced
+        if (patchCoerced) {
+          req.log.info(
+            { scheduleId: id, requestedUseTmux: false, effectiveUseTmux: true },
+            `coerced useTmux=false to true (${HEADLESS_COERCED_REASON})`,
+          )
+        }
+      }
+
       try {
-        const updated = await scheduler.update(id, req.body as Partial<CreateScheduleInput>)
-        return updated
+        const updated = await scheduler.update(id, patch)
+        const coerced = headlessCoercion(patchCoerced)
+        return coerced ? { ...updated, coerced } : updated
       } catch (err) {
         if (err instanceof ScheduleNotFoundError) return reply.code(404).send({ error: err.message })
         throw err

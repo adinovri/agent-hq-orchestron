@@ -362,3 +362,35 @@ export interface HealthStatus {
   tmux: string
   storage: string
 }
+
+/**
+ * A cron-triggered spawn recipe. Persisted one-JSON-file-per-entry under
+ * `<dataDir>/schedules/`; the Scheduler turns each into a `POST /api/sessions`
+ * when its cron fires.
+ *
+ * `model`, `effort` and `useTmux` are *overrides*, not a snapshot: leaving one
+ * unset means "whatever the project is configured with when this fires", so a
+ * project whose default model changes carries its schedules with it. Setting
+ * one pins that field for this schedule alone, permanently — nothing tracks
+ * the project back afterwards.
+ */
+export interface ScheduleEntry {
+  id: string
+  cron: string
+  projectId: string
+  template?: string
+  prompt?: string
+  vars?: Record<string, string>
+  enabled: boolean
+  createdAt: string
+  lastRunAt?: string
+  nextRunAt?: string
+  /** Override the project's default model for sessions this schedule spawns. */
+  model?: string
+  /** Override the project's default effort. */
+  effort?: EffortLevel
+  /** Override the project's default run mode. `false` = headless. Read it as
+   *  `useTmux ?? <project default> ?? true`, never bare — same rule as
+   *  SpawnConfig. */
+  useTmux?: boolean
+}
