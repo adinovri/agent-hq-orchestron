@@ -80,6 +80,8 @@ export function SessionMetadataEditDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
       <div
+        role="dialog"
+        aria-modal="true"
         className="w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
