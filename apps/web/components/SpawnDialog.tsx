@@ -4,9 +4,11 @@ import { useState, useEffect, useRef, DragEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { apiFetch, fetchJson } from '@/lib/fetcher'
 import { X, Paperclip, FileText, Image as ImageIcon, FileCode, File as FileIcon } from 'lucide-react'
-import { modelsFor, effortsFor, implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
+import { modelsFor, effortsFor } from '@/lib/models'
 import { useHeadlessEnabled } from '@/lib/server-config'
 import { noticeIfCoerced } from '@/lib/notice'
+import { ProjectInfoPanel } from '@/components/ProjectInfoPanel'
+import { projectFieldDefaults, defaultRowLabel, type ProjectFormOption } from '@/lib/project-info'
 
 interface AttachedFile {
   id: string
@@ -38,16 +40,7 @@ interface TemplateInfo {
 interface Props {
   open: boolean
   onClose: () => void
-  projects: Array<{
-    id: string
-    name: string
-    agentType?: import('@agent-hq-orchestron/shared').AgentType
-    path?: string
-    configDir?: string
-    defaultModel?: string
-    defaultEffort?: import('@agent-hq-orchestron/shared').EffortLevel
-    defaultUseTmux?: boolean
-  }>
+  projects: ProjectFormOption[]
   templates: TemplateInfo[]
   onSpawned: () => void
 }
@@ -60,22 +53,9 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
   const currentProject = projects.find((p) => p.id === projectId)
   const selectedAgentType = currentProject?.agentType
   // What "Default" resolves to at spawn: project.defaultModel > harness default.
-  const effectiveDefaultModel = currentProject?.defaultModel ?? implicitDefaultModel(selectedAgentType)
-  const effectiveDefaultEffort = currentProject?.defaultEffort ?? implicitDefaultEffort(selectedAgentType)
-  const defaultModelSource = currentProject?.defaultModel ? 'project' : 'harness'
-  const defaultEffortSource = currentProject?.defaultEffort ? 'project' : 'harness'
-  const DEFAULT_MODEL_ROW = {
-    value: '',
-    label: effectiveDefaultModel
-      ? `Default — ${effectiveDefaultModel}${defaultModelSource === 'harness' ? ' (harness)' : ' (project)'}`
-      : 'Default (project setting)',
-  }
-  const DEFAULT_EFFORT_ROW = {
-    value: '',
-    label: effectiveDefaultEffort
-      ? `Default — ${effectiveDefaultEffort}${defaultEffortSource === 'harness' ? ' (harness)' : ' (project)'}`
-      : 'Default (project setting)',
-  }
+  const defaults = projectFieldDefaults(currentProject)
+  const DEFAULT_MODEL_ROW = { value: '', label: defaultRowLabel(defaults.model, defaults.modelSource) }
+  const DEFAULT_EFFORT_ROW = { value: '', label: defaultRowLabel(defaults.effort, defaults.effortSource) }
   const [template, setTemplate] = useState('')
   const [prompt, setPrompt] = useState('')
   const [model, setModel] = useState('')
@@ -86,7 +66,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
   // `?? true`: a project with no stored preference means tmux.
   const [useTmuxOverride, setUseTmuxOverride] = useState<boolean | null>(null)
   const headlessEnabled = useHeadlessEnabled()
-  const projectDefaultUseTmux = currentProject?.defaultUseTmux ?? true
+  const projectDefaultUseTmux = defaults.useTmux
   // With the global switch off, tmux is the only reachable value — force it
   // over both the user's override and a headless project default. The
   // checkbox is hidden in that state, so this only feeds the helper text
@@ -271,39 +251,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
                 ))}
               </select>
             )}
-            {currentProject && (() => {
-              const isCodex = selectedAgentType === 'codex'
-              const cfgEnvName = isCodex ? 'codex home' : 'claude config dir'
-              const cfgDefault = isCodex ? '~/.codex' : '~/.claude'
-              const effectiveCfg = currentProject.configDir ?? cfgDefault
-              const cfgUnset = !currentProject.configDir
-              return (
-                <div className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400 space-y-0.5 font-mono">
-                  {selectedAgentType && (
-                    <div>agent: <span className="text-zinc-800 dark:text-zinc-200">{selectedAgentType}</span></div>
-                  )}
-                  {currentProject.path && (
-                    <div className="break-all">workspace: <span className="text-zinc-800 dark:text-zinc-200">{currentProject.path}</span></div>
-                  )}
-                  <div className="break-all" title={isCodex ? 'CODEX_HOME (from project.agentConfig.env)' : 'CLAUDE_CONFIG_DIR (from project.agentConfig.env)'}>
-                    {cfgEnvName}: <span className="text-zinc-800 dark:text-zinc-200">{effectiveCfg}</span>
-                    {cfgUnset && <span className="text-zinc-400 italic ml-1">(harness default)</span>}
-                  </div>
-                  {effectiveDefaultModel && (
-                    <div>
-                      default model: <span className="text-zinc-800 dark:text-zinc-200">{effectiveDefaultModel}</span>
-                      <span className="text-zinc-400 italic ml-1">({defaultModelSource})</span>
-                    </div>
-                  )}
-                  {effectiveDefaultEffort && (
-                    <div>
-                      default effort: <span className="text-zinc-800 dark:text-zinc-200">{effectiveDefaultEffort}</span>
-                      <span className="text-zinc-400 italic ml-1">({defaultEffortSource})</span>
-                    </div>
-                  )}
-                </div>
-              )
-            })()}
+            <ProjectInfoPanel project={currentProject} className="mt-2" />
           </div>
 
           {/* Template (only if any exist) */}

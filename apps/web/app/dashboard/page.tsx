@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { FilterBar, FilterState } from '@/components/FilterBar'
 import { SessionList } from '@/components/SessionList'
 import { SpawnDialog } from '@/components/SpawnDialog'
+import { projectConfigDir } from '@/lib/project-info'
 import { AdoptSessionDialog } from '@/components/AdoptSessionDialog'
 import { ImportSessionDialog } from '@/components/ImportSessionDialog'
 import { SpawnActionsMenu } from '@/components/SpawnActionsMenu'
@@ -248,9 +249,7 @@ export default function DashboardPage() {
           defaultModel: p.defaultModel,
           defaultEffort: p.defaultEffort,
           defaultUseTmux: p.defaultUseTmux,
-          configDir: p.agentType === 'codex'
-            ? p.agentConfig?.env?.['CODEX_HOME']
-            : p.agentConfig?.env?.['CLAUDE_CONFIG_DIR'],
+          configDir: projectConfigDir(p),
         }))}
         templates={templates}
         onSpawned={() => qc.invalidateQueries({ queryKey: ['sessions'] })}
@@ -266,9 +265,7 @@ export default function DashboardPage() {
           agentType: p.agentType,
           path: p.path,
           defaultUseTmux: p.defaultUseTmux,
-          configDir: p.agentType === 'codex'
-            ? p.agentConfig?.env?.['CODEX_HOME']
-            : p.agentConfig?.env?.['CLAUDE_CONFIG_DIR'],
+          configDir: projectConfigDir(p),
         }))}
       />
 
@@ -282,9 +279,7 @@ export default function DashboardPage() {
           agentType: p.agentType,
           path: p.path,
           defaultUseTmux: p.defaultUseTmux,
-          configDir: p.agentType === 'codex'
-            ? p.agentConfig?.env?.['CODEX_HOME']
-            : p.agentConfig?.env?.['CLAUDE_CONFIG_DIR'],
+          configDir: projectConfigDir(p),
         }))}
       />
     </div>

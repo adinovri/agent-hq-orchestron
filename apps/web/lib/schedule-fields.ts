@@ -1,56 +1,9 @@
-import type { AgentType, EffortLevel } from '@agent-hq-orchestron/shared'
-import { implicitDefaultModel, implicitDefaultEffort } from './models'
+import type { ProjectFormOption } from './project-info'
 
-/** The slice of a project the schedule form needs: enough to know which
- *  harness catalogs to offer and what "Default" will resolve to. */
-export interface ScheduleProjectOption {
-  id: string
-  name: string
-  agentType?: AgentType
-  defaultModel?: string
-  defaultEffort?: EffortLevel
-  defaultUseTmux?: boolean
-}
-
-/** Where a displayed default came from — the project's own setting, or the
- *  harness fallback that applies when the project set nothing. */
-export type DefaultSource = 'project' | 'harness'
-
-export interface ScheduleFieldDefaults {
-  model?: string
-  modelSource: DefaultSource
-  effort?: string
-  effortSource: DefaultSource
-  /** No third state: a project that set nothing means tmux. */
-  useTmux: boolean
-}
-
-/**
- * What the three unpinned fields will resolve to for a given project.
- *
- * Derived from the project on every render rather than copied into form
- * state, so switching the project dropdown re-labels the "Default" rows
- * immediately — and, more importantly, so the labels can never drift from the
- * project they claim to describe.
- */
-export function scheduleFieldDefaults(project: ScheduleProjectOption | undefined): ScheduleFieldDefaults {
-  return {
-    model: project?.defaultModel ?? implicitDefaultModel(project?.agentType),
-    modelSource: project?.defaultModel ? 'project' : 'harness',
-    effort: project?.defaultEffort ?? implicitDefaultEffort(project?.agentType),
-    effortSource: project?.defaultEffort ? 'project' : 'harness',
-    useTmux: project?.defaultUseTmux ?? true,
-  }
-}
-
-/** Label for the leading "leave it to the project" row of a model/effort
- *  dropdown. Names the value the schedule will actually fire with, so the
- *  choice is between two concrete models rather than between one model and a
- *  blank. */
-export function defaultRowLabel(value: string | undefined, source: DefaultSource): string {
-  if (!value) return 'Default (project setting)'
-  return `Default — ${value}${source === 'harness' ? ' (harness)' : ' (project)'}`
-}
+/** The schedule form talks about projects in exactly the same terms the spawn
+ *  form does — see `lib/project-info.ts` for the shape and for what an
+ *  unpinned model/effort/mode resolves to. */
+export type ScheduleProjectOption = ProjectFormOption
 
 export interface ScheduleFormValues {
   projectId: string
