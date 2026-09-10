@@ -149,14 +149,34 @@ The dialog:
   — no live claude/codex process on the host is currently holding it
   (scanned via `/proc/*/cmdline`). If any check fails, an inline
   amber/red banner explains what to fix. Adopt button stays disabled
-  until validation is green.
-- **Adopt session** — orchestron spawns a fresh tmux with the harness's
-  native resume flag (`claude --resume <uuid>` / `codex resume <uuid>`),
-  reads the first user prompt out of the transcript to seed the
-  dashboard title, wires the record through the same
-  `spawning → waiting → idle` path a Reopen would follow (no
-  re-sending the prompt — the resumed conversation already carries
-  its history), then redirects to the session detail page.
+  until validation is green. Every check applies in headless mode too —
+  a headless adopt starts no process, but its first turn will, so the
+  race is deferred rather than avoided.
+- **Use tmux** — checkbox, default **checked**. Ticked, adopting spawns
+  a live tmux immediately. Unticked, the session is adopted headless:
+  nothing starts, the record lands `idle`, and your next message is its
+  first `claude -p --resume` / `codex exec resume`. Hidden when
+  `enableHeadlessMode` is off, in which case the adopt runs in tmux and
+  a toast says so.
+
+  The source session's own mode does not constrain this. Both harnesses
+  keep one transcript store that `-p` and the interactive TUI scan
+  identically, so a conversation started headless adopts into tmux and
+  vice versa — the same cross-mode behaviour Reopen and Fork rely on.
+
+  Pick **tmux** when you want to watch or attach, when you are not sure
+  how the session was started, or when it may need the pending-prompt
+  banner. Pick **headless** when you are adopting a background job you
+  only intend to drive by message, or when you want the record parked
+  with no process attached until you actually use it.
+- **Adopt session** — for a tmux adopt, orchestron spawns a fresh tmux
+  with the harness's native resume flag (`claude --resume <uuid>` /
+  `codex resume <uuid>`) and wires the record through the same
+  `spawning → waiting → idle` path a Reopen would follow (no re-sending
+  the prompt — the resumed conversation already carries its history).
+  A headless adopt skips all of that and goes straight to `idle`. Either
+  way orchestron reads the first user prompt out of the transcript to
+  seed the dashboard title, then redirects to the session detail page.
 
 Adopted records get `metadata.adopted: true` and
 `metadata.adoptedFromUuid` so you can distinguish them from natively-
@@ -166,9 +186,9 @@ Not for:
 
 - Reopening a session orchestron already knows about — use the Reopen
   action on the session card instead.
-- Read-only "just look at the transcript" — adopt spawns a real tmux
-  with a real `--resume`. If you only want to read past output, open
-  the JSONL directly.
+- Read-only "just look at the transcript" — adopt creates a live,
+  manageable record (and in tmux mode, a real `--resume` process). If
+  you only want to read past output, open the JSONL directly.
 
 Notes on `initialPrompt` for adopted sessions:
 
@@ -233,6 +253,11 @@ Bundle format picked automatically per harness:
 | codex with rollout on disk | `.jsonl` | Raw `rollout-*-<uuid>.jsonl` from `<CODEX_HOME>/sessions/YYYY/MM/DD/` |
 | codex TUI-only (SQLite only) | `.tar.gz` | `metadata.json` + `dump.jsonl` — one line per `thread_turns` / `thread_items` / `thread_history_projection_state` row scoped to this thread |
 
+`metadata.json` in a `.tar.gz` bundle records `useTmux`, so the session's
+run mode travels between hosts alongside its uuid and workspace. The
+`.jsonl` formats have no envelope to put it in — they are the raw
+transcript — so a jsonl bundle carries no mode.
+
 Filename convention: `orchestron-<agentType>-<uuid>.jsonl` or
 `orchestron-codex-tui-<uuid>.tar.gz`. Content-Disposition drives it;
 the client falls back to `orchestron-session-<orchUuid>.<ext>` if the
@@ -249,6 +274,16 @@ dialog:
   source UUID before you submit. If the detected harness disagrees with
   the destination project, an amber banner warns you the server will
   refuse with 409.
+- **Use tmux** — checkbox, shown checked but only sent once you touch
+  it, because the dialog cannot read a bundle's metadata without
+  unpacking a gzip in the browser. Left alone, a `.tar.gz` is restored
+  in whatever mode it recorded, and anything else (a `.jsonl`, or a
+  bundle exported before the field existed) is restored in tmux. Touch
+  it and it becomes an explicit override that wins over the bundle. The
+  hint under the box says which of those two situations you are in.
+  Hidden when `enableHeadlessMode` is off, in which case the import
+  runs in tmux and a toast says so — including when it was the *bundle*
+  that asked for headless.
 - **Import session** — orchestron:
   1. Parses the first ~10 JSONL lines (or `metadata.json` inside the
      tar) to confirm harness + source UUID.
@@ -269,13 +304,20 @@ dialog:
      destination `thread_history_1.sqlite` to already exist (run
      `codex` at least once on the destination host).
   5. Calls the same `manager.adopt()` used by the Adopt button, so
-     the imported session picks up an orchestron record, seeds
-     `initialPrompt` from the transcript, and spawns a fresh tmux
-     via `claude --resume` / `codex resume`.
+     the imported session picks up an orchestron record and seeds
+     `initialPrompt` from the transcript — spawning a fresh tmux via
+     `claude --resume` / `codex resume` in tmux mode, or landing
+     straight in `idle` with nothing running in headless mode.
 
 Response includes `importedFromUuid` (the original) and
 `regeneratedUuid: true|false` so the caller can tell whether a
-collision fired the rewrite path.
+collision fired the rewrite path, plus `coerced` when the kill switch
+turned a headless import into a tmux one.
+
+Calling the endpoint directly, `useTmux` is an optional multipart field
+accepting exactly `"true"` or `"false"` — multipart carries no types, so
+anything else is a 400 rather than a guess. Omit it to get the
+bundle-then-tmux fallback described above.
 
 Round-trip verified: export on host A → import on host B → the
 resumed conversation carries its full history exactly as it did on A.
@@ -1081,7 +1123,7 @@ pre-baked, then passes `--mcp-config <path>` to `claude`.
 
 | Tool | Purpose |
 |---|---|
-| `spawn_session` | Spawn a child session (project, agent, model, effort per-call — all independent from caller) |
+| `spawn_session` | Spawn a child session (project, agent, model, effort, run mode per-call — all independent from caller) |
 | `send_input` | Queue a user turn into any session by uuid |
 | `get_status` | Read a session's current metadata |
 | `read_transcript` | Read entries with offset+limit |
@@ -1091,6 +1133,24 @@ pre-baked, then passes `--mcp-config <path>` to `claude`.
 | `note_get` | Read a shared note |
 | `note_set` | Set/upsert a shared note (`updatedBy` auto-filled with your session id) |
 | `note_list` | List notes, optional prefix filter |
+
+**Run mode on `spawn_session`.** The optional `useTmux` boolean picks
+whether the child runs in tmux or headless, so a parent agent can fan out
+into headless one-shot children instead of a rack of tmux windows.
+
+Omitted, the parent's own mode is inherited — but only when the child
+stays in the parent's project. A child spawned into a *different* project
+gets that project's `defaultUseTmux` instead: a tool call that never
+mentioned run mode should not override an operator's per-project setting,
+and "same project, same kind of work, same mode" is the only reading where
+inheritance is unambiguously what the caller meant. Reading the parent is
+best-effort — an unreadable parent record falls back to the project
+default rather than failing the spawn.
+
+With `enableHeadlessMode` off the API coerces the child to tmux as it does
+for every other caller, and the tool result carries the `coerced` payload
+through so the parent is told rather than left to infer it. The result
+always reports the effective `useTmux` alongside `sessionId` and `status`.
 
 **Guardrails on `spawn_session`** (enforced at `SessionManager.spawn`
 whenever `parentSessionId` is set — so REST and MCP callers get the same

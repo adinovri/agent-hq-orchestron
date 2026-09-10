@@ -30,8 +30,11 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
   interruptible, still forkable — what you give up is the live TUI to
   attach to and sleep-on-idle. An agent with no pane asks questions through
   a structured `inquiry` field that the session page renders as a form.
-  Reopen, Fork and Respawn each carry a *Use tmux* checkbox, so a session
-  can cross between modes in either direction without losing context.
+  Every path that creates or revives a session carries a *Use tmux*
+  checkbox — Spawn, Reopen, Fork, Respawn, Adopt and Import — so a
+  session can cross between modes in either direction without losing
+  context. The `spawn_session` MCP tool takes the same choice, so an
+  agent can fan out into headless children rather than a rack of panes.
   `"enableHeadlessMode": false` in `~/.orchestron/config.json` is the
   fleet-wide off switch — it hides the toggle and coerces headless
   requests to tmux rather than failing them. See
@@ -63,9 +66,10 @@ file-based storage) as a TypeScript + Node.js + Next.js web app.
   arrow-nav + Enter into the pane to answer the modal.
 - **Adopt existing sessions** — import a claude / codex session started
   outside orchestron (via `claude --resume`, a background job, another
-  supervisor) into a new orchestron record. Pre-check refuses adoption
-  when a live process on the host is already holding the UUID, so two
-  writers can't race the same transcript.
+  supervisor) into a new orchestron record, in tmux or headless. The
+  source session's own mode does not constrain the choice. Pre-check
+  refuses adoption when a live process on the host is already holding
+  the UUID, so two writers can't race the same transcript.
 - **Delete record** — trash icon on terminal-state sessions removes the
   orchestron record without touching the harness transcript, so a
   session can always be re-adopted later.
