@@ -39,7 +39,7 @@ Read [`00-setup.md`](00-setup.md) first. The rest are independent.
 | [`00-setup.md`](00-setup.md) | Global preconditions, fixture projects, token, cleanup helpers |
 | [`spawn-session.md`](spawn-session.md) | Spawn dialog — project info panel, model/effort override, *Use tmux*, attachments, templates |
 | [`session-lifecycle.md`](session-lifecycle.md) | Reopen / Fork / Respawn (with mode toggle), Archive, Kill, sleep + wake, Delete record |
-| [`headless-flow.md`](headless-flow.md) | Headless multi-turn, interrupt, input gating mid-turn, structured `inquiry` form |
+| [`headless-flow.md`](headless-flow.md) | Headless multi-turn, interrupt, input gating mid-turn, structured `inquiry` form, symbolic sleeping |
 | [`adopt-import.md`](adopt-import.md) | Adopt an outside session (5 validation layers), Import bundle, where *Use tmux* comes from |
 | [`export-import.md`](export-import.md) | Bundle export formats, cross-host round-trip, UUID collision regeneration |
 | [`metadata-edit.md`](metadata-edit.md) | Pencil dialog — model / effort / *Use tmux*, and the state gates on each |

@@ -380,7 +380,8 @@ Reopen, Respawn, or wake from sleep. Active sessions have claude already
 bound to a specific model, so the server refuses the patch (409) and the
 UI hides the button.
 
-**Use tmux is locked at `idle` / `needs_input`.** The checkbox greys out
+**Use tmux is locked while a headless session rests** — at `idle`,
+`needs_input` or `sleeping`. The checkbox greys out
 and the dialog points at Reopen, Fork and Respawn instead; a `PATCH`
 carrying `useTmux` in those states is refused with **400** and nothing in
 the patch lands, model and effort included. Everything else in the dialog
@@ -496,11 +497,17 @@ any state       ──▶ failed  (crash)
 ```
 
 Headless sessions follow the same shape with two differences: there is no
-TUI to wait for, so no `waiting`; and nothing is held between turns, so no
-`sleeping`. The child process is what is ephemeral — the session is not.
+TUI to wait for, so no `waiting`; and the sleep on either side of the idle
+timeout is **symbolic** — the record moves, nothing is released, and the
+wake costs no spawn. The child process is what is ephemeral; the session
+is not.
 
 ```
 spawning ──▶ running ──▶ idle ──▶ (send input) ──▶ running ──▶ …
+                  │        │
+                  │        ├──▶ sleeping   (after IDLE_TIMEOUT, symbolic)
+                  │        │        │
+                  │        │        └──▶ send input ──▶ idle ──▶ running  (free wake)
                   │        │
                   │        └──▶ succeeded  (archive)
                   ├──▶ needs_input  (turn returned a structured inquiry)
@@ -548,7 +555,7 @@ terminal state only when you Kill or Archive it.
 | Schedule dialog → **Use tmux** | every run of that schedule; unset follows the project — see [Schedules](#4-schedules) |
 | Spawn / Adopt / Import dialog → **Use tmux** | this session only; the box starts on the project's setting |
 | Reopen / Fork / Respawn dialog → **Use tmux** | the mode the session comes back in — see below |
-| Session detail → ✎ (pencil) | changes the mode the session will use on its next spawn — **terminal or sleeping only** |
+| Session detail → ✎ (pencil) | changes the mode the session will use on its next spawn — **terminal only** for a headless record, terminal or sleeping for a tmux one |
 
 The mode is baked into the process arguments when a turn starts, so it
 cannot change mid-flight. The pencil is editable whenever nothing live is
@@ -559,9 +566,13 @@ between turns.
 #### Mode is locked while a session rests
 
 The pencil's **Use tmux** checkbox is narrower than its Model and Effort
-selects. It is live on a **terminal or sleeping** record and greyed out on
-a headless one at `idle` / `needs_input`, where the dialog names Reopen,
-Fork and Respawn instead. `PATCH /api/sessions/:uuid` enforces the same
+selects. It is live on a **terminal** record, and on a **sleeping tmux**
+one — that sleep really did release the window, so the next send has to
+spawn and the new mode becomes real. It is greyed out on a headless record
+at any resting state (`idle`, `needs_input`, `sleeping`), where the dialog
+names Reopen, Fork and Respawn instead: a headless wake takes no spawn, so
+there is nothing for the new mode to take effect on.
+`PATCH /api/sessions/:uuid` enforces the same
 rule: `useTmux` in those states is **400**, and the whole patch is refused
 so nothing lands half-applied.
 
@@ -650,7 +661,7 @@ With the switch off:
 | Spawn, Adopt or Import in a project whose default is headless | runs in **tmux**, `201` — response carries `coerced` |
 | **Import** of a bundle that recorded headless | runs in **tmux**, `201` — response carries `coerced` |
 | `PATCH /api/sessions/:uuid` with `useTmux: false` | saved as **tmux**, `200` — response carries `coerced` |
-| `PATCH` with `useTmux: true` on a headless record | allowed on terminal / sleeping, so records can be unwound while the switch is off; **400** at `idle` / `needs_input` |
+| `PATCH` with `useTmux: true` on a headless record | allowed on terminal records, so they can be unwound while the switch is off; **400** at `idle` / `needs_input` / `sleeping` |
 | `PATCH` of model or effort only | mode field untouched — a headless record stays headless on disk |
 | **Reopen** / **Fork** / **Respawn** with **Use tmux** unticked | comes back in **tmux** — response carries `coerced` |
 | **Reopen** / **Fork** / **Respawn** with no mode given | comes back in **tmux** whatever the record says |
@@ -726,10 +737,10 @@ shape of session:
 | Follow-up input | yes, and queueable mid-turn | yes, but **not** mid-turn — one turn at a time |
 | Interrupt a turn | yes (Escape) | yes (SIGTERM); session returns to `idle` |
 | Ask the user a question | selector modal in the pane | structured `inquiry` — see below |
-| Sleep / wake on idle | yes | n/a — nothing is held between turns |
+| Sleep / wake on idle | yes — the sleep releases the tmux window | yes, but symbolic — nothing to release, and the wake is free |
 | Reopen / Fork / Respawn | yes | yes, and either mode can be the target |
 | `wait_for_idle` MCP tool | available | withheld — see below |
-| Pool cap slot | held until sleep or terminal | held only while a turn is in flight |
+| Pool cap slot | held until sleep or terminal | held only while a turn is in flight — `idle` and `sleeping` are both free |
 
 The one input restriction is real and worth understanding: a tmux TUI
 buffers a pasted prompt and runs it as the next turn, so you can queue
@@ -772,7 +783,20 @@ mid-run, or attach to watch it work.
 - *An idle headless session does not occupy a pool-cap slot.* Between
   turns it holds no tmux, no pty and no pid, so counting it would let a
   pile of finished one-shots block new spawns for nothing. It counts again
-  the moment a turn is in flight.
+  the moment a turn is in flight. `sleeping` is free for the same reason.
+- *Headless sleeping is a label, not a shutdown.* After `IDLE_TIMEOUT` the
+  idle sweeper moves a headless session to `sleeping` exactly as it does a
+  tmux one, but where the tmux sweep kills a window, the headless sweep
+  writes the record and stops. Nothing is killed, nothing is torn down,
+  nothing is cleaned up — there was never anything holding on. It exists so
+  the dashboard can tell a session that finished a turn a second ago from
+  one abandoned since yesterday, and so the idle list stops growing without
+  bound. Sending input wakes it: `sleeping → idle` and straight into the
+  next `-p --resume` turn, with none of the tmux wake-up's cold start. The
+  one thing it costs you is the mode toggle — the ✎ pencil greys the **Use
+  tmux** control out on a sleeping headless record, same as at `idle`,
+  because waking takes no spawn for the new mode to become real. Reopen /
+  Fork / Respawn are still the way to change mode.
 - *An API restart mid-turn lands the session in `idle`, not `failed`.* The
   turn is owned by an in-memory promise that dies with the process, so
   nothing would ever land it. The turn's output is already in the harness's
