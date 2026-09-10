@@ -42,7 +42,10 @@ interface Props {
   onClose: () => void
   projects: ProjectFormOption[]
   templates: TemplateInfo[]
-  onSpawned: () => void
+  /** The created session record, straight off the `201` body. The dashboard
+   *  needs the id to navigate; it is passed rather than refetched because the
+   *  list query is invalidated in the same callback and would race. */
+  onSpawned: (session: unknown) => void
 }
 
 // Model + effort options are harness-aware — computed inside the component
@@ -186,9 +189,13 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
         })
       }
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      // The whole record comes back on `201`, id included. Parsing failure is
+      // not a failed spawn: the session exists either way, so the body is
+      // handed on as-is and the caller decides what it can do with it.
+      const created = await res.json().catch(() => null) as unknown
       // The dialog closes right after this, so the notice has to be raised
       // from the app-level toast stack rather than shown inline here.
-      noticeIfCoerced(await res.json())
+      noticeIfCoerced(created)
       // Clear + close
       setPrompt('')
       setTemplate('')
@@ -196,7 +203,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
       setModel('')
       setEffort('')
       setUseTmuxOverride(null)
-      onSpawned()
+      onSpawned(created)
       onClose()
     } catch (err) {
       setError((err as Error).message)

@@ -8,6 +8,8 @@
  * and covers `lib/`, not component rendering.
  */
 
+import { sessionHref } from './session-href'
+
 export interface ScheduleRunResponse {
   ok?: boolean
   sessionUuid?: unknown
@@ -24,13 +26,7 @@ export interface ScheduleRunResponse {
  */
 export function scheduleRunHref(body: unknown): string | null {
   if (!body || typeof body !== 'object') return null
-  const uuid = (body as ScheduleRunResponse).sessionUuid
-  if (typeof uuid !== 'string') return null
-  const trimmed = uuid.trim()
-  if (!trimmed) return null
-  // The id lands straight in a path segment. Anything a UUID never contains
-  // is refused rather than escaped: a traversal or a query string smuggled
-  // into a router.push() is not a route we want to construct at all.
-  if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) return null
-  return `/session/${trimmed}`
+  // The id lands straight in a path segment, so `sessionHref` — shared with
+  // the spawn dialog — is what refuses anything a UUID never contains.
+  return sessionHref((body as ScheduleRunResponse).sessionUuid)
 }

@@ -7,6 +7,7 @@ import { FilterBar, FilterState } from '@/components/FilterBar'
 import { SessionList } from '@/components/SessionList'
 import { SpawnDialog } from '@/components/SpawnDialog'
 import { projectConfigDir } from '@/lib/project-info'
+import { spawnedSessionHref } from '@/lib/session-href'
 import { AdoptSessionDialog } from '@/components/AdoptSessionDialog'
 import { ImportSessionDialog } from '@/components/ImportSessionDialog'
 import { SpawnActionsMenu } from '@/components/SpawnActionsMenu'
@@ -15,6 +16,7 @@ import { fetchJson, apiFetch } from '@/lib/fetcher'
 import type { SessionMetadata, ProjectMetadata } from '@agent-hq-orchestron/shared'
 import { Plus, Rocket, Inbox, Rows3, FolderTree } from 'lucide-react'
 import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 
 function fuzzyMatch(haystack: string, needle: string): boolean {
   if (!needle) return true
@@ -35,6 +37,7 @@ const DEFAULT_FILTERS: FilterState = {
 
 export default function DashboardPage() {
   const qc = useQueryClient()
+  const router = useRouter()
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
   const [spawnOpen, setSpawnOpen] = useState(false)
   const [adoptOpen, setAdoptOpen] = useState(false)
@@ -252,7 +255,16 @@ export default function DashboardPage() {
           configDir: projectConfigDir(p),
         }))}
         templates={templates}
-        onSpawned={() => qc.invalidateQueries({ queryKey: ['sessions'] })}
+        onSpawned={(session) => {
+          qc.invalidateQueries({ queryKey: ['sessions'] })
+          // USAGE.md:115 — "Click Spawn and you'll land on the session detail
+          // page." Adopt, Import and "Run now" already do; Spawn only
+          // refetched the list, which is NF6 in the post-batch-3 sweep.
+          // A body without a usable id keeps the old behaviour: stay here
+          // with the list refreshed, rather than push `/session/undefined`.
+          const href = spawnedSessionHref(session)
+          if (href) router.push(href)
+        }}
       />
 
       {/* Adopt existing harness session dialog */}
