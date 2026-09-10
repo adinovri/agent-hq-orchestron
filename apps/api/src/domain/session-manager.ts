@@ -86,7 +86,13 @@ const ALLOWED_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
   running: ['running', 'idle', 'needs_input', 'succeeded', 'failed', 'killed'],
   idle: ['running', 'needs_input', 'sleeping', 'succeeded', 'killed'],
   needs_input: ['running', 'idle', 'sleeping', 'succeeded', 'killed'],
-  sleeping: ['spawning', 'succeeded', 'killed'],   // wake → spawning; archive → succeeded; kill remains legal
+  // Two wake-ups, one per mode. A tmux session wakes through 'spawning'
+  // because waking it really does cold-start a process. A headless session's
+  // sleep is symbolic — nothing was released, so there is nothing to start —
+  // and it wakes straight back to 'idle', which is where its next
+  // `-p --resume` turn begins. Going through 'spawning' there would claim a
+  // spawn that never happens and put a phantom entry in the session history.
+  sleeping: ['spawning', 'idle', 'succeeded', 'killed'],   // wake → spawning (tmux) / idle (headless); archive → succeeded; kill remains legal
   // Terminal states allow → 'spawning' for in-place respawn (fresh Claude
   // conversation using the same orchestron session id). No other exits.
   succeeded: ['spawning'],
@@ -1002,10 +1008,11 @@ export class SessionManager {
    *  - no sendPrompt — the prompt is in argv, one prompt per child
    *  - no turn watcher — the harness emits no `turn_duration` in headless
    *    mode; process exit IS the turn boundary
-   *  - no sleeping — nothing is held between turns, so there is nothing for
-   *    the idle sweeper to release (armIdleSweeper skips headless)
-   *  - an idle headless session costs nothing, so it does not occupy a pool
-   *    cap slot (see countActiveSessions)
+   *  - sleeping is symbolic — the idle sweeper still moves a stale session to
+   *    `sleeping` for the dashboard's sake, but nothing is released and the
+   *    wake-up is free (see armIdleSweeper / warmShutdown / sendHeadlessTurn)
+   *  - a headless session at rest costs nothing, so neither `idle` nor
+   *    `sleeping` occupies a pool cap slot (see countActiveSessions)
    */
   private async completeHeadlessSpawn(
     uuid: string,
@@ -1135,15 +1142,19 @@ export class SessionManager {
    *    next turn; a headless child has no input channel at all, and starting
    *    a second `--resume` against a live one would have two processes
    *    appending to the same JSONL. `running` is refused.
-   *  - No wake-from-sleeping. Headless never sleeps (see armIdleSweeper), so
-   *    there is no cold-start branch to take.
+   *  - No cold-start on wake. A headless session does sleep (see
+   *    armIdleSweeper), but symbolically: nothing was released, so waking is
+   *    a `sleeping → idle` record write and then the ordinary turn below.
+   *    The tmux wake-up branch in sendInput — spawn, waitTuiReady, retry — is
+   *    never reached for headless, and must not be: its `tmuxName` is a spent
+   *    synthetic handle with nothing listening on it.
    */
   private async sendHeadlessTurn(
     uuid: string,
     session: SessionMetadata,
     prompt: string,
   ): Promise<SessionMetadata> {
-    const ALLOWED: SessionStatus[] = ['idle', 'needs_input']
+    const ALLOWED: SessionStatus[] = ['idle', 'needs_input', 'sleeping']
     if (!ALLOWED.includes(session.status)) {
       throw new Error(
         session.status === 'running' || session.status === 'spawning'
@@ -1158,6 +1169,13 @@ export class SessionManager {
     }
     if (!this.projectResolver) {
       throw new Error('Cannot send input to a headless session: project resolver not wired')
+    }
+
+    // Symbolic wake — a record write, no process. Deliberately after the
+    // guards above: a send that is going to be refused must leave the session
+    // asleep rather than half-woken into `idle` with a sweeper re-armed.
+    if (session.status === 'sleeping') {
+      session = await this.transition(uuid, 'idle')
     }
 
     const proj = await this.projectResolver(session.projectId)
@@ -1246,12 +1264,17 @@ export class SessionManager {
     if (!session) throw new Error(`Session not found: ${uuid}`)
 
     // Headless: each turn is its own `-p --resume` / `exec resume` child.
+    // MUST stay ahead of the sleeping branch below — a sleeping headless
+    // session wakes for free inside sendHeadlessTurn, and the tmux cold-start
+    // path would spawn a TUI against a record that asked not to have one.
     if (!resolveUseTmux(session.useTmux)) {
       return this.sendHeadlessTurn(uuid, session, prompt)
     }
 
-    // Wake-up path: session is sleeping → cold-start tmux with --resume,
-    // wait for TUI ready, then fall through to the normal paste flow.
+    // Wake-up path (tmux only): session is sleeping → cold-start tmux with
+    // --resume, wait for TUI ready, then fall through to the normal paste
+    // flow. Here the sleep really did release a window, so waking costs a
+    // spawn; the headless counterpart is a record write.
     if (session.status === 'sleeping') {
       if (!this.projectResolver) {
         throw new Error('Cannot wake sleeping session: project resolver not wired')
@@ -1662,10 +1685,11 @@ export class SessionManager {
 
     await writeJson(this.sessionPath(uuid), updated)
 
-    // Sweeper arming based on target state. `updated` is passed so the
-    // sweeper can see the session's mode without a second read.
+    // Sweeper arming based on target state. Both modes are armed — for tmux
+    // the sweep releases a window, for headless it is symbolic (see
+    // armIdleSweeper).
     if (IDLE_STATES.includes(newStatus)) {
-      this.armIdleSweeper(uuid, updated)
+      this.armIdleSweeper(uuid)
     } else {
       this.clearIdleSweeper(uuid)
     }
@@ -1675,17 +1699,23 @@ export class SessionManager {
 
   // ── Idle sweeper (warm-shutdown after inactivity) ─────────────────
 
-  /** Arm a per-session warm-shutdown timer. No-op when idleTimeoutMs = 0,
-   *  and no-op for headless sessions.
+  /** Arm a per-session warm-shutdown timer. No-op when idleTimeoutMs = 0.
    *
-   *  Warm-shutdown exists to release a tmux window that an idle session is
-   *  still holding. A headless session between turns holds nothing — the
-   *  child exited when the turn ended — so `sleeping` would be a state with
-   *  no resource behind it, and waking would be a no-op that only makes the
-   *  next send slower to reason about. Idle IS the resting state there. */
-  private armIdleSweeper(uuid: string, session?: SessionMetadata): void {
+   *  Armed for BOTH modes, but the two sleeps mean different things.
+   *
+   *  For tmux, warm-shutdown exists to release a window an idle session is
+   *  still holding — the sleep is what frees the resource.
+   *
+   *  A headless session between turns holds nothing: the child exited when
+   *  the turn ended. Its sleep is therefore symbolic — the record moves to
+   *  `sleeping` and nothing at all is released. It is armed anyway because
+   *  `sleeping` also carries meaning to the person reading the dashboard:
+   *  "nobody has touched this in a while". Leaving headless permanently
+   *  `idle` made a session abandoned for a day look identical to one that
+   *  finished a turn a second ago, and left the idle list growing without
+   *  bound. Waking is correspondingly free — see sendHeadlessTurn. */
+  private armIdleSweeper(uuid: string): void {
     if (this.idleTimeoutMs <= 0) return
-    if (session && !resolveUseTmux(session.useTmux)) return
     // Cancel any existing timer so we don't accumulate.
     this.clearIdleSweeper(uuid)
     const t = setTimeout(() => {
@@ -1708,19 +1738,30 @@ export class SessionManager {
   }
 
   /**
-   * Kill the tmux window and transition the session to 'sleeping'. Called
-   * by the idle timer and by the safety-net sweep. Idempotent — a session
-   * already sleeping (or terminal) is a no-op.
+   * Transition the session to 'sleeping', releasing whatever it was holding.
+   * Called by the idle timer and by the safety-net sweep. Idempotent — a
+   * session already sleeping (or terminal) is a no-op.
+   *
+   * How much is released depends on the mode, and for headless the answer is
+   * "nothing":
+   *
+   *  - tmux: kill the window, close the dangling turn watcher, then sleep.
+   *    The window is the whole point of the sweep.
+   *  - headless: sleep and nothing else. The child exited when the turn
+   *    ended, `tmuxName` is a spent synthetic handle, and there is no turn
+   *    watcher (headless emits no turn_duration). A kill here would aim at
+   *    an already-reaped pid; the sleep is a record change only.
    */
   async warmShutdown(uuid: string): Promise<void> {
     const session = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
     if (!session) return
     const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
     if (!IDLE_STATES.includes(session.status)) return
-    // Defence in depth: nothing should arm a sweeper for a headless session,
-    // but a stale timer surviving a mode flip must not push it to `sleeping`
-    // — a state it can never be woken out of, since wake-up resumes a tmux.
-    if (!resolveUseTmux(session.useTmux)) return
+    if (!resolveUseTmux(session.useTmux)) {
+      // Symbolic sleep: record only, nothing to release.
+      await this.transition(uuid, 'sleeping').catch(() => { /* race with kill */ })
+      return
+    }
     const adapter = this.registry.getOrThrow(session.agentType)
     await adapter.kill(handleFor(session)).catch(() => { /* tmux may already be dead */ })
     // Close any dangling watcher.
@@ -1752,8 +1793,7 @@ export class SessionManager {
     const now = Date.now()
     for (const s of sessions) {
       if (!IDLE_STATES.includes(s.status)) continue
-      // Headless sessions never sleep — see armIdleSweeper.
-      if (!resolveUseTmux(s.useTmux)) continue
+      // Both modes — a headless session sleeps symbolically (armIdleSweeper).
       const since = s.idleSince ? Date.parse(s.idleSince) : Date.parse(s.endedAt ?? s.startedAt)
       const idleFor = now - since
       if (idleFor >= this.idleTimeoutMs) {
@@ -1928,10 +1968,18 @@ export class SessionManager {
     // transitions to `running` behind no process at all: a zombie that never
     // lands. Cross-mode change belongs to Reopen / Fork / Respawn, which do
     // spawn and therefore make the new mode real.
+    //
+    // A headless `sleeping` record is refused for the same reason, arrived at
+    // from the other side. Its sleep released nothing, so it is not the
+    // terminal-record case the paragraph above allows: waking it takes no
+    // spawn either, and flipping it to tmux would send the next send down the
+    // cold-start branch to resume a transcript the TUI never created. That
+    // cross-mode resume is exactly what Reopen/Fork already refuse.
     if (patch.useTmux !== undefined) {
-      if (HEADLESS_AT_REST.includes(session.status)) {
+      const TERMINAL: SessionStatus[] = ['succeeded', 'killed', 'failed']
+      if (!resolveUseTmux(session.useTmux) && !TERMINAL.includes(session.status)) {
         throw new Error(
-          `Cannot change mode from metadata edit at idle. ` +
+          `Cannot change mode from metadata edit at ${session.status}. ` +
           `Use Reopen/Fork/Respawn dialog for mode change.`,
         )
       }
@@ -1991,7 +2039,6 @@ export class SessionManager {
     const now = Date.now()
     for (const s of sessions) {
       if (!IDLE_STATES.includes(s.status)) continue
-      if (!resolveUseTmux(s.useTmux)) continue     // headless never sleeps
       if (this.idleSweepers.has(s.id)) continue    // covered by primary timer
       const since = s.idleSince ? Date.parse(s.idleSince) : Date.parse(s.endedAt ?? s.startedAt)
       if (now - since >= this.idleTimeoutMs) {
