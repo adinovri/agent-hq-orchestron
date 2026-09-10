@@ -146,6 +146,17 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
   const cronPreview = useMemo(() => {
     const trimmed = cron.trim()
     if (!trimmed) return { human: '', nextRuns: [] as Date[], error: null as string | null }
+    // Field count first, and with a message. Both the simulator above and the
+    // API require exactly five; before this, a 4-field expression left the
+    // preview empty with no reason given (E2E smoke F3), and the API padded
+    // it into an every-minute schedule.
+    if (trimmed.split(/\s+/).length !== 5) {
+      return {
+        human: '',
+        nextRuns: [],
+        error: 'Cron needs exactly 5 fields: minute hour day-of-month month day-of-week',
+      }
+    }
     let human = ''
     try {
       human = cronstrue.toString(trimmed, { verbose: false, throwExceptionOnParseError: true })
@@ -180,6 +191,7 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
   async function handleSave() {
     if (!projectId) { setError('Select a project'); return }
     if (!cron.trim()) { setError('Cron expression required'); return }
+    if (cronPreview.error) { setError(cronPreview.error); return }
     if (!prompt.trim()) { setError('Prompt required'); return }
     setSaving(true)
     setError(null)
@@ -433,7 +445,7 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
 
         <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">
           <Button variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button onClick={handleSave} disabled={saving || !projectId || !cron.trim() || !prompt.trim()}>
+          <Button onClick={handleSave} disabled={saving || !projectId || !cron.trim() || !prompt.trim() || !!cronPreview.error}>
             {saving ? 'Saving…' : isEdit ? 'Save' : 'Create'}
           </Button>
         </div>

@@ -121,8 +121,13 @@ export class Scheduler {
 
   /**
    * Schedule the NEXT fire via setTimeout. After firing, reschedule for the
-   * following cron-computed timestamp. Uses cron-parser to support the full
-   * 5-field standard cron syntax plus @hourly/@daily/@weekly shorthands.
+   * following cron-computed timestamp. Uses cron-parser, which understands
+   * more than this is fed: the write routes accept 5-field standard cron and
+   * nothing else (see isValidCron — the `@daily` family and the 6-field
+   * seconds form are rejected at the boundary), so what arrives here is
+   * always `minute hour day-of-month month day-of-week`. Records written
+   * before that check may still carry something wider; parse failures below
+   * are handled either way.
    */
   private scheduleTimer(entry: ScheduleEntry): void {
     let nextTs: Date

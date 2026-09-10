@@ -13,12 +13,38 @@ import {
 } from '@agent-hq-orchestron/shared'
 import { Scheduler, ScheduleNotFoundError, type ScheduleEntry } from '../domain/scheduler.js'
 
-// Reject cron expressions that don't parse. Pass-2 finding #6: without
-// this, POST /api/schedules with a newline-containing cron passes
-// (`min(1)` doesn't care about newlines), the Scheduler tries to fire
-// it, cron-parser throws, and the raw multi-line value gets echoed
-// through `console.warn` — a log-injection primitive.
-function isValidCron(expr: string): boolean {
+/** Standard cron: `minute hour day-of-month month day-of-week`, and nothing
+ *  else. */
+const CRON_FIELD_COUNT = 5
+
+/**
+ * Reject cron expressions that don't parse, and — first — any that aren't
+ * exactly five fields.
+ *
+ * Pass-2 finding #6: without a parse check at all, POST /api/schedules with a
+ * newline-containing cron passes (`min(1)` doesn't care about newlines), the
+ * Scheduler tries to fire it, cron-parser throws, and the raw multi-line value
+ * gets echoed through `console.warn` — a log-injection primitive.
+ *
+ * E2E smoke finding F3: the parse check alone is not enough, because
+ * `CronExpressionParser.parse` *pads* a short expression instead of rejecting
+ * it. `* * * *` becomes `* * * * *` and the caller silently gets an
+ * every-minute schedule — observed live, firing 3 unattended spawns before it
+ * was deleted. It costs money, so the field count is checked first and the
+ * count is exact: four or fewer pads, six adds seconds (`* /5 * * * * *` fires
+ * every five seconds), seven adds a year. The web dialog has always required
+ * five (its preview simulator returns nothing otherwise); this closes the gap
+ * where the API was looser than the only UI that drives it.
+ *
+ * Deliberately narrower than cron-parser, which also resolves the `@daily` /
+ * `@hourly` family: those cannot be rendered by the dialog's preview or its
+ * humaniser, so accepting them at the API would re-open the same
+ * API-looser-than-UI split in a different spot. Add them here as an explicit
+ * whitelist if a caller ever needs them.
+ */
+export function isValidCron(expr: string): boolean {
+  const fields = expr.trim().split(/\s+/)
+  if (fields.length !== CRON_FIELD_COUNT) return false
   try { CronExpressionParser.parse(expr); return true } catch { return false }
 }
 
