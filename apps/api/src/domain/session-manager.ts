@@ -1202,6 +1202,11 @@ export class SessionManager {
     workspace: string,
     opts: { model?: string; effort?: import('@agent-hq-orchestron/shared').EffortLevel } = {},
   ): Promise<SessionMetadata> {
+    // A turn is starting, so the session is not resting any more. Disarm
+    // before the async work below: the record still says `idle` until the
+    // transition at the end of this method, and a sweeper that fires in
+    // between would sleep a session whose turn is already under way.
+    this.clearIdleSweeper(uuid)
     const adapter = this.registry.getOrThrow(session.agentType)
     await this.ensureMemorySymlink(session.agentType, session.configDir, workspace)
     // Regenerate per-turn so a rotated token / moved API URL takes effect on
@@ -1759,7 +1764,17 @@ export class SessionManager {
     if (!IDLE_STATES.includes(session.status)) return
     if (!resolveUseTmux(session.useTmux)) {
       // Symbolic sleep: record only, nothing to release.
-      await this.transition(uuid, 'sleeping').catch(() => { /* race with kill */ })
+      //
+      // Re-checked under the state lock rather than trusting the read above.
+      // Waking is free, so a send can start the next turn in the gap between
+      // that read and this write — and landing `sleeping` on top of a
+      // `running` record would strand the session behind a live child that
+      // nothing is left to reconcile.
+      await this.withLock(`state:${uuid}`, async () => {
+        const fresh = await readJson<SessionMetadata | null>(this.sessionPath(uuid), null)
+        if (!fresh || !IDLE_STATES.includes(fresh.status)) return
+        await this._transitionUnlocked(uuid, 'sleeping')
+      }).catch(() => { /* race with kill */ })
       return
     }
     const adapter = this.registry.getOrThrow(session.agentType)
