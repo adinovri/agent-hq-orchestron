@@ -915,11 +915,12 @@ Three ways to bring a terminal session back to life:
 | **Requires transcript?** | Yes (JSONL must exist) | Yes | No |
 
 Buttons are only visible for terminal states (`succeeded`, `killed`,
-`failed`). Reopen and Fork are additionally hidden when
-`hasTranscript === false` (session died before writing any JSONL), and
-for [headless](#headless-mode-no-tmux) sessions, where resuming into an
-interactive tmux would be a cross-mode jump — Respawn stays visible as
-the recovery in both cases, and re-runs a headless session headless.
+`failed`) plus `idle` / `needs_input` for [headless](#headless-mode-no-tmux)
+sessions (which rest without a process between turns). Reopen and Fork are
+additionally hidden when `hasTranscript === false` (session died before
+writing any JSONL). Cross-mode is supported from the dialog's **Use tmux**
+checkbox — see
+[Reopen, Fork and Respawn across modes](#reopen-fork-and-respawn-across-modes).
 
 **Model + effort override.** Clicking any of the three opens a dialog
 with model + effort pickers (harness-aware — Claude gets the curated
