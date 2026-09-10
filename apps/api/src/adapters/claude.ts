@@ -27,8 +27,13 @@ import { resolveUseTmux, ORCHESTRON_RESULT_SCHEMA_JSON } from '@agent-hq-orchest
 import * as tmux from './tmux.js'
 
 const FORBIDDEN_FLAGS = new Set(['-p', '--print'])
-// Real prompt marker (post-interstitials): status bar with model/version or shortcuts hint
-const TUI_READY_RE = /v[0-9]+\.[0-9]+\.[0-9]+ │|\?\s+for shortcuts/
+// Real prompt marker (post-interstitials): status bar with model/version, the
+// shortcuts hint, or the permission-mode indicator. The third alternative is
+// what a `tui: fullscreen` config dir leaves us: fullscreen renders a permanent
+// mode status bar (`⏵⏵ auto mode on (shift+tab to cycle) · ← for agents`) and
+// no version line at all, so the first two never match and a perfectly ready
+// TUI spun to the deadline.
+const TUI_READY_RE = /v[0-9]+\.[0-9]+\.[0-9]+ │|\?\s+for shortcuts|\(shift\+tab to cycle\)/
 // Trust folder interstitial (default cursor on "No, exit" — need Down + Enter to accept)
 const TRUST_PROMPT_RE = /Is this a project you|Yes, I trust this folder/
 // Numbered menu interstitial (theme picker etc — Enter accepts default)

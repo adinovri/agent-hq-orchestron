@@ -93,6 +93,29 @@ describe('claudeAdapter — tmux delegation', () => {
     await expect(claudeAdapter.waitTuiReady(handle, 2000)).resolves.toBeUndefined()
   })
 
+  it('waitTuiReady resolves on a fullscreen pane, which renders no version separator', async () => {
+    // Verbatim capture from a `tui: fullscreen` config dir on claude 2.1.267.
+    // Two things defeat the older alternatives: the banner puts the version and
+    // the model on separate lines with `·`, so there is no `v… │`, and the
+    // bottom hint is a permanent permission-mode bar instead of
+    // `? for shortcuts`. The TUI is fully ready here — note the composer
+    // placeholder — so readiness has to key on the mode bar.
+    vi.mocked(tmuxMock.capturePane).mockResolvedValueOnce(
+      [
+        ' ▐▛███▛█   Claude Code v2.1.267',
+        '▝▜██████▀  Opus 5 (1M context) · Claude Team',
+        '  ▝▝ ▝▝    /tmp/orchestron-e2e/ws-claude',
+        '',
+        '────────────────────────────────────────────────',
+        '❯ Try "fix lint errors"',
+        '────────────────────────────────────────────────',
+        '  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents',
+      ].join('\n'),
+    )
+    const handle = { tmuxName: 'test-session', claudeUuid: 'abc', jsonlPath: '/tmp/abc.jsonl' }
+    await expect(claudeAdapter.waitTuiReady(handle, 2000)).resolves.toBeUndefined()
+  })
+
   it('waitTuiReady times out if TUI never ready', async () => {
     vi.mocked(tmuxMock.capturePane).mockResolvedValue('loading...')
     const handle = { tmuxName: 'test-session', claudeUuid: 'abc', jsonlPath: '/tmp/abc.jsonl' }
