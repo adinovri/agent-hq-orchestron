@@ -1360,11 +1360,10 @@ export function sessionsPlugin(
     // and rewrites the transcript content before persisting, then adopts.
     app.post('/api/sessions/import', async (req, reply) => {
       let projectIdField = ''
-      // Tri-state, like the revival routes but against the BUNDLE rather
-      // than a stored record: absent means "restore the mode the bundle
-      // recorded", which is not the same as `true`. Only a `.tar.gz` bundle
-      // carries that metadata; a raw `.jsonl` is the transcript and nothing
-      // else, so absent falls through to tmux there.
+      // Tri-state, like the revival routes but against the destination
+      // project rather than a stored record: absent means "run this the way
+      // this project runs", which is not the same as `true`. See
+      // `resolveImportMode` below for the full order, bundle included.
       let useTmuxField: boolean | undefined
       let fileBuf: Buffer | null = null
       let fileName = ''
@@ -1419,18 +1418,30 @@ export function sessionsPlugin(
        * Settle the imported session's mode and run it through the global
        * switch, in one place so the jsonl and tar.gz branches cannot drift.
        *
-       * Precedence: the form field, then whatever the bundle recorded, then
-       * tmux. `bundleUseTmux` is only ever defined for a tar.gz — the raw
-       * jsonl format has nowhere to put it — so a jsonl import with an
-       * untouched checkbox lands in tmux, which is what it did before the
-       * field existed.
+       * Precedence: the form field, then the destination project's
+       * `defaultUseTmux`, then whatever the bundle recorded, then tmux.
+       *
+       * The project sits above the bundle deliberately. An operator who set
+       * a project headless said how work in that project runs; a bundle
+       * says how one session happened to run on a host that is not this
+       * one, and importing is a move into the destination's world. The
+       * bundle is not thrown away — it still decides for a project that
+       * expresses no preference, which is the case the field was added for.
+       *
+       * `bundleUseTmux` is only ever defined for a tar.gz — the raw jsonl
+       * format has nowhere to put it — so a jsonl import with an untouched
+       * checkbox into a project with no default lands in tmux, which is
+       * what it did before either field existed.
        */
       const resolveImportMode = (bundleUseTmux?: boolean) => {
-        const requested = useTmuxField ?? bundleUseTmux
+        const requested = useTmuxField ?? project.defaultUseTmux ?? bundleUseTmux
         const applied = applyHeadlessSwitch(requested, headlessEnabled)
         if (applied.coerced) {
+          const source = useTmuxField !== undefined ? 'request'
+            : project.defaultUseTmux !== undefined ? 'project'
+              : 'bundle'
           req.log.info(
-            { projectId: project.id, source: useTmuxField === undefined ? 'bundle' : 'request', requestedUseTmux: false, effectiveUseTmux: true },
+            { projectId: project.id, source, requestedUseTmux: false, effectiveUseTmux: true },
             `coerced useTmux=false to true (${HEADLESS_COERCED_REASON})`,
           )
         }

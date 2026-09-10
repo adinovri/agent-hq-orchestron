@@ -18,11 +18,13 @@ import type { AgentAdapter, AgentType, TmuxHandle } from '@agent-hq-orchestron/s
 /**
  * `useTmux` on POST /api/sessions/import.
  *
- * The tri-state here is against the BUNDLE, not a stored record: absent
- * means "restore the mode the bundle recorded", and only a `.tar.gz` carries
- * that. A raw `.jsonl` is the transcript and nothing else, so absent falls
- * through to tmux — the distinction the suite exists to pin, because both
- * formats land on the same adopt() call.
+ * The tri-state here is against the DESTINATION PROJECT, not a stored
+ * record: absent means "run this the way this project runs". Under that
+ * sits the bundle — only a `.tar.gz` records a mode, and it decides only
+ * for a project that configured none. A raw `.jsonl` is the transcript and
+ * nothing else, so absent falls through to tmux there. That ordering is
+ * what the suite exists to pin, because both formats land on the same
+ * adopt() call.
  */
 
 let tmpDir: string
@@ -52,7 +54,11 @@ interface Harness {
   adapter: AgentAdapter
 }
 
-async function makeApp(agentType: AgentType = 'claude', enableHeadlessMode = true): Promise<Harness> {
+async function makeApp(
+  agentType: AgentType = 'claude',
+  enableHeadlessMode = true,
+  projectDefaultUseTmux?: boolean,
+): Promise<Harness> {
   const adapter = makeAdapter(agentType)
   const adapterRegistry = new AdapterRegistry()
   adapterRegistry.register(agentType, adapter)
@@ -77,6 +83,9 @@ async function makeApp(agentType: AgentType = 'claude', enableHeadlessMode = tru
   const project = await registry.create({
     name: 'Import', path: workspace, agentType,
     agentConfig: { env: { [envKey]: configDir } },
+    // Left undefined by default — a project with no configured mode, which
+    // is the only case where the bundle's own record still decides.
+    ...(projectDefaultUseTmux === undefined ? {} : { defaultUseTmux: projectDefaultUseTmux }),
   })
   return { app, projectId: project.id, adapter }
 }
@@ -262,7 +271,59 @@ describe('POST /api/sessions/import — .tar.gz, which records its mode', () => 
   })
 })
 
+describe('POST /api/sessions/import — the destination project outranks the bundle', () => {
+  it('restores headless into a headless project even though the bundle says tmux', async () => {
+    harness = await makeApp('codex', true, false)
+    seedCodexDb()
+    const res = await importCodex(harness, true)
+    expect(res.statusCode).toBe(201)
+    expect(res.json().useTmux).toBe(false)
+    expect(harness.adapter.resume).not.toHaveBeenCalled()
+  })
+
+  it('restores into tmux in a tmux project even though the bundle says headless', async () => {
+    harness = await makeApp('codex', true, true)
+    seedCodexDb()
+    const res = await importCodex(harness, false)
+    expect(res.json().useTmux).toBe(true)
+    expect(harness.adapter.resume).toHaveBeenCalledTimes(1)
+  })
+
+  it('still lets the bundle decide when the project configures no mode', async () => {
+    // The tier below the project is not dead — this is the case commit
+    // 67e451a added the metadata field for.
+    harness = await makeApp('codex')
+    seedCodexDb()
+    const res = await importCodex(harness, false)
+    expect(res.json().useTmux).toBe(false)
+  })
+
+  it('lets an explicit field beat the project default', async () => {
+    harness = await makeApp('codex', true, false)
+    seedCodexDb()
+    const res = await importCodex(harness, false, { useTmux: 'true' })
+    expect(res.json().useTmux).toBe(true)
+  })
+
+  it('applies the project default to a .jsonl, which has no bundle tier at all', async () => {
+    harness = await makeApp('claude', true, false)
+    const res = await importClaude(harness)
+    expect(res.statusCode).toBe(201)
+    expect(res.json().useTmux).toBe(false)
+    expect(res.json().status).toBe('idle')
+  })
+})
+
 describe('POST /api/sessions/import — the kill switch', () => {
+  it('coerces a headless project default too, and says so', async () => {
+    harness = await makeApp('claude', false, false)
+    const res = await importClaude(harness)
+    expect(res.statusCode).toBe(201)
+    expect(res.json().useTmux).toBe(true)
+    expect(res.json().coerced).toEqual({ useTmux: true, reason: HEADLESS_COERCED_REASON })
+  })
+
+
   it('coerces an explicitly headless import and says so', async () => {
     harness = await makeApp('claude', false)
     const res = await importClaude(harness, { useTmux: 'false' })

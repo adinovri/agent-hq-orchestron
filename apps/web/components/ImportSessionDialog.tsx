@@ -15,6 +15,10 @@ interface ProjectSummary {
   agentType: 'claude' | 'codex' | 'opencode'
   path: string
   configDir?: string
+  /** Project's configured run mode. Undefined means the project expresses
+   *  no preference, which is the one case where the bundle's own recorded
+   *  mode still gets to decide. */
+  defaultUseTmux?: boolean
 }
 
 interface Props {
@@ -41,27 +45,33 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
   const [projectId, setProjectId] = useState<string>('')
   const [file, setFile] = useState<File | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  // Shown checked, but only SENT once the user touches it. A `.tar.gz`
-  // bundle records the mode its session was running in and the server
-  // restores that when the field is absent — which the dialog cannot read
-  // without unpacking a gzip in the browser, so the choice is deferred
-  // rather than guessed. Touch the box and it becomes an explicit override.
-  const [useTmux, setUseTmux] = useState(true)
-  const [modeTouched, setModeTouched] = useState(false)
+  // null = untouched, so the destination project's default shows through and
+  // keeps updating as the user switches project. Touch the box and it
+  // becomes an explicit override that is sent as such.
+  const [useTmuxOverride, setUseTmuxOverride] = useState<boolean | null>(null)
   const headlessEnabled = useHeadlessEnabled()
 
   useEffect(() => {
     if (open) {
       setProjectId(eligible[0]?.id ?? '')
       setFile(null)
-      setUseTmux(true)
-      setModeTouched(false)
+      setUseTmuxOverride(null)
       if (inputRef.current) inputRef.current.value = ''
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   const currentProject = eligible.find((p) => p.id === projectId)
+  // `?? true`: a project with no stored preference means tmux — except that
+  // for import "no preference" is also the one case where an untouched box
+  // defers to the bundle, which the hint below spells out. The dialog cannot
+  // read that bundle without unpacking a gzip in the browser, so the box
+  // shows the project's answer and says the bundle may still speak.
+  const projectDefaultUseTmux = currentProject?.defaultUseTmux ?? true
+  const projectSetsMode = currentProject?.defaultUseTmux !== undefined
+  // Switch off: tmux is the only reachable value and the control is hidden,
+  // so this only feeds the helper text.
+  const useTmux = headlessEnabled ? (useTmuxOverride ?? projectDefaultUseTmux) : true
 
   // Best-effort filename parsing so the UI can preview what the server will
   // detect (harness + source UUID). Purely cosmetic — server re-derives from
@@ -84,10 +94,17 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
       const fd = new FormData()
       fd.append('projectId', projectId)
       fd.append('file', file, file.name)
-      // Omitted unless the user actually chose, so an untouched dialog lets
-      // the bundle's own mode win. Omitted outright while the switch is off:
-      // the control is not rendered, so there is no choice to transmit.
-      if (headlessEnabled && modeTouched) fd.append('useTmux', String(useTmux))
+      // Sent only once the user actually chose, so an untouched dialog lets
+      // the server resolve — project default first, then the bundle for a
+      // project that sets none. Note this is "touched", not "differs from
+      // the project default" as the spawn and adopt dialogs use: with a
+      // bundle tier underneath, omitting a value that merely matches the
+      // project default would hand the decision to the bundle instead.
+      // Omitted outright while the switch is off: the control is not
+      // rendered, so there is no choice to transmit.
+      if (headlessEnabled && useTmuxOverride !== null) {
+        fd.append('useTmux', String(useTmuxOverride))
+      }
       const res = await apiFetch(`/api/sessions/import`, { method: 'POST', body: fd })
       if (!res.ok) {
         const text = await res.text()
@@ -212,10 +229,12 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
           </div>
 
           {/* Run mode. Hidden while the global switch is off, on the same
-              rule as every other "Use tmux" control. The hint changes with
-              the bundle format because what "leave it alone" means changes
-              with it: a tar.gz carries the source mode, a raw jsonl does
-              not. */}
+              rule as every other "Use tmux" control. The hint spells out
+              what "leave it alone" means here, which depends on both the
+              destination project and the bundle format: the project's own
+              default wins when it has one, and only otherwise does a
+              tar.gz's recorded mode get to decide (a raw jsonl records
+              none). */}
           {headlessEnabled && (
             <div>
               <label className="flex items-start gap-2 cursor-pointer">
@@ -223,7 +242,7 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
                   type="checkbox"
                   checked={useTmux}
                   disabled={importMutation.isPending}
-                  onChange={(e) => { setUseTmux(e.target.checked); setModeTouched(true) }}
+                  onChange={(e) => setUseTmuxOverride(e.target.checked)}
                   className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-sky-600 disabled:opacity-60"
                 />
                 <span>
@@ -232,11 +251,17 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
                     {useTmux
                       ? 'Restores into an interactive tmux session — live transcript, attach, sleeps when idle.'
                       : `Restores headless: nothing starts until you send a message, and each turn then runs as its own ${currentProject?.agentType === 'codex' ? 'codex exec' : 'claude -p'} process.`}
-                    {!modeTouched && (
-                      parsedHint?.format === 'tar.gz'
-                        ? <span className="block italic">Untouched, a bundle that recorded its own mode is restored in that one instead.</span>
-                        : <span className="block italic">A .jsonl bundle records no mode, so this is the choice that applies.</span>
-                    )}
+                    <span className="block italic">
+                      {useTmuxOverride !== null
+                        ? (useTmux === projectDefaultUseTmux
+                          ? 'Matches the project default.'
+                          : 'Overrides the project default.')
+                        : projectSetsMode
+                          ? 'Following the project default — a bundle that recorded its own mode does not override it.'
+                          : parsedHint?.format === 'tar.gz'
+                            ? 'This project sets no default, so a bundle that recorded its own mode is restored in that one instead.'
+                            : 'Neither this project nor a .jsonl bundle records a mode, so this is the choice that applies.'}
+                    </span>
                   </span>
                 </span>
               </label>
