@@ -47,6 +47,17 @@ const ScheduleOverridesShape = {
 
 const ScheduleOverridesSchema = z.object(ScheduleOverridesShape)
 
+/** The same three fields as they appear in an exported YAML document: no
+ *  "clear" spellings there, because a document says what a schedule *is*
+ *  rather than patching one. All optional — a file written before these
+ *  fields existed imports unchanged, every schedule in it simply following
+ *  its project. */
+const YamlOverridesSchema = z.object({
+  model: z.string().optional(),
+  effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max', 'ultra']).optional(),
+  useTmux: z.boolean().optional(),
+})
+
 /** `''` / `null` → `undefined`. Leaves a real value, `false` included. */
 function clearableToUndefined<T>(value: T | '' | null | undefined): T | undefined {
   if (value === '' || value === null || value === undefined) return undefined
@@ -243,6 +254,12 @@ export function schedulesPlugin(
         vars: e.vars,
         enabled: e.enabled,
         createdAt: e.createdAt,
+        // Omitted from the document when unset — YAML.stringify drops an
+        // undefined value — so a schedule that pins nothing exports exactly
+        // as it did before these fields existed.
+        model: e.model,
+        effort: e.effort,
+        useTmux: e.useTmux,
       }))
       const yaml = YAML.stringify({ schedules: cleaned })
       return reply
@@ -295,6 +312,10 @@ export function schedulesPlugin(
       let created = 0
       let updated = 0
       let skipped = 0
+      // How many entries asked for headless and got tmux instead. Reported so
+      // an operator restoring a backup on a switched-off server can see that
+      // the document and the result differ.
+      let coerced = 0
       const errors: Array<{ id?: string; error: string }> = []
 
       // Schedule ids flow into Scheduler.schedulePath() which does
@@ -321,6 +342,20 @@ export function schedulesPlugin(
             errors.push({ id: raw.id, error: `invalid cron expression ${JSON.stringify(raw.cron)}` })
             continue
           }
+          const parsedOverrides = YamlOverridesSchema.safeParse({
+            model: raw.model,
+            effort: raw.effort,
+            useTmux: raw.useTmux,
+          })
+          if (!parsedOverrides.success) {
+            errors.push({ id: raw.id, error: `invalid model/effort/useTmux: ${parsedOverrides.error.issues.map(i => `${i.path.join('.')} ${i.message}`).join('; ')}` })
+            continue
+          }
+          // A document can carry headless schedules from a host where the
+          // switch was on. Run them through the same mask as a create, so an
+          // import cannot reintroduce a mode this server has turned off.
+          const overrides = resolveOverrides(parsedOverrides.data, headlessEnabled)
+          if (overrides.coerced) coerced += 1
 
           if (raw.id) {
             // Try update if exists; else create with given ID
@@ -333,6 +368,9 @@ export function schedulesPlugin(
                 prompt: raw.prompt,
                 vars: raw.vars,
                 enabled: raw.enabled ?? true,
+                model: overrides.model,
+                effort: overrides.effort,
+                useTmux: overrides.useTmux,
               })
               updated += 1
             } catch (err) {
@@ -346,6 +384,9 @@ export function schedulesPlugin(
                   vars: raw.vars,
                   enabled: raw.enabled ?? true,
                   createdAt: raw.createdAt ?? new Date().toISOString(),
+                  model: overrides.model,
+                  effort: overrides.effort,
+                  useTmux: overrides.useTmux,
                 })
                 created += 1
               } else {
@@ -362,6 +403,9 @@ export function schedulesPlugin(
               vars: raw.vars,
               enabled: raw.enabled ?? true,
               createdAt: new Date().toISOString(),
+              model: overrides.model,
+              effort: overrides.effort,
+              useTmux: overrides.useTmux,
             })
             created += 1
           }
@@ -371,7 +415,7 @@ export function schedulesPlugin(
         }
       }
 
-      return { mode, total: items.length, created, updated, skipped, errors }
+      return { mode, total: items.length, created, updated, skipped, coerced, errors }
     })
 
     app.post('/api/schedules/:id/run', async (req, reply) => {

@@ -112,8 +112,12 @@ export default function SchedulesPage() {
         body: yamlText,
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
-      const result = await res.json() as { total: number; created: number; updated: number; skipped: number; errors: Array<{ error: string }> }
-      alert(`Imported ${result.total} entries (${mode})\nCreated: ${result.created}\nUpdated: ${result.updated}\nSkipped: ${result.skipped}${result.errors.length ? '\n\nErrors:\n' + result.errors.map(e => e.error).join('\n') : ''}`)
+      const result = await res.json() as { total: number; created: number; updated: number; skipped: number; coerced?: number; errors: Array<{ error: string }> }
+      // `coerced` counts entries that asked for headless on a server with the
+      // switch off — the document and what got stored differ, which is worth
+      // saying out loud during a restore.
+      const coercedLine = result.coerced ? `\nForced to tmux: ${result.coerced} (headless disabled on this server)` : ''
+      alert(`Imported ${result.total} entries (${mode})\nCreated: ${result.created}\nUpdated: ${result.updated}\nSkipped: ${result.skipped}${coercedLine}${result.errors.length ? '\n\nErrors:\n' + result.errors.map(e => e.error).join('\n') : ''}`)
       qc.invalidateQueries({ queryKey: ['schedules'] })
     } catch (err) {
       alert(`Import failed: ${(err as Error).message}`)
