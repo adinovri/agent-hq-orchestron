@@ -232,21 +232,19 @@ describe('SessionManager — headless lifecycle', () => {
     expect(after.status).toBe('killed')
   })
 
-  it('rests in idle without ever being swept to sleeping', async () => {
-    // Headless DOES have an idle state now, but nothing to warm-shutdown:
-    // between turns there is no tmux and no child. A sweeper firing here
-    // would push it to `sleeping`, a state whose only exit is a tmux resume.
+  it('is swept to a symbolic sleeping state, releasing nothing', async () => {
+    // Headless sleeps for the dashboard's sake, not to free a resource:
+    // between turns there is no tmux and no child. The sweep must move the
+    // record and do nothing else — a kill here aims at an already-reaped pid.
     const { adapter, releaseExit } = makeHeadlessAdapter({ exitCode: 0 })
-    // idleTimeoutMs of 1ms — a tmux session would be asleep almost at once.
+    // idleTimeoutMs of 1ms — asleep almost at once, same as tmux would be.
     const registry = new AdapterRegistry()
     registry.register('claude', adapter)
     const mgr = new SessionManager({ dataDir: tmpDir, maxConcurrent: 3, idleTimeoutMs: 1 }, registry)
     const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
     releaseExit()
     await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
-    await new Promise((r) => setTimeout(r, 120))
-    const after = (await mgr.list()).find((x) => x.id === s.id)!
-    expect(after.status).toBe('idle')
+    await waitForRecord(mgr, s.id, (r) => r.status === 'sleeping', 'symbolic sleeping')
     expect(adapter.kill).not.toHaveBeenCalled()
   })
 
