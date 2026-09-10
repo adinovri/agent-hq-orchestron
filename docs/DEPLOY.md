@@ -181,6 +181,30 @@ Fields **not** in `config.json` (env-only): `ORCHESTRON_SHARED_MEMORY_DIR`,
 
 Precedence (highest wins): env > config file > built-in defaults.
 
+**Which config file gets read.** `~/.orchestron/config.json` unless one of
+these moves it (`resolveConfigPath` in `packages/shared/src/config.ts`):
+
+| Env | Effect |
+|---|---|
+| `ORCHESTRON_CONFIG` | Full path to the file. Highest precedence. |
+| `ORCHESTRON_DATA_DIR` (or legacy `AHQ_DATA_DIR`) | Reads `<dataDir>/config.json`. |
+
+With neither set the path is exactly what it always was, so no existing
+deploy changes. Both arms exist so a **second instance on one host** is two
+env vars rather than a fork: the data dir alone used to move every record
+while the config — and therefore the port and the bearer — stayed pinned to
+the primary's. `scripts/e2e-env.sh` is the consumer; see
+[`scripts/README.md`](../scripts/README.md).
+
+The web side has one matching var: **`NEXT_DIST_DIR`** (default `.next`)
+selects Next's `distDir`, so two builds of the same tree — which differ by
+the build-time `NEXT_PUBLIC_API_URL` — can coexist. It must be set for both
+`next build` and `next start`, and the API reads it too, for the `/api/version`
+build-id lookup. **`NEXT_DISABLE_SW=1`** turns Serwist off for a build:
+`public/sw.js` sits *outside* `distDir` and is shared by every build of the
+tree, so a secondary build would otherwise overwrite the primary's service
+worker with a precache manifest naming the wrong chunk hashes.
+
 **Auto-detected default `maxConcurrent`**: `floor(totalmem_MB / 800)`, capped at 20. Overrideable.
 The cap counts **live processes only** — sessions in `sleeping` (tmux
 released, wake on next `--resume`), terminal states (`succeeded` /

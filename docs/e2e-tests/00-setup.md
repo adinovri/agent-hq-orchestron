@@ -3,6 +3,21 @@
 Everything every other file in this directory assumes. Read once, get
 the fixtures in place, then go to the scenario file you need.
 
+> **Use the isolated environment.** Since Phase 2 there is a second,
+> complete Orchestron for exactly this purpose — own data dir, port,
+> bearer, agent credentials and web bundle. Three commands:
+>
+> ```bash
+> ./scripts/e2e-env.sh build      # once, and after any web change
+> ./scripts/e2e-env.sh up
+> ./scripts/e2e-env.sh fixtures
+> . ~/.orchestron-e2e/e2e.env     # $ORCH, $TOKEN, fixture project ids
+> ```
+>
+> Then the dashboard is at <http://127.0.0.1:3011>. Section 8 has the
+> details and the limits. Sections 1-7 below describe what a scenario
+> needs; the script is what puts it there.
+
 ---
 
 ## 1. Server
@@ -25,9 +40,17 @@ curl -s http://127.0.0.1:8090/api/health
 # {"ok":true}
 ```
 
+In the isolated environment all of the above is one command, and it
+asserts each of these rather than asking you to:
+
+```bash
+./scripts/e2e-env.sh status
+```
+
 ## 2. Auth
 
-- Bearer token from `remoteToken` in `~/.orchestron/config.json`.
+- Bearer token from `remoteToken` in `~/.orchestron/config.json`
+  (isolated env: `./scripts/e2e-env.sh token`).
 - The browser has been paired (visit `/pair`, or open the dashboard with
   the token in the query string once — it lands in `localStorage`).
 - For any scenario step that curls the API directly:
@@ -36,6 +59,13 @@ curl -s http://127.0.0.1:8090/api/health
 export ORCH=http://127.0.0.1:8090
 export TOKEN="$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.orchestron/config.json')))['remoteToken'])")"
 curl -s -H "Authorization: Bearer $TOKEN" "$ORCH/api/health/detail" | head -c 400
+```
+
+In the isolated environment, source the generated file instead — it
+carries `$ORCH`, `$ORCH_WEB`, `$TOKEN` and every fixture project id:
+
+```bash
+. ~/.orchestron-e2e/e2e.env
 ```
 
 `/api/health/detail` is the authenticated one, and it is where
@@ -54,6 +84,20 @@ depends on it.
 - A session that has to think costs quota. Keep fixture prompts short
   and cheap — see *Prompts* below.
 
+**One-time setup for the isolated environment.** It spawns agents
+against its own `CLAUDE_CONFIG_DIR`, which has to be authenticated by
+hand once — OAuth cannot be scripted, so `e2e-env.sh up` checks for the
+credentials and refuses to start without them:
+
+```bash
+mkdir -p ~/ClaudeConfigs/e2e
+CLAUDE_CONFIG_DIR=~/ClaudeConfigs/e2e claude
+# /login, finish the browser flow, /exit
+```
+
+Use the **dedicated E2E account**, not your own. A sweep burns quota and
+leaves every session it spawned in that account's history.
+
 ## 4. Fixture projects
 
 Register these once. Every scenario names the one it uses.
@@ -64,15 +108,30 @@ Register these once. Every scenario names the one it uses.
 | `e2e-claude-opus` | `/tmp/orchestron-e2e/ws-opus` | claude | default model `claude-opus-5`, default effort `high` |
 | `e2e-headless` | `/tmp/orchestron-e2e/ws-headless` | claude | **Use tmux by default** unticked |
 | `e2e-codex` | `/tmp/orchestron-e2e/ws-codex` | codex | none — *optional, only for codex-marked scenarios* |
+| `e2e-haiku` | `/tmp/orchestron-e2e/ws-haiku` | claude | default model `claude-haiku-4-5` |
 
-The three claude fixtures exist so that "what did this field inherit
-from" is testable: `e2e-claude` has nothing to inherit, `e2e-claude-opus`
-has model and effort, `e2e-headless` has a mode. A scenario that asserts
-a `(project)` source tag needs a project that actually sets the value.
+The three plain claude fixtures exist so that "what did this field
+inherit from" is testable: `e2e-claude` has nothing to inherit,
+`e2e-claude-opus` has model and effort, `e2e-headless` has a mode. A
+scenario that asserts a `(project)` source tag needs a project that
+actually sets the value.
+
+`e2e-haiku` is the odd one out and exists for cost, not coverage. Each
+of the others is shaped by what it must *not* set, so none of them can
+carry a cheap default: putting a model on `e2e-claude` would destroy the
+"nothing to inherit" case, and putting one on `e2e-headless` would break
+the `(project)` source-tag assertions in
+[`metadata-edit.md`](metadata-edit.md). Any scenario that just needs a
+session to exist should use `e2e-haiku` — a turn there costs a few cents
+and lands in ~10-20s.
+
+> There is no server-side global default model. `defaultModel` is a
+> *project* field; `ConfigSchema` has no such key, and a `defaultModel`
+> line in `config.json` is silently dropped. Cheapness is a property of
+> the fixture, or of what the scenario picks in the dialog.
 
 ```bash
-mkdir -p /tmp/orchestron-e2e/ws-claude /tmp/orchestron-e2e/ws-opus \
-         /tmp/orchestron-e2e/ws-headless /tmp/orchestron-e2e/ws-codex
+mkdir -p /tmp/orchestron-e2e/ws-{claude,opus,headless,codex,haiku}
 ```
 
 Register them through the **Projects** page rather than by writing JSON,
@@ -80,6 +139,12 @@ so registration itself gets exercised.
 
 > The paths must exist before registration — the form rejects a path
 > that does not.
+
+In the isolated environment, `./scripts/e2e-env.sh fixtures` registers
+all five over the API and prints their ids. It is idempotent: it deletes
+projects named `e2e-*` and recreates them, so it also doubles as "reset
+the fixtures" between runs without a full down/up. Scenarios that assert
+the registration *form* still have to use the Projects page.
 
 ## 5. Prompts
 
@@ -117,6 +182,25 @@ other files fail for the wrong reason.
 environment, which is the faster lever for the sleep scenarios — it does
 not require editing the file.
 
+**In the isolated environment**, the file is
+`~/.orchestron-e2e/config.json` and the restart is:
+
+```bash
+systemctl --user restart orchestron-api-e2e.service
+```
+
+`e2e-env.sh up` **merges** rather than overwrites: it forces the keys
+that define the environment (port, token, data dir, `maxConcurrent`,
+`idleTimeoutMs`, adapters) and only *seeds* `enableHeadlessMode` and
+`headlessStructuredOutput`. So a scenario can flip a flag and re-run
+`up` without its own setup being silently undone. `down` wipes the file
+entirely, which is the reliable way back to defaults.
+
+`idleTimeoutMs` there defaults to **60000** (1 minute), not 900000 — the
+sleep scenarios are the slowest thing in the sweep and 15 minutes of
+waiting each is not a test, it is a coffee break. If a scenario asserts
+the *deployed* default, set it explicitly.
+
 ## 7. Cleanup helpers
 
 Scenarios state their own cleanup. These are the two things worth having
@@ -143,27 +227,68 @@ that is deliberate, and it is what makes a session re-adoptable. It also
 means a run leaves JSONL behind under the config dir. That is fine and
 does not need cleaning between scenarios.
 
-## 8. Isolation (Phase 2 — not built yet)
+## 8. Isolation
 
-Today these scenarios run against your real orchestron. That is
-survivable for a manual sweep and unacceptable for an automated one.
-Phase 2 gives a run its own everything:
+`scripts/e2e-env.sh` brings up a second, complete Orchestron so a sweep
+is destructive only to itself:
 
-| | Real | E2E (planned) |
+| | Deployed | E2E |
 |---|---|---|
 | Data dir | `~/.orchestron/` | `~/.orchestron-e2e/` |
+| Config | `~/.orchestron/config.json` | `~/.orchestron-e2e/config.json` |
 | API port | 8090 | 8091 |
 | Web port | 3010 | 3011 |
-| Bearer token | yours | dedicated |
-| `CLAUDE_CONFIG_DIR` | yours | `~/ClaudeConfigs/e2e/` |
+| Web build | `apps/web/.next/` | `apps/web/.next-e2e/` |
+| Bearer token | yours | generated per `up`, `e2e-…` |
+| `CLAUDE_CONFIG_DIR` | `~/.claude/` | `~/ClaudeConfigs/e2e/` |
+| `CODEX_HOME` | `~/.codex/` | `~/.orchestron-e2e/codex-home/` |
+| Shared memory pool | `~/.claude/shared-memory/` | `~/.orchestron-e2e/shared-memory/` |
+| systemd units | `orchestron-{api,web}` | `orchestron-{api,web}-e2e` |
+| `maxConcurrent` | RAM-derived | 4 |
+| `idleTimeoutMs` | 900000 | 60000 |
+
+Both instances run **the same build from the same working tree** — same
+`apps/api/dist/server.js`. That is deliberate: an E2E run should
+exercise the code under review, not a copy of it. Only the web bundle is
+built twice, because `NEXT_PUBLIC_API_URL` is baked in at build time.
+
+`up` asserts the separation rather than assuming it: that the E2E API
+reports the E2E data dir, that its bearer differs from the deployed
+one, and that the ports do not collide. `./scripts/e2e-env.sh test-self`
+goes further and checks that the deployed instance is still answering on
+its own address, still on its own data dir, and **rejects the E2E
+bearer**.
+
+### What is *not* isolated
+
+Worth knowing before you trust a result:
+
+- **Service worker / PWA.** The E2E web build runs with Serwist off,
+  because `public/sw.js` lands outside `distDir` and is shared by every
+  build of the tree — an E2E build would hand the deployed PWA a
+  precache manifest full of E2E chunk hashes. So there is no service
+  worker at :3011. Offline and install-prompt behaviour has to be
+  checked against a real deploy.
+- **The tmux server.** Both instances spawn into the same one, with the
+  same `orchestron-<8hex>` naming. `e2e-env.sh down` reaps only the
+  windows named in E2E session records, which is why it does that
+  *before* wiping them. A `tmux kill-server` during a sweep takes the
+  deployed sessions with it.
+- **Agent transcripts.** `down` keeps `~/ClaudeConfigs/e2e/` — wiping it
+  would take the OAuth credentials too, and re-login is manual. Old
+  `.jsonl` files accumulate there; that is also what keeps a session
+  re-adoptable.
+- **The agent account's quota and history.** Isolated from your own
+  session only if `~/ClaudeConfigs/e2e/` is logged into a *dedicated*
+  E2E account. Log it into your own and a sweep burns your quota.
 
 Scenarios are written so that switching is a matter of pointing `$ORCH`,
 the browser URL and the fixture config dir somewhere else — no scenario
 hardcodes a path under `~/.orchestron/` in a step, only in an
 explanation. Keep it that way when adding scenarios.
 
-Until then: **do not run a full sweep on a host with live work on it.**
-The kill, archive and delete scenarios do what they say.
+**Do not run a full sweep against the deployed instance.** The kill,
+archive and delete scenarios do what they say.
 
 ## 9. Screenshots
 

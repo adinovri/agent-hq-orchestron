@@ -1,9 +1,21 @@
 # E2E Test Plan — Orchestron
 
 Human-readable, LLM-executable end-to-end scenarios for every shipped
-orchestron feature. **Phase 1 = documentation only.** Nothing here runs
-itself yet; each file is a script a person (or an agent driving a
-browser) can follow top to bottom.
+orchestron feature. Nothing here runs itself yet; each file is a script
+a person (or an agent driving a browser) can follow top to bottom.
+
+**Run them against the isolated environment, not the deployed one** —
+these scenarios kill sessions, delete records and flip config flags:
+
+```bash
+./scripts/e2e-env.sh build && ./scripts/e2e-env.sh up && ./scripts/e2e-env.sh fixtures
+. ~/.orchestron-e2e/e2e.env      # $ORCH, $ORCH_WEB, $TOKEN, fixture ids
+# dashboard: http://127.0.0.1:3011
+```
+
+[`00-setup.md`](00-setup.md) § 8 has the layout and, more usefully, what
+is *not* isolated. [`scripts/README.md`](../../scripts/README.md) has
+the command reference.
 
 The plan is the **spec baseline**. When a feature PR changes a UI or API
 contract, the matching scenario file is updated in the same PR. A
@@ -27,6 +39,10 @@ the assertions are observable, so an LLM with a browser can execute a
 file and report per-scenario pass/fail. The 📷 cues mark where a
 screenshot is worth capturing for a human to review or for a
 screenshot-diff assertion.
+
+**Looking one up.** `./scripts/e2e-scenario.sh SPAWN-05` prints a single
+scenario next to the current run's `$ORCH`, `$TOKEN` and fixture ids;
+`list` / `list --smoke` enumerate the ids.
 
 ---
 
