@@ -2,15 +2,22 @@
 
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import type { AgentType, EffortLevel } from '@agent-hq-orchestron/shared'
+import type { AgentType, EffortLevel, SessionStatus } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
 import { useHeadlessEnabled } from '@/lib/server-config'
 
 const RESET: { value: ''; label: string } = { value: '', label: '— Reset to project default' }
 
+/** The two resting states of a headless session. Its next turn is delivered
+ *  by sendInput rather than by a spawn, so a mode flip here would never
+ *  become real — the API refuses it, and this dialog says so up front rather
+ *  than letting the user find out at Save. */
+const MODE_LOCKED_STATES: SessionStatus[] = ['idle', 'needs_input']
+
 interface Props {
   open: boolean
   agentType: AgentType
+  status: SessionStatus
   currentModel?: string           // session's own override
   currentEffort?: string
   currentUseTmux?: boolean        // undefined = never set = tmux
@@ -26,7 +33,7 @@ interface Props {
  *  spawn (Reopen / Respawn / sleep-wake). Parent must only render this
  *  when session state has no live tmux (terminal or sleeping). */
 export function SessionMetadataEditDialog({
-  open, agentType, currentModel, currentEffort, currentUseTmux, defaultModel, defaultEffort,
+  open, agentType, status, currentModel, currentEffort, currentUseTmux, defaultModel, defaultEffort,
   pending, onClose, onConfirm,
 }: Props) {
   const [model, setModel] = useState('')
@@ -53,10 +60,14 @@ export function SessionMetadataEditDialog({
   const hasCuratedModels = models.length > 1
   const inputCls = 'w-full px-3 py-2 text-sm bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded focus:outline-none focus:ring-2 focus:ring-blue-500'
 
+  const modeLocked = MODE_LOCKED_STATES.includes(status)
+
   // `useTmux` drops out of the comparison while the switch is off: the
   // control is hidden, so the state can never diverge, and leaving it in
-  // would make `dirty` depend on a value the user cannot see.
-  const useTmuxDirty = headlessEnabled && useTmux !== currentUseTmuxResolved
+  // would make `dirty` depend on a value the user cannot see. Same for the
+  // locked states — the control is inert there, so it cannot contribute a
+  // change, and Save must not send a field the API would refuse.
+  const useTmuxDirty = headlessEnabled && !modeLocked && useTmux !== currentUseTmuxResolved
   const dirty =
     (model || '') !== (currentModel ?? '') ||
     (effort || '') !== (currentEffort ?? '') ||
@@ -118,20 +129,27 @@ export function SessionMetadataEditDialog({
               headless record, and it does so on its own. */}
           {headlessEnabled && (
             <div>
-              <label className="flex items-start gap-2 cursor-pointer">
+              {/* Disabled rather than hidden while the mode is locked. The
+                  choice still exists and still matters — it has just moved to
+                  a different door. A control that vanishes teaches nothing;
+                  one that greys out and names Reopen / Fork / Respawn sends
+                  the user to the dialog that can actually make the change. */}
+              <label className={`flex items-start gap-2 ${modeLocked ? 'cursor-default opacity-70' : 'cursor-pointer'}`}>
                 <input
                   type="checkbox"
                   checked={useTmux}
                   onChange={(e) => setUseTmux(e.target.checked)}
-                  disabled={pending}
+                  disabled={pending || modeLocked}
                   className="mt-0.5 w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-blue-600 disabled:opacity-60"
                 />
                 <span>
                   <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Use tmux</span>
                   <span className="block text-[11px] text-zinc-500 dark:text-zinc-400 leading-snug">
-                    {useTmux
-                      ? 'Next run starts an interactive tmux session.'
-                      : `Next run is headless — each turn its own ${agentType === 'codex' ? 'codex exec' : 'claude -p'} process, no live TUI.`}
+                    {modeLocked
+                      ? 'Mode is locked while session is idle. Use Reopen, Fork, or Respawn to change mode.'
+                      : useTmux
+                        ? 'Next run starts an interactive tmux session.'
+                        : `Next run is headless — each turn its own ${agentType === 'codex' ? 'codex exec' : 'claude -p'} process, no live TUI.`}
                   </span>
                 </span>
               </label>

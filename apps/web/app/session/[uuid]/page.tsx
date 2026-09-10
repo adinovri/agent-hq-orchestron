@@ -292,6 +292,7 @@ export default function SessionDetailPage({ params }: PageProps) {
       <SessionMetadataEditDialog
         open={editMetaOpen}
         agentType={session.agentType}
+        status={session.status}
         currentModel={session.model}
         currentEffort={session.effort}
         currentUseTmux={session.useTmux}
