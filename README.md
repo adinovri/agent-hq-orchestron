@@ -122,6 +122,9 @@ from your phone (once Tailscale Serve is up), and you're in.
   boundaries, storage schema.
 - **[Tycho research report](docs/REPORT.md)** — original comparative
   study that seeded the project.
+- **[E2E test plan](docs/e2e-tests/README.md)** — 92 numbered scenarios
+  across 13 features; smoke set of 10, stable ids (e.g. `SPAWN-03`), spec
+  authority for regression runs.
 
 ## Credits
 
