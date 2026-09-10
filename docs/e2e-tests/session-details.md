@@ -280,6 +280,14 @@ a value came from.
   budget assertion on this field. `GET /api/metrics` prices tmux turns
   from the JSONL and accumulates correctly — it is the authority for any
   figure that has to be right.
+- **The record and `/api/metrics` are not expected to agree, even on a
+  headless session.** They are two different measurements: the record
+  sums the harness-reported `total_cost_usd` of each `-p` envelope, while
+  `/api/metrics` prices the JSONL token counts against Orchestron's own
+  rate table. Measured over the 2026-09-10 sweep the record ran 12–25%
+  *under* the endpoint, and the gap widened with turn count. Neither is
+  wrong; they are simply not interchangeable, so reconciling them is not
+  a bug hunt worth starting. **Gate budgets on `/api/metrics`.**
 - **Codex sessions have no cost.** Orchestron's pricing table carries
   Claude tier rates and no codex entries, because ChatGPT
   Plus/Pro/Enterprise is flat-rate bundled. Treat codex sessions as
