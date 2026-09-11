@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import type { AgentType, EffortLevel } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
 import { useHeadlessEnabled } from '@/lib/server-config'
-import { useDialogEscape } from '@/lib/use-dialog-escape'
+import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
 import type { SessionActionKind } from '@/lib/session-action-dialog'
 
 const KEEP: { value: ''; label: string } = { value: '', label: '— Default / keep' }
@@ -97,8 +97,9 @@ export function SessionActionDialog({
     }
   }, [open, currentModel, currentEffort, sessionUseTmux])
 
-  // Same as Cancel, which is disabled while the action is in flight.
-  useDialogEscape(open && !pending, onClose)
+  // Same as Cancel, which is disabled while the action is in flight — for
+  // Escape, for the backdrop, and for the × alike (NF25).
+  const dismiss = useDialogDismiss(open && !pending, onClose)
 
   if (!open) return null
 
@@ -112,12 +113,12 @@ export function SessionActionDialog({
   const inheritedEffort = currentEffort ?? defaultEffort
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={dismiss.onBackdropClick}>
       <div
         role="dialog"
         aria-modal="true"
         className="w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-lg"
-        onClick={(e) => e.stopPropagation()}
+        onClick={dismiss.onPanelClick}
       >
         <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-base font-semibold">{meta.title}</h2>

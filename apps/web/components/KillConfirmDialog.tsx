@@ -8,6 +8,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import { createOpenChangeGuard } from '@/lib/dialog-dismiss'
 
 interface Props {
   open: boolean
@@ -18,8 +19,12 @@ interface Props {
 }
 
 export function KillConfirmDialog({ open, onClose, onConfirm, descendantCount, killing }: Props) {
+  // Base UI routes Escape, the backdrop and its own × through one
+  // `onOpenChange`. Guarding it there is how this dialog says the same "not
+  // mid-kill" that its disabled Cancel already says; the dialog is controlled,
+  // so a refused change leaves `open` true and the dialog on screen (NF25).
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={open} onOpenChange={createOpenChangeGuard(!killing, onClose)}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>Kill session?</DialogTitle>

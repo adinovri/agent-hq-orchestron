@@ -3,7 +3,7 @@
 import { X, Trash2, AlertTriangle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { SessionMetadata } from '@agent-hq-orchestron/shared'
-import { useDialogEscape } from '@/lib/use-dialog-escape'
+import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
 
 interface Props {
   open: boolean
@@ -15,8 +15,9 @@ interface Props {
 }
 
 export function DeleteRecordDialog({ open, session, workspacePath, onClose, onConfirm, deleting }: Props) {
-  // Not while the delete is running — Cancel is disabled then too.
-  useDialogEscape(open && !deleting, onClose)
+  // Not while the delete is running — Cancel is disabled then too, and the
+  // backdrop and the × are held to the same answer (NF25).
+  const dismiss = useDialogDismiss(open && !deleting, onClose)
 
   if (!open) return null
 
@@ -27,19 +28,24 @@ export function DeleteRecordDialog({ open, session, workspacePath, onClose, onCo
     : null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={dismiss.onBackdropClick}>
       <div
         role="dialog"
         aria-modal="true"
         className="w-full max-w-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-lg"
-        onClick={(e) => e.stopPropagation()}
+        onClick={dismiss.onPanelClick}
       >
         <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
             <h2 className="text-base font-semibold">Delete orchestron record</h2>
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800">
+          <button
+            onClick={dismiss.onCloseButtonClick}
+            disabled={deleting}
+            aria-label="Close"
+            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>

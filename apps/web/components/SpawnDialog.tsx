@@ -9,7 +9,7 @@ import { useHeadlessEnabled } from '@/lib/server-config'
 import { noticeIfCoerced } from '@/lib/notice'
 import { ProjectInfoPanel } from '@/components/ProjectInfoPanel'
 import { projectFieldDefaults, defaultRowLabel, type ProjectFormOption } from '@/lib/project-info'
-import { useDialogEscape } from '@/lib/use-dialog-escape'
+import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
 
 interface AttachedFile {
   id: string
@@ -137,7 +137,9 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
     }
   }, [open])
 
-  useDialogEscape(open, onClose)
+  // Cancel is disabled while the spawn POST is out; Escape, the backdrop and
+  // the × are held to the same decision (NF25).
+  const dismiss = useDialogDismiss(open && !spawning, onClose)
 
   async function handleSpawn() {
     if (!projectId) { setError('Select a project'); return }
@@ -212,18 +214,20 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+      onClick={dismiss.onBackdropClick}
     >
       <div
         role="dialog"
         aria-modal="true"
         className="w-full max-w-lg bg-white dark:bg-zinc-900 rounded-xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-h-[calc(100vh-2rem)] overflow-y-auto"
+        onClick={dismiss.onPanelClick}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Spawn New Session</h2>
           <button
-            onClick={onClose}
-            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+            onClick={dismiss.onCloseButtonClick}
+            disabled={spawning}
+            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
             aria-label="Close"
           >
             <X className="w-4 h-4" />

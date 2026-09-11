@@ -14,7 +14,7 @@ import {
  * Record. Not of Session Action: its caller ran `setActionDialog(null)` and
  * *then* `mutate()`, so `open` was already false by the time `pending` turned
  * true. `if (!open) return null` unmounted the component, and the `!pending`
- * in `useDialogEscape(open && !pending, onClose)` guarded a window that never
+ * in `useDialogDismiss(open && !pending, onClose)` guarded a window that never
  * opened. Measured with the reopen POST held for 8s: gone at 1.5s.
  *
  * The regression is about *ordering*, which is why confirm and settle are two

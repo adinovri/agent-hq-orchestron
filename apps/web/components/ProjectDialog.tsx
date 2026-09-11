@@ -9,6 +9,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import { createOpenChangeGuard } from '@/lib/dialog-dismiss'
 import { fetchJson } from '@/lib/fetcher'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
@@ -149,8 +150,10 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
   const inputCls =
     'w-full h-9 px-3 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400'
 
+  // One `onOpenChange` covers Escape, the backdrop and the built-in × — all
+  // three wait for the save, as Cancel already does (NF25).
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={open} onOpenChange={createOpenChangeGuard(!saving, onClose)}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{project ? 'Edit Project' : 'Register Project'}</DialogTitle>

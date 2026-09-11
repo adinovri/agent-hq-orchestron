@@ -11,7 +11,7 @@ import { noticeIfCoerced } from '@/lib/notice'
 import { ProjectInfoPanel } from '@/components/ProjectInfoPanel'
 import { projectFieldDefaults, defaultRowLabel } from '@/lib/project-info'
 import { buildSchedulePayload, type ScheduleProjectOption } from '@/lib/schedule-fields'
-import { useDialogEscape } from '@/lib/use-dialog-escape'
+import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
 
 interface Props {
   open: boolean
@@ -182,7 +182,9 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
     return () => { document.body.style.overflow = '' }
   }, [open])
 
-  useDialogEscape(open, onClose)
+  // Cancel is disabled while the schedule is being written; Escape, the
+  // backdrop and the × are held to the same decision (NF25).
+  const dismiss = useDialogDismiss(open && !saving, onClose)
 
   async function handleSave() {
     if (!projectId) { setError('Select a project'); return }
@@ -226,18 +228,24 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+      onClick={dismiss.onBackdropClick}
     >
       <div
         role="dialog"
         aria-modal="true"
         className="w-full max-w-lg bg-white dark:bg-zinc-900 rounded-xl shadow-2xl border border-zinc-200 dark:border-zinc-800 max-h-[calc(100vh-2rem)] overflow-y-auto"
+        onClick={dismiss.onPanelClick}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
             {isEdit ? 'Edit Schedule' : 'New Schedule'}
           </h2>
-          <button onClick={onClose} className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500" aria-label="Close">
+          <button
+            onClick={dismiss.onCloseButtonClick}
+            disabled={saving}
+            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+            aria-label="Close"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>

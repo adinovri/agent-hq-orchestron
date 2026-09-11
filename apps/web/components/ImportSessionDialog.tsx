@@ -7,7 +7,7 @@ import { apiFetch } from '@/lib/fetcher'
 import { Button } from '@/components/ui/button'
 import { useHeadlessEnabled } from '@/lib/server-config'
 import { noticeIfCoerced } from '@/lib/notice'
-import { useDialogEscape } from '@/lib/use-dialog-escape'
+import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
 import { X, Loader2, AlertTriangle, Upload, FileArchive, FileText } from 'lucide-react'
 
 interface ProjectSummary {
@@ -127,7 +127,10 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
     },
   })
 
-  useDialogEscape(open, onClose)
+  // An import can be a multi-megabyte upload; losing the dialog to a stray
+  // backdrop click halfway through leaves it running with nowhere to report.
+  // Escape, backdrop and × all wait for it (NF25).
+  const dismiss = useDialogDismiss(open && !importMutation.isPending, onClose)
 
   if (!open) return null
 
@@ -136,19 +139,24 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
     && currentProject && parsedHint.harness !== currentProject.agentType
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={dismiss.onBackdropClick}>
       <div
         role="dialog"
         aria-modal="true"
         className="w-full max-w-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-lg"
-        onClick={(e) => e.stopPropagation()}
+        onClick={dismiss.onPanelClick}
       >
         <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Upload className="w-4 h-4 text-sky-600 dark:text-sky-400" />
             <h2 className="text-base font-semibold">Import session bundle</h2>
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800">
+          <button
+            onClick={dismiss.onCloseButtonClick}
+            disabled={importMutation.isPending}
+            aria-label="Close"
+            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>

@@ -28,7 +28,7 @@ export type SessionActionRunners = Record<
  * The dialog was therefore gone before `pending` could ever become true, which
  * made three things unreachable at once: the `Reopen…` label on the confirm
  * button, `disabled={pending}` on every control, and the `!pending` in
- * `useDialogEscape(open && !pending, onClose)` — a clause written to stop
+ * `useDialogDismiss(open && !pending, onClose)` — a clause written to stop
  * Escape dismissing a dialog mid-write, guarding a window that did not exist.
  * Measured with the reopen POST held open for 8s: the dialog was gone at 1.5s.
  *

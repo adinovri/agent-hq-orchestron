@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import type { AgentType, EffortLevel, SessionStatus } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
 import { useHeadlessEnabled } from '@/lib/server-config'
-import { useDialogEscape } from '@/lib/use-dialog-escape'
+import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
 
 const RESET: { value: ''; label: string } = { value: '', label: '— Reset to project default' }
 
@@ -59,8 +59,9 @@ export function SessionMetadataEditDialog({
   }, [open, currentModel, currentEffort, currentUseTmux])
 
   // `!pending` mirrors the Cancel button, which this dialog already
-  // disables mid-save. Escape must not be a second way past that.
-  useDialogEscape(open && !pending, onClose)
+  // disables mid-save. Escape, the backdrop and the × must not be three more
+  // ways past that (NF21, NF25).
+  const dismiss = useDialogDismiss(open && !pending, onClose)
 
   if (!open) return null
 
@@ -83,12 +84,12 @@ export function SessionMetadataEditDialog({
     useTmuxDirty
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={dismiss.onBackdropClick}>
       <div
         role="dialog"
         aria-modal="true"
         className="w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-lg"
-        onClick={(e) => e.stopPropagation()}
+        onClick={dismiss.onPanelClick}
       >
         <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-base font-semibold">Edit session defaults</h2>

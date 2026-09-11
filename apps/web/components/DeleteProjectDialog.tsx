@@ -9,6 +9,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+import { createOpenChangeGuard } from '@/lib/dialog-dismiss'
 import { apiFetch } from '@/lib/fetcher'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
 
@@ -39,8 +40,10 @@ export function DeleteProjectDialog({ project, onClose, onDeleted, sessionCount 
     }
   }
 
+  // One `onOpenChange` covers Escape, the backdrop and the built-in × — all
+  // three wait for the delete, as Cancel already does (NF25).
   return (
-    <Dialog open={!!project} onOpenChange={(v) => !v && onClose()}>
+    <Dialog open={!!project} onOpenChange={createOpenChangeGuard(!deleting, onClose)}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>Delete project?</DialogTitle>

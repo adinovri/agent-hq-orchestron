@@ -7,7 +7,7 @@ import { apiFetch } from '@/lib/fetcher'
 import { Button } from '@/components/ui/button'
 import { useHeadlessEnabled } from '@/lib/server-config'
 import { noticeIfCoerced } from '@/lib/notice'
-import { useDialogEscape } from '@/lib/use-dialog-escape'
+import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
 import { X, Loader2, CheckCircle2, AlertTriangle, Import } from 'lucide-react'
 
 interface ProjectSummary {
@@ -129,26 +129,34 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
     },
   })
 
-  useDialogEscape(open, onClose)
+  // Adopt writes a record the moment it is confirmed, so once the mutation is
+  // running none of Escape, the backdrop or the × may take the dialog away —
+  // the same line the Cancel button already draws (NF25).
+  const dismiss = useDialogDismiss(open && !adoptMutation.isPending, onClose)
 
   if (!open) return null
 
   const canSubmit = !!projectId && !!uuid.trim() && validation?.ok === true && !adoptMutation.isPending
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={dismiss.onBackdropClick}>
       <div
         role="dialog"
         aria-modal="true"
         className="w-full max-w-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-lg"
-        onClick={(e) => e.stopPropagation()}
+        onClick={dismiss.onPanelClick}
       >
         <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Import className="w-4 h-4 text-violet-600 dark:text-violet-400" />
             <h2 className="text-base font-semibold">Adopt existing session</h2>
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800">
+          <button
+            onClick={dismiss.onCloseButtonClick}
+            disabled={adoptMutation.isPending}
+            aria-label="Close"
+            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
