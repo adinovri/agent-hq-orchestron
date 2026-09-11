@@ -6,10 +6,14 @@ import type { AgentType, EffortLevel } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
 import { useHeadlessEnabled } from '@/lib/server-config'
 import { useDialogEscape } from '@/lib/use-dialog-escape'
+import type { SessionActionKind } from '@/lib/session-action-dialog'
 
 const KEEP: { value: ''; label: string } = { value: '', label: '— Default / keep' }
 
-export type SessionActionKind = 'reopen' | 'fork' | 'respawn'
+// One definition, in the module that owns the dialog's lifecycle (NF24).
+// Re-exported here because every existing caller imports it from the
+// component.
+export type { SessionActionKind }
 
 interface Props {
   open: boolean

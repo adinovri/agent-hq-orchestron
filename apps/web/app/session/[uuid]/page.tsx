@@ -15,6 +15,7 @@ import { DeleteRecordDialog } from '@/components/DeleteRecordDialog'
 import { SessionMetadataEditDialog } from '@/components/SessionMetadataEditDialog'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
 import { noticeIfCoerced } from '@/lib/notice'
+import { confirmSessionAction, settleSessionAction } from '@/lib/session-action-dialog'
 import {
   resolveInquiryCard,
   INQUIRY_ANSWER_GRACE_MS,
@@ -150,7 +151,10 @@ export default function SessionDetailPage({ params }: PageProps) {
     onMutate: () => setReopening(true),
     // Reopening a headless session while the switch is off brings it back in
     // tmux — worth saying, since the dialog did not offer the choice.
-    onSuccess: (data) => noticeIfCoerced(data),
+    onSuccess: (data) => {
+      noticeIfCoerced(data)
+      settleSessionAction('success', () => setActionDialog(null))
+    },
     onSettled: () => {
       setReopening(false)
       qc.invalidateQueries({ queryKey: ['session', uuid] })
@@ -171,6 +175,7 @@ export default function SessionDetailPage({ params }: PageProps) {
     onMutate: () => setCloning(true),
     onSuccess: (data) => {
       noticeIfCoerced(data)
+      settleSessionAction('success', () => setActionDialog(null))
       qc.invalidateQueries({ queryKey: ['sessions'] })
       // Navigate to the new session
       router.push(`/session/${data.id}`)
@@ -215,6 +220,7 @@ export default function SessionDetailPage({ params }: PageProps) {
       // tmux while the switch is off, so it is the one most likely to
       // surprise someone who set the session up headless.
       noticeIfCoerced(data)
+      settleSessionAction('success', () => setActionDialog(null))
       // Respawn is now in-place — same session id, just refresh queries so
       // the header + transcript pick up the new claudeSessionUuid + status.
       qc.invalidateQueries({ queryKey: ['session', uuid] })
@@ -353,17 +359,16 @@ export default function SessionDetailPage({ params }: PageProps) {
         currentUseTmux={session.useTmux}
         pending={reopening || cloning || respawning}
         onClose={() => setActionDialog(null)}
-        onConfirm={(opts) => {
-          const action = actionDialog
-          setActionDialog(null)
-          if (action === 'reopen') {
-            reopenMutation.mutate({ model: opts.model, effort: opts.effort, useTmux: opts.useTmux })
-          } else if (action === 'fork') {
-            cloneMutation.mutate({ prompt: opts.prompt, model: opts.model, effort: opts.effort, useTmux: opts.useTmux })
-          } else if (action === 'respawn') {
-            respawnMutation.mutate({ model: opts.model, effort: opts.effort, useTmux: opts.useTmux })
-          }
-        }}
+        // NF24: this used to close the dialog first and mutate second, so
+        // `pending` never reached a mounted dialog. Closing now belongs to
+        // each mutation's onSuccess, via settleSessionAction.
+        onConfirm={(opts) =>
+          confirmSessionAction(actionDialog, opts, {
+            reopen: (o) => reopenMutation.mutate({ model: o.model, effort: o.effort, useTmux: o.useTmux }),
+            fork: (o) => cloneMutation.mutate({ prompt: o.prompt, model: o.model, effort: o.effort, useTmux: o.useTmux }),
+            respawn: (o) => respawnMutation.mutate({ model: o.model, effort: o.effort, useTmux: o.useTmux }),
+          })
+        }
       />
     </div>
   )
