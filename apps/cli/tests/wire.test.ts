@@ -275,13 +275,22 @@ describe('session mutations hit the right endpoint with the right body', () => {
     expect(bodyOf(r.requests[0]!)).toEqual({ useTmux: false })
   })
 
-  it('archive and its mark-success alias hit the same endpoint', async () => {
+  it('archive posts an empty body to /archive — the route takes no flags', async () => {
     routes = { [`POST /api/sessions/${S}/archive`]: [200, { ...SESSION, status: 'succeeded' }] }
     const a = await cli(['session', 'archive', S])
-    const b = await cli(['session', 'mark-success', S])
     expect(a.requests[0]!.url).toBe(`/api/sessions/${S}/archive`)
-    expect(b.requests[0]!.url).toBe(`/api/sessions/${S}/archive`)
     expect(a.json).toMatchObject({ ok: true, status: 'succeeded' })
+  })
+
+  it('has no mark-success verb, and reaches the API for nothing', async () => {
+    // `POST /api/sessions/:uuid/archive` accepts no body: no `success` flag,
+    // no second endpoint. A `mark-success` alias named a distinction the API
+    // cannot make, so it is gone — `archive` is the one verb.
+    routes = { [`POST /api/sessions/${S}/archive`]: [200, { ...SESSION, status: 'succeeded' }] }
+    const r = await cli(['session', 'mark-success', S])
+    expect(r.code).toBe(1)
+    expect(r.stderr).toMatch(/unknown command/i)
+    expect(r.requests).toHaveLength(0)
   })
 
   it('interrupt posts to /interrupt', async () => {
