@@ -51,8 +51,15 @@ asserts each of these rather than asking you to:
 
 - Bearer token from `remoteToken` in `~/.orchestron/config.json`
   (isolated env: `./scripts/e2e-env.sh token`).
-- The browser has been paired (visit `/pair`, or open the dashboard with
-  the token in the query string once — it lands in `localStorage`).
+- The browser has been paired by visiting `/pair?token=<token>` once — it
+  writes `orchestron_token` to `localStorage` and `sessionStorage`, then
+  redirects to `/dashboard`.
+
+  `/pair` is the **only** token sink. `/dashboard?token=…` stores nothing
+  and keeps the query string in the URL: `app/pair/page.tsx` is the one
+  place that reads the `token` param. Measured on clean browser profiles
+  (NF18) — a runner who pairs that way gets an unpaired browser and then
+  debugs 401s unrelated to the scenario.
 - For any scenario step that curls the API directly:
 
 ```bash
@@ -338,3 +345,65 @@ whole browser window.
 
 Capture in the app's default theme (Orchestron dark) unless the scenario
 is about theming.
+
+## 10. Sweep coordination protocol
+
+A sweep measures one commit. If `main` moves underneath it, some results
+describe code that is no longer there — and you will not notice, because
+nothing in the run reports it.
+
+This is not hypothetical. During the post-batch-8 sweep `main` moved
+`5d1a641` → `9cb1d4d` and the deployed instance was restarted mid-run by
+a concurrent agent. That run's results held up only by luck: the commits
+touched `apps/cli` and docs, so nothing under test changed. Had they
+touched `apps/api`, every scenario after the restart would have been
+measuring a different build than the ones before it, and the report would
+have said 14/14 PASS either way.
+
+So pin the base and check it:
+
+**Before spawning the sweep** — record the sha the sweep is about:
+
+```bash
+cd ~/Works/agent-hq-orchestron && git rev-parse HEAD
+```
+
+Put it in the brief and in the report header. A report without a base sha
+cannot be reproduced or superseded.
+
+**If `main` moves during the sweep**, the blast radius decides:
+
+| Commits touched | Verdict |
+|---|---|
+| `apps/api` or `apps/web` | **Restart the sweep** from the new HEAD. The instance under test was rebuilt or restarted; results from before the move describe a build that no longer exists. |
+| `apps/cli`, `apps/tui`, `docs/`, `test/`, `scripts/` only | Sweep stays **valid**. Record the drift (`<old>..<new>`) in the report and say which files moved. |
+| Mixed | Treat as the first row. Partial validity is not worth adjudicating scenario by scenario. |
+
+Check it, do not assume:
+
+```bash
+git diff --name-only <base-sha> HEAD | cut -d/ -f1-2 | sort -u
+```
+
+**After the sweep**, verify the sha is still the one you started from. If
+it moved, the table above applies, and a sweep that came out clean still
+needs a post-sweep sanity check — re-run the two or three scenarios that
+touch whatever the new commits changed, rather than re-running everything.
+
+**The sweep script must do this itself.** Read `main`'s sha at the start
+and at the end, carry both into the final report, and on a mismatch
+**warn in the report** with the drift range and the touched top-level
+paths. A human reading the report is the last line of defence here, and
+they can only act on drift the report mentions.
+
+```bash
+BASE_SHA="$(git -C ~/Works/agent-hq-orchestron rev-parse HEAD)"
+# … run the sweep …
+END_SHA="$(git -C ~/Works/agent-hq-orchestron rev-parse HEAD)"
+[ "$BASE_SHA" = "$END_SHA" ] || echo "WARN: main drifted $BASE_SHA..$END_SHA during the sweep"
+```
+
+One more coordination rule, learned the same way: **do not restart the
+deployed instance during someone else's sweep.** If a deploy cannot wait,
+say so in the sweep's channel first — a restart mid-run invalidates every
+uptime, session-state and rate-limit assertion already taken.
