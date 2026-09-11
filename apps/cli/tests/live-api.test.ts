@@ -88,7 +88,10 @@ interface Run {
 /** Run the binary against the live server. `--json` is opt-out so the human
  *  table renderers get exercised too — a table column reading a field the API
  *  does not send throws, and that is a failure mode `--json` never sees. */
-async function cli(args: string[], opts: { json?: boolean; shell?: boolean } = {}): Promise<Run> {
+async function cli(
+  args: string[],
+  opts: { json?: boolean; shell?: boolean; pipeTo?: string } = {},
+): Promise<Run> {
   const withFlags = [...args, '--url', base, '--token', 'live-test-token']
   if (opts.json !== false) withFlags.push('--json')
   let stdout = ''
@@ -102,7 +105,7 @@ async function cli(args: string[], opts: { json?: boolean; shell?: boolean } = {
       // downstream reader sees the whole document.
       // `pipefail` so the pipeline reports the CLI's status, not `cat`'s —
       // without it a command that exits 1 reads as a success here.
-      ? await execFileAsync('bash', ['-c', `set -o pipefail; ${TSX} ${CLI_ENTRY} ${withFlags.map(a => JSON.stringify(a)).join(' ')} | cat`], { env, maxBuffer: 64 * 1024 * 1024 })
+      ? await execFileAsync('bash', ['-c', `set -o pipefail; ${TSX} ${CLI_ENTRY} ${withFlags.map(a => JSON.stringify(a)).join(' ')} | ${opts.pipeTo ?? 'cat'}`], { env, maxBuffer: 64 * 1024 * 1024 })
       : await execFileAsync(TSX, [CLI_ENTRY, ...withFlags], { env, maxBuffer: 64 * 1024 * 1024 })
     stdout = r.stdout
     stderr = r.stderr
@@ -233,6 +236,27 @@ describe('CLI against the real route handlers', () => {
     expect(r.stdout.length).toBeGreaterThan(64 * 1024)
     expect(r.json['ok']).toBe(true)
     expect((r.json['sessions'] as unknown[]).length).toBe(BULK_SESSIONS)
+  })
+
+  it('survives a reader that closes the pipe early (NEW-1)', async () => {
+    // `| head` is the other half of piping, and it was unhandled. A reader
+    // that takes what it wants and closes leaves the CLI writing into a dead
+    // pipe; with no `error` listener on stdout, node turns that EPIPE into an
+    // unhandled `error` event and the process dies with a stack trace and a
+    // non-zero status. Nothing in `apps/cli` handled it — pre-existing, and
+    // invisible until `session list` grew past the 64 KiB the pipe buffers
+    // for free.
+    //
+    // `head -c 1000` rather than `head -n`: a byte count guarantees the
+    // reader closes mid-document instead of after a line boundary that a
+    // small payload might never cross.
+    const r = await cli(['session', 'list'], { shell: true, pipeTo: 'head -c 1000' })
+    expect(r.code).toBe(0)
+    expect(r.stderr).toBe('')
+    expect(r.stdout).not.toContain('EPIPE')
+    // The reader did get its bytes — this is a truncated read, not an empty
+    // one, so the test cannot pass by the command failing to produce output.
+    expect(r.stdout.length).toBe(1000)
   })
 
   it('delivers a failure envelope through a shell pipe, with exit 1', async () => {
