@@ -152,7 +152,113 @@ interface AssistantEventUsage {
 interface AssistantEvent {
   type?: string
   timestamp?: string
-  message?: { model?: string; usage?: AssistantEventUsage }
+  message?: { id?: string; model?: string; usage?: AssistantEventUsage }
+}
+
+export interface SessionUsageRollup {
+  input: number
+  output: number
+  cacheRead: number
+  cacheCreation: number
+  /** Sum of per-event costs, each priced at the model that produced that event. */
+  costUsd: number
+  /** Model of the last assistant event carrying usage — session-level attribution only. */
+  lastModel: string
+  /** Timestamp of the last assistant event carrying usage. */
+  lastTs: string
+  /** Rows skipped because an earlier row already billed the same `message.id`. */
+  duplicateRows: number
+}
+
+function sameUsage(a: AssistantEventUsage, b: AssistantEventUsage): boolean {
+  return (a.input_tokens ?? 0) === (b.input_tokens ?? 0)
+    && (a.output_tokens ?? 0) === (b.output_tokens ?? 0)
+    && (a.cache_read_input_tokens ?? 0) === (b.cache_read_input_tokens ?? 0)
+    && (a.cache_creation_input_tokens ?? 0) === (b.cache_creation_input_tokens ?? 0)
+}
+
+/**
+ * Roll one session's JSONL up into tokens + cost.
+ *
+ * Two things this deliberately does NOT do the naive way:
+ *
+ *  1. **Dedup by `message.id`.** Claude Code writes a single assistant message as
+ *     two rollout rows when the response carries a `thinking` block — one row for
+ *     the thinking content, one for the text/tool_use — and both rows repeat the
+ *     *same* `message.id` with the *same* `usage` object. Summing both bills the
+ *     same API call twice; on the headless path nearly every turn splits, so the
+ *     total came out at exactly 2x. We keep the first row that carries usage for
+ *     each id. Rows without an id cannot be deduped and are all counted.
+ *
+ *  2. **Price per event, not per session.** Cost used to be the whole token total
+ *     multiplied by the rate of the *last* billed event's model. A session that
+ *     changed model mid-way (metadata edit, respawn) priced every earlier token at
+ *     the final rate — off by up to 5x (opus/sonnet) or 18.75x (opus/haiku) in
+ *     either direction. Each event is now priced at its own model, falling back to
+ *     the session's recorded model when the row omits one.
+ *
+ * `lastModel` / `lastTs` still advance on duplicate rows: they describe when the
+ * session last emitted and under which model, which a duplicate row answers just
+ * as truthfully as the row it duplicates.
+ */
+export function rollupSessionUsage(
+  raw: string,
+  sessionModel: string | undefined,
+  startedAt: string,
+  sessionLabel = '',
+): SessionUsageRollup {
+  const fallbackModel = sessionModel ?? 'unknown'
+  const out: SessionUsageRollup = {
+    input: 0, output: 0, cacheRead: 0, cacheCreation: 0,
+    costUsd: 0, lastModel: fallbackModel, lastTs: startedAt, duplicateRows: 0,
+  }
+  const billed = new Map<string, AssistantEventUsage>()
+
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue
+    let ev: AssistantEvent
+    try { ev = JSON.parse(line) } catch { continue }
+    if (ev.type !== 'assistant' || !ev.message?.usage) continue
+    const u = ev.message.usage
+
+    if (ev.message.model) out.lastModel = ev.message.model
+    if (ev.timestamp) out.lastTs = ev.timestamp
+
+    const id = ev.message.id
+    if (id !== undefined) {
+      const prior = billed.get(id)
+      if (prior) {
+        // Same id, different numbers — the shape we assume is broken. Bill the
+        // first row anyway (guessing which is authoritative would be worse) and
+        // say so, loudly enough to find in the logs.
+        if (!sameUsage(prior, u)) {
+          console.warn(
+            `[metrics] assistant message ${id}${sessionLabel ? ` in ${sessionLabel}` : ''} repeats with different usage; ` +
+            `billing the first occurrence only`,
+          )
+        }
+        out.duplicateRows += 1
+        continue
+      }
+      billed.set(id, u)
+    }
+
+    const input = u.input_tokens ?? 0
+    const output = u.output_tokens ?? 0
+    const cacheRead = u.cache_read_input_tokens ?? 0
+    const cacheCreation = u.cache_creation_input_tokens ?? 0
+
+    out.input += input
+    out.output += output
+    out.cacheRead += cacheRead
+    out.cacheCreation += cacheCreation
+    out.costUsd += computeCost(
+      { input, output, cacheRead, cacheCreation },
+      ev.message.model ?? fallbackModel,
+    )
+  }
+
+  return out
 }
 
 async function queryFromJsonl(sm: SessionManager, q: MetricsQuery): Promise<MetricsQueryResult> {
@@ -182,47 +288,24 @@ async function queryFromJsonl(sm: SessionManager, q: MetricsQuery): Promise<Metr
     let raw = ''
     try { raw = await readFile(s.jsonlPath, 'utf8') } catch { continue }
 
-    let totalInput = 0
-    let totalOutput = 0
-    let totalCacheRead = 0
-    let totalCacheCreation = 0
-    let lastModel = s.model ?? 'unknown'
-    let lastTs = s.startedAt
+    const usage = rollupSessionUsage(raw, s.model, s.startedAt, s.id)
 
-    for (const line of raw.split('\n')) {
-      if (!line.trim()) continue
-      let ev: AssistantEvent
-      try { ev = JSON.parse(line) } catch { continue }
-      if (ev.type !== 'assistant' || !ev.message?.usage) continue
-      const u = ev.message.usage
-      totalInput += u.input_tokens ?? 0
-      totalOutput += u.output_tokens ?? 0
-      totalCacheRead += u.cache_read_input_tokens ?? 0
-      totalCacheCreation += u.cache_creation_input_tokens ?? 0
-      if (ev.message.model) lastModel = ev.message.model
-      if (ev.timestamp) lastTs = ev.timestamp
-    }
+    if (usage.input === 0 && usage.output === 0 && usage.cacheRead === 0 && usage.cacheCreation === 0) continue
 
-    if (totalInput === 0 && totalOutput === 0 && totalCacheRead === 0 && totalCacheCreation === 0) continue
-
-    const endedAt = s.endedAt ?? lastTs
+    const endedAt = s.endedAt ?? usage.lastTs
     const endedMs = new Date(endedAt).getTime()
     if (endedMs < fromMs || endedMs > toMs) continue
 
-    const cost = computeCost(
-      { input: totalInput, output: totalOutput, cacheRead: totalCacheRead, cacheCreation: totalCacheCreation },
-      lastModel,
-    )
     const startedMs = new Date(s.startedAt).getTime()
 
     perSession.push({
       sessionUuid: s.id,
       projectId: s.projectId,
       adapter: s.agentType,
-      model: lastModel,
+      model: usage.lastModel,
       endedAt,
-      tokens: totalInput + totalOutput + totalCacheRead + totalCacheCreation,
-      costUsd: cost,
+      tokens: usage.input + usage.output + usage.cacheRead + usage.cacheCreation,
+      costUsd: usage.costUsd,
       durationMs: Math.max(0, endedMs - startedMs),
     })
   }
