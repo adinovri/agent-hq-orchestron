@@ -29,6 +29,7 @@ const EXPECTED_COMMANDS = [
   'schedule',
   'qr',
   'doctor',
+  'metrics',
 ]
 
 describe('CLI --help', () => {

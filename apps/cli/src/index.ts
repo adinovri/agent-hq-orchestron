@@ -7,6 +7,7 @@ import { registerSession } from './commands/session.js'
 import { registerSchedule } from './commands/schedule.js'
 import { registerQr } from './commands/qr.js'
 import { registerDoctor } from './commands/doctor.js'
+import { registerMetrics } from './commands/metrics.js'
 
 const program = new Command()
   .name('orchestron')
@@ -21,6 +22,7 @@ registerSession(program)
 registerSchedule(program)
 registerQr(program)
 registerDoctor(program)
+registerMetrics(program)
 
 program.parseAsync(process.argv).catch((e: unknown) => {
   process.stderr.write(String(e) + '\n')
