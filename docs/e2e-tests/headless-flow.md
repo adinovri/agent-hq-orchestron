@@ -43,8 +43,22 @@ run `pgrep -af 'claude -p'` during each turn and between them.
 
 **Expect**
 
-- After turn 1 the session is **`idle`**, not `succeeded`. It did not
-  finish; it is resting.
+- After turn 1 the session is **`idle`** — not `succeeded` (it did not
+  finish; it is resting) and not `needs_input` (nothing was asked).
+
+  `needs_input` here is the NF17 failure and is worth understanding,
+  because the rollout will still *look* like it should produce one. This
+  prompt asks nothing, so the model answers `ok` and stops without
+  calling `StructuredOutput`; Claude Code then injects a
+  `[structured-output-enforce]` user turn, and a model with nothing left
+  to say has been observed filling the schema's optional `inquiry` with
+  filler — measured: `"I'm ready to help. What would you like me to
+  do?"`. Orchestron now discards an inquiry that only appeared after an
+  enforce nudge when the model's own prose asked nothing, and logs
+  `discarded a coerced inquiry`. So expect `idle` **and** expect the
+  nudge to be present in the raw rollout: the guard is on the landing
+  decision, not on the harness's behaviour. A session resting in
+  `needs_input` after this prompt is a regression.
 - The composer is **enabled** at `idle` and its hint reads as *"Send
   the next turn"* rather than *"Send a follow-up"*.
 - Turn 2 is accepted, status goes `running` → `idle`, and the reply is
@@ -157,7 +171,13 @@ field, the `needs_input` state, and the form.
 **If the model answers in prose instead of using the schema**: that is
 documented behaviour, not a failure — the response is treated as the
 summary with no inquiry and the session lands `idle`. Record the
-scenario as **skip — model did not raise an inquiry**, and retry. If it
+scenario as **skip — model did not raise an inquiry**, and retry.
+
+The inverse — a *fabricated* inquiry on a prompt that asked nothing — is
+no longer a caveat but a guard; see HEADLESS-01. Note what the guard
+deliberately does not touch: this scenario's prompt does ask something,
+so if the model answers it in prose, gets nudged, and only then raises
+the inquiry, the inquiry is **kept** and `needs_input` is correct. If it
 never does across several attempts, that *is* a finding worth chasing.
 
 **📷 Screenshot**: `headless-04-inquiry-card.png` — the card with its
