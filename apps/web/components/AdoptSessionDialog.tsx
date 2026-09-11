@@ -8,7 +8,8 @@ import { Button } from '@/components/ui/button'
 import { useHeadlessEnabled } from '@/lib/server-config'
 import { noticeIfCoerced } from '@/lib/notice'
 import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
-import { X, Loader2, CheckCircle2, AlertTriangle, Import } from 'lucide-react'
+import { DialogCloseButton } from '@/components/ui/dialog-close-button'
+import { Loader2, CheckCircle2, AlertTriangle, Import } from 'lucide-react'
 
 interface ProjectSummary {
   id: string
@@ -151,14 +152,7 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
             <Import className="w-4 h-4 text-violet-600 dark:text-violet-400" />
             <h2 className="text-base font-semibold">Adopt existing session</h2>
           </div>
-          <button
-            onClick={dismiss.onCloseButtonClick}
-            disabled={adoptMutation.isPending}
-            aria-label="Close"
-            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <DialogCloseButton guard={dismiss.closeButton} onClick={dismiss.onCloseButtonClick} />
         </div>
 
         <div className="px-4 py-3 space-y-3">

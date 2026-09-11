@@ -10,6 +10,7 @@ import { noticeIfCoerced } from '@/lib/notice'
 import { ProjectInfoPanel } from '@/components/ProjectInfoPanel'
 import { projectFieldDefaults, defaultRowLabel, type ProjectFormOption } from '@/lib/project-info'
 import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
+import { DialogCloseButton } from '@/components/ui/dialog-close-button'
 
 interface AttachedFile {
   id: string
@@ -224,14 +225,11 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">Spawn New Session</h2>
-          <button
+          <DialogCloseButton
+            guard={dismiss.closeButton}
             onClick={dismiss.onCloseButtonClick}
-            disabled={spawning}
-            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-            aria-label="Close"
-          >
-            <X className="w-4 h-4" />
-          </button>
+            className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+          />
         </div>
 
         <div className="px-4 py-4 space-y-4">

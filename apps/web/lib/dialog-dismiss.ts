@@ -73,6 +73,9 @@ export interface DialogDismissHandlers {
   onPanelClick(e: StoppableClick): void
   /** The header `×` — `onClose` routed through the same guard. */
   onCloseButtonClick(): void
+  /** `disabled` + tooltip for that same `×`, so a refused click looks
+   *  refused rather than missed (NF26). Spread onto the button. */
+  closeButton: CloseButtonGuard
 }
 
 /**
@@ -106,6 +109,7 @@ export function createDialogDismiss(
       if (!enabled) return
       onClose()
     },
+    closeButton: closeButtonGuard(enabled),
   }
 }
 
@@ -132,4 +136,49 @@ export function createOpenChangeGuard(
     if (!enabled) return
     onClose()
   }
+}
+
+/**
+ * NF26: making the refusal visible.
+ *
+ * NF25 gave every dismissal vector the same answer. It did not give the
+ * operator any way to see it. Click the × mid-mutation and the guard declines
+ * to forward `onOpenChange(false)` — correct, and completely silent. Nothing
+ * moves, no message appears, and the most natural reading of a button that
+ * does nothing when clicked is that the click was missed. So the operator
+ * clicks again.
+ *
+ * The six hand-rolled dialogs were half-right already: their × carries
+ * `disabled={pending}` and `disabled:opacity-40 disabled:cursor-not-allowed`,
+ * so the glyph dims and the cursor says no. The three Base UI ones (Kill
+ * Confirm, Project, Delete Project) render the primitive's built-in × which
+ * never learned about `pending` at all — it is fully lit, takes hover, and
+ * silently does nothing.
+ *
+ * What was missing everywhere is words. A dimmed glyph says "no"; it does not
+ * say "because a request is in flight", which is the part that tells the
+ * operator to wait rather than to reload the page.
+ */
+
+/** Tooltip on a × that is refusing. Says what to do, not what went wrong. */
+export const CLOSE_BLOCKED_TITLE = 'Please wait for the request to finish'
+
+/** The attributes that make a × legibly refuse. */
+export interface CloseButtonGuard {
+  /** Native `disabled`: stops the click and arms every `disabled:` rule. */
+  disabled: boolean
+  /** Present only while blocked. An always-on "Close" tooltip on a button
+   *  that already has `aria-label="Close"` is noise read twice. */
+  title?: string
+}
+
+/**
+ * Close-button attributes for a dialog that may or may not be dismissible.
+ *
+ * Takes the same `enabled` the dismissal handlers take, so a caller cannot
+ * wire a × that refuses the click but still looks clickable — the two come
+ * from one expression.
+ */
+export function closeButtonGuard(enabled: boolean): CloseButtonGuard {
+  return enabled ? { disabled: false } : { disabled: true, title: CLOSE_BLOCKED_TITLE }
 }

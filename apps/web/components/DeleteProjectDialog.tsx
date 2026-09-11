@@ -44,7 +44,7 @@ export function DeleteProjectDialog({ project, onClose, onDeleted, sessionCount 
   // three wait for the delete, as Cancel already does (NF25).
   return (
     <Dialog open={!!project} onOpenChange={createOpenChangeGuard(!deleting, onClose)}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-sm" closeDisabled={deleting}>
         <DialogHeader>
           <DialogTitle>Delete project?</DialogTitle>
         </DialogHeader>

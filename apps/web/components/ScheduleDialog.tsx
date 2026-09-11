@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react'
 import cronstrue from 'cronstrue'
 import { Button } from '@/components/ui/button'
 import { apiFetch } from '@/lib/fetcher'
-import { X, CalendarClock, AlertCircle } from 'lucide-react'
+import { CalendarClock, AlertCircle } from 'lucide-react'
 import { modelsFor, effortsFor } from '@/lib/models'
 import { useHeadlessEnabled } from '@/lib/server-config'
 import { noticeIfCoerced } from '@/lib/notice'
@@ -12,6 +12,7 @@ import { ProjectInfoPanel } from '@/components/ProjectInfoPanel'
 import { projectFieldDefaults, defaultRowLabel } from '@/lib/project-info'
 import { buildSchedulePayload, type ScheduleProjectOption } from '@/lib/schedule-fields'
 import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
+import { DialogCloseButton } from '@/components/ui/dialog-close-button'
 
 interface Props {
   open: boolean
@@ -240,14 +241,11 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
           <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
             {isEdit ? 'Edit Schedule' : 'New Schedule'}
           </h2>
-          <button
+          <DialogCloseButton
+            guard={dismiss.closeButton}
             onClick={dismiss.onCloseButtonClick}
-            disabled={saving}
-            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-            aria-label="Close"
-          >
-            <X className="w-4 h-4" />
-          </button>
+            className="text-zinc-500"
+          />
         </div>
 
         <div className="px-4 py-4 space-y-4">

@@ -5,6 +5,7 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { CLOSE_BLOCKED_TITLE } from "@/lib/dialog-dismiss"
 import { XIcon } from "lucide-react"
 
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
@@ -43,9 +44,20 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  closeDisabled = false,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
+  /**
+   * The dialog is on screen but refusing to be dismissed — a mutation is in
+   * flight and `onOpenChange` is guarded by `createOpenChangeGuard`.
+   *
+   * Without this the built-in × stays fully lit and simply does nothing when
+   * clicked, which reads as a missed click rather than a refusal (NF26). The
+   * hand-rolled dialogs have carried `disabled` on their own × since NF25;
+   * this is the same state reaching the one the primitive renders.
+   */
+  closeDisabled?: boolean
 }) {
   return (
     <DialogPortal>
@@ -59,7 +71,27 @@ function DialogContent({
         {...props}
       >
         {children}
-        {showCloseButton && (
+        {showCloseButton && (closeDisabled ? (
+          /*
+           * Not a `DialogPrimitive.Close`: a disabled Close would still be the
+           * primitive's dismiss affordance, and `buttonVariants` carries
+           * `disabled:pointer-events-none` — which takes the hover with it, so
+           * the button itself can show neither `cursor-not-allowed` nor a
+           * native tooltip. The wrapper is what the pointer actually lands on.
+           * It carries the cursor and the title; the inert button inside
+           * carries the dimming.
+           */
+          <span
+            data-slot="dialog-close-blocked"
+            title={CLOSE_BLOCKED_TITLE}
+            className="absolute top-2 right-2 inline-flex cursor-not-allowed"
+          >
+            <Button variant="ghost" size="icon-sm" disabled aria-label="Close">
+              <XIcon />
+              <span className="sr-only">Close</span>
+            </Button>
+          </span>
+        ) : (
           <DialogPrimitive.Close
             data-slot="dialog-close"
             render={
@@ -74,7 +106,7 @@ function DialogContent({
             />
             <span className="sr-only">Close</span>
           </DialogPrimitive.Close>
-        )}
+        ))}
       </DialogPrimitive.Popup>
     </DialogPortal>
   )

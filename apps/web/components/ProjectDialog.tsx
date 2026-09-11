@@ -154,7 +154,7 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
   // three wait for the save, as Cancel already does (NF25).
   return (
     <Dialog open={open} onOpenChange={createOpenChangeGuard(!saving, onClose)}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto" closeDisabled={saving}>
         <DialogHeader>
           <DialogTitle>{project ? 'Edit Project' : 'Register Project'}</DialogTitle>
         </DialogHeader>
