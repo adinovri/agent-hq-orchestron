@@ -4,6 +4,7 @@ import pc from 'picocolors'
 import Table from 'cli-table3'
 import { apiRaw, apiRequest, type CommonOpts } from '../helpers/api.js'
 import { action, emit, withCommonOptions } from '../helpers/output.js'
+import { assertEffort, effortHelp } from '../helpers/effort.js'
 import { compact, resolveUseTmux } from '../helpers/mode.js'
 import { readPromptOrStdin } from '../helpers/stdin.js'
 import { collectRepeatable, parseVarAssignments } from '../helpers/files.js'
@@ -55,6 +56,9 @@ function coercionNote(result: { coerced?: { reason?: string } }): string {
  * never take one back off — the same gap the web dialog had before B6-F2.
  */
 function overrideBody(opts: ModeOpts & { clearModel?: boolean; clearEffort?: boolean; followProjectMode?: boolean }): Record<string, unknown> {
+  // The schedule routes take all six levels plus `''` for "clear"; checking
+  // here means a typo costs no request.
+  assertEffort(opts.effort, 'schedule', { allowClear: true })
   const body: Record<string, unknown> = {}
   if (opts.clearModel && opts.model) throw new Error('--model and --clear-model are mutually exclusive')
   if (opts.clearEffort && opts.effort) throw new Error('--effort and --clear-effort are mutually exclusive')
@@ -76,7 +80,7 @@ function overrideBody(opts: ModeOpts & { clearModel?: boolean; clearEffort?: boo
 function withOverrideOptions(cmd: Command): Command {
   return cmd
     .option('--model <model>', 'Pin the model for spawns from this schedule')
-    .option('--effort <level>', 'Pin the effort: low|medium|high|xhigh|max|ultra')
+    .option('--effort <level>', effortHelp('schedule'))
     .option('--headless', 'Spawn without tmux')
     .option('--tmux', 'Spawn in tmux')
 }

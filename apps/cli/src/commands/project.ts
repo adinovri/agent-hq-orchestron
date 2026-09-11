@@ -4,6 +4,7 @@ import Table from 'cli-table3'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
 import { apiRequest, type CommonOpts } from '../helpers/api.js'
 import { action, emit, withCommonOptions } from '../helpers/output.js'
+import { assertEffort, effortHelp } from '../helpers/effort.js'
 import { compact, parseBoolFlag } from '../helpers/mode.js'
 
 export function registerProject(program: Command): void {
@@ -82,7 +83,7 @@ export function registerProject(program: Command): void {
       .option('--agent <agent>', 'Agent type', 'claude')
       .option('--group <group>', 'Group')
       .option('--default-model <model>', 'Model every spawn inherits')
-      .option('--default-effort <level>', 'Effort every spawn inherits')
+      .option('--default-effort <level>', `Effort every spawn inherits — ${effortHelp('project')}`)
       .option('--default-headless', 'Spawn headless by default')
       .option('--default-tmux', 'Spawn in tmux by default'),
   ).action(
@@ -102,6 +103,7 @@ export function registerProject(program: Command): void {
         if (opts.defaultHeadless && opts.defaultTmux) {
           throw new Error('--default-headless and --default-tmux are mutually exclusive')
         }
+        assertEffort(opts.defaultEffort, 'project', { flag: '--default-effort' })
         const result = await apiRequest<ProjectMetadata>(opts, '/api/projects', {
           method: 'POST',
           body: compact({
@@ -132,7 +134,7 @@ export function registerProject(program: Command): void {
       .option('--group <group>', 'New group (empty string clears it)')
       .option('--default-model <model>', 'New default model')
       .option('--clear-default-model', 'Un-pin the default model')
-      .option('--default-effort <level>', 'New default effort')
+      .option('--default-effort <level>', `New default effort — ${effortHelp('project')}`)
       .option('--clear-default-effort', 'Un-pin the default effort')
       .option('--default-use-tmux <bool>', 'true spawns in tmux, false spawns headless'),
   ).action(
@@ -156,6 +158,7 @@ export function registerProject(program: Command): void {
         if (opts.clearDefaultEffort && opts.defaultEffort) {
           throw new Error('--default-effort and --clear-default-effort are mutually exclusive')
         }
+        assertEffort(opts.defaultEffort, 'project', { flag: '--default-effort' })
         // `null` is the clear, `''` is a typo — B6-F2. An omitted key merges,
         // so the CLI has to say "unset" out loud for the caller to ever get a
         // pinned model back off a project.

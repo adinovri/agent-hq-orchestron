@@ -9,6 +9,7 @@ import { compact, parseBoolFlag, resolveUseTmux } from '../helpers/mode.js'
 import { readPromptOrStdin, requirePrompt } from '../helpers/stdin.js'
 import { planAnswer } from '../helpers/answer.js'
 import { collectRepeatable, parseVarAssignments, readAttachments, writeExport } from '../helpers/files.js'
+import { assertEffort, effortHelp, type EffortEndpoint } from '../helpers/effort.js'
 
 const STATUS_COLOR: Record<string, (s: string) => string> = {
   running: pc.green,
@@ -49,11 +50,15 @@ function coercionNote(result: { coerced?: { reason?: string } }): string {
   return result.coerced ? pc.yellow(`  (coerced to tmux: ${result.coerced.reason ?? 'headless disabled'})`) : ''
 }
 
-/** Flags shared by spawn and the three revival verbs. */
-function withModeOptions(cmd: Command): Command {
+/** Flags shared by spawn and the three revival verbs.
+ *
+ *  `endpoint` picks the effort enum: spawn takes all six levels, the revival
+ *  routes reject `ultra`. Same list drives the help text and the local check,
+ *  so `--help` cannot advertise a level the route will 400. */
+function withModeOptions(cmd: Command, endpoint: EffortEndpoint): Command {
   return cmd
     .option('--model <model>', 'Pin the harness model for this session')
-    .option('--effort <level>', 'Reasoning effort: low|medium|high|xhigh|max|ultra')
+    .option('--effort <level>', effortHelp(endpoint))
     .option('--headless', 'Run without tmux (one-shot `-p` turns)')
     .option('--tmux', 'Run in tmux (explicit override of the project default)')
 }
@@ -168,6 +173,7 @@ export function registerSession(program: Command): void {
         .option('--parent <sessionId>', 'Record this spawn as a child of another session')
         .option('--detached', 'Spawn detached (no parent tracking)'),
     ),
+    'spawn',
   ).action(
     action(
       async (
@@ -182,6 +188,7 @@ export function registerSession(program: Command): void {
           detached?: boolean
         },
       ) => {
+        assertEffort(opts.effort, 'spawn')
         // A template renders its own prompt server-side, so stdin is only
         // consulted when neither was named — otherwise piping into a
         // templated spawn would silently add a second, conflicting body.
@@ -244,8 +251,10 @@ export function registerSession(program: Command): void {
               : 'Start the session over from its initial prompt (fresh harness conversation)',
           ),
       ),
+      'revival',
     ).action(
       action(async (id: string, opts: ModeOpts) => {
+        assertEffort(opts.effort, 'revival')
         const result = await apiRequest<SessionMetadata & { coerced?: { reason?: string } }>(
           opts,
           `/api/sessions/${id}/${path}`,
@@ -271,8 +280,10 @@ export function registerSession(program: Command): void {
         .description('Branch a new session off this one, sharing its harness conversation')
         .option('--prompt <prompt>', 'Seed the fork with a new user turn (else read from stdin)'),
     ),
+    'revival',
   ).action(
     action(async (id: string, opts: ModeOpts & { prompt?: string }) => {
+      assertEffort(opts.effort, 'revival')
       const prompt = await readPromptOrStdin(opts.prompt)
       const result = await apiRequest<SessionMetadata & { coerced?: { reason?: string } }>(
         opts,
@@ -345,10 +356,11 @@ export function registerSession(program: Command): void {
       .command('metadata <id>')
       .description('Edit model / effort / run mode on a resting session')
       .option('--model <model>', 'New model')
-      .option('--effort <level>', 'New effort, or "" to clear')
+      .option('--effort <level>', effortHelp('metadata', { allowClear: true }))
       .option('--use-tmux <bool>', 'true to run in tmux, false for headless'),
   ).action(
     action(async (id: string, opts: CommonOpts & { model?: string; effort?: string; useTmux?: string }) => {
+      assertEffort(opts.effort, 'metadata', { allowClear: true })
       const useTmux = parseBoolFlag(opts.useTmux, '--use-tmux')
       const body = compact({ model: opts.model, effort: opts.effort, useTmux })
       if (Object.keys(body).length === 0) {
@@ -437,12 +449,13 @@ export function registerSession(program: Command): void {
       .description('Take an existing harness session (started outside orchestron) under management')
       .requiredOption('--project <projectId>', 'Project to adopt it into')
       .option('--model <model>', 'Pin the model on the new record')
-      .option('--effort <level>', 'Pin the effort on the new record')
+      .option('--effort <level>', effortHelp('adopt'))
       .option('--headless', 'Manage it headless')
       .option('--tmux', 'Manage it in tmux')
       .option('--dry-run', 'Validate only — do not create the record'),
   ).action(
     action(async (harnessUuid: string, opts: ModeOpts & { project: string; dryRun?: boolean }) => {
+      assertEffort(opts.effort, 'adopt')
       const body = compact({
         projectId: opts.project,
         harnessSessionId: harnessUuid,
