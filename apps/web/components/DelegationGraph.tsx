@@ -15,6 +15,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import dagre from '@dagrejs/dagre'
 import type { SessionMetadata, DelegationGraphEdge } from '@agent-hq-orchestron/shared'
+import { planDelegationGraph, emptyGraphMessage } from '@/lib/delegation-graph'
 
 const NODE_W = 200
 const NODE_H = 70
@@ -81,55 +82,66 @@ export function DelegationGraph({ sessions, delegationEdges, rootUuid }: Props) 
     return m
   }, [sessions])
 
-  const rawNodes = useMemo((): Node[] => {
-    const ids = new Set<string>()
-    delegationEdges.forEach((e) => { ids.add(e.source); ids.add(e.target) })
-    if (rootUuid) ids.add(rootUuid)
+  // Node selection, the unknown-root rule and the inert/clickable split
+  // live in lib/delegation-graph so they can be tested without a DOM.
+  const plan = useMemo(
+    () => planDelegationGraph(sessions, delegationEdges, rootUuid),
+    [sessions, delegationEdges, rootUuid],
+  )
 
-    return Array.from(ids).map((id) => {
-      const s = sessionMap.get(id)
-      return {
-        id,
-        type: 'default',
-        position: { x: 0, y: 0 },
-        data: { label: id.slice(0, 8) + (s ? `\n${s.status}` : '') },
-        style: {
-          background: STATUS_COLORS[s?.status ?? 'idle'] ?? '#71717a',
-          color: '#fff',
-          borderRadius: 10,
-          fontSize: 12,
-          fontWeight: 500,
-          width: NODE_W,
-          height: NODE_H,
-          // Root gets a bright white ring so it's distinct in a tree.
-          // Non-root nodes get a subtle same-hue border so the fill has
-          // a lift against the dot-grid, without competing with the fill.
-          border: id === rootUuid
-            ? '2px solid #fff'
-            : `1px solid ${borderFor(s?.status)}`,
-          boxShadow: id === rootUuid
-            ? '0 0 0 3px rgba(255,255,255,0.15)'
-            : '0 1px 3px rgba(0,0,0,0.35)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          textAlign: 'center' as const,
-          whiteSpace: 'pre-wrap',
-          cursor: 'pointer',
-        },
-      }
-    })
-  }, [delegationEdges, sessionMap, rootUuid])
+  // Ids a click may navigate to. Everything else renders, but inert —
+  // `/session/<id>` for a session the API does not have is a dead end.
+  const clickable = useMemo(
+    () => new Set(plan.nodes.filter((n) => n.known).map((n) => n.id)),
+    [plan],
+  )
+
+  const rawNodes = useMemo((): Node[] =>
+    plan.nodes.map((n) => ({
+      id: n.id,
+      type: 'default',
+      position: { x: 0, y: 0 },
+      data: { label: n.id.slice(0, 8) + (n.known ? `\n${n.status}` : '\nnot in session list') },
+      style: {
+        background: STATUS_COLORS[n.status ?? 'idle'] ?? '#71717a',
+        color: '#fff',
+        borderRadius: 10,
+        fontSize: 12,
+        fontWeight: 500,
+        width: NODE_W,
+        height: NODE_H,
+        // Root gets a bright white ring so it's distinct in a tree.
+        // Non-root nodes get a subtle same-hue border so the fill has
+        // a lift against the dot-grid, without competing with the fill.
+        border: n.isRoot
+          ? '2px solid #fff'
+          : `1px solid ${borderFor(n.status)}`,
+        boxShadow: n.isRoot
+          ? '0 0 0 3px rgba(255,255,255,0.15)'
+          : '0 1px 3px rgba(0,0,0,0.35)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        textAlign: 'center' as const,
+        whiteSpace: 'pre-wrap',
+        // A node with no session behind it advertises that it goes
+        // nowhere, rather than looking identical to one that does.
+        cursor: n.known ? 'pointer' : 'default',
+        opacity: n.known ? 1 : 0.55,
+      },
+    })),
+    [plan],
+  )
 
   const rawEdges = useMemo((): Edge[] =>
-    delegationEdges.map((e) => ({
+    plan.edges.map((e) => ({
       id: e.id,
       source: e.source,
       target: e.target,
       label: e.label,
       animated: ['running', 'spawning'].includes(sessionMap.get(e.target)?.status ?? ''),
     })),
-    [delegationEdges, sessionMap],
+    [plan, sessionMap],
   )
 
   const { nodes: laidOutNodes, edges: laidOutEdges } = useMemo(() => {
@@ -144,8 +156,9 @@ export function DelegationGraph({ sessions, delegationEdges, rootUuid }: Props) 
   useEffect(() => { setEdges(laidOutEdges) }, [laidOutEdges, setEdges])
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+    if (!clickable.has(node.id)) return
     router.push(`/session/${node.id}`)
-  }, [router])
+  }, [router, clickable])
 
   // Track the active app theme (orchestron/tycho/light) so React Flow's
   // Controls/MiniMap/Background pick the right palette. ThemeSwitcher
@@ -169,10 +182,13 @@ export function DelegationGraph({ sessions, delegationEdges, rootUuid }: Props) 
   } as const
   const miniMaskColor = isLight ? 'rgba(20,22,28,0.06)' : 'rgba(20,22,28,0.6)'
 
+  // Reachable again: an unknown `?root=` no longer forces a node into the
+  // set, so "you asked for a session that isn't there" has somewhere to
+  // be said instead of being drawn as a phantom.
   if (rawNodes.length === 0) {
     return (
-      <div className="flex items-center justify-center h-64 text-zinc-400 text-sm">
-        No delegation graph — select a session root via ?root=&lt;uuid&gt;
+      <div className="flex items-center justify-center h-64 px-4 text-center text-zinc-400 text-sm">
+        {emptyGraphMessage(plan.root)}
       </div>
     )
   }
