@@ -283,8 +283,53 @@ const MODAL_SELECT_RE = /Enter\s+to\s+select/
 const OPTION_LINE_RE = /^\s*(?:[❯●▶>▷◈]?\s*)?(\d+)\.\s+(.+?)\s*$/
 // Modal top marker — the checkbox header line above the title.
 const MODAL_HEADER_RE = /^\s*☐\s+(.+?)\s*$/
+/** The solid rule Claude draws to close off the conversation above a modal.
+ *  Load-bearing as a *boundary*: the native band walk stops here. */
 const SEPARATOR_RE = /^[─━=—-]{3,}$/
-const PERMISSION_HINT_RE = /(Do\s+you\s+want\s+to\s+proceed\??|Do\s+you\s+want\s+to\s+allow)/i
+
+/**
+ * The dashed rule Claude draws *inside* a modal, fencing a file-content
+ * preview above and below (`╌╌╌` in NF22's capture).
+ *
+ * Kept apart from SEPARATOR_RE on purpose. Folding the dashed glyphs into
+ * that regex is the obvious move and it is wrong: the two rules mean opposite
+ * things to the upward band walk. A solid rule is the modal's top edge and
+ * must stop the scan; a dashed rule sits between the title and the preview
+ * and must be stepped over. Merging them truncated the band at the first
+ * fence and left the Write modal titled `Tool approval` with no detail —
+ * detected, but with nothing on it for an operator to approve.
+ */
+const MODAL_INNER_RULE_RE = /^[\u254C\u254D\u2504\u2505\u2508\u2509]{3,}$/
+
+/**
+ * The one question line every Claude Code permission modal asks — whatever
+ * family drew it.
+ *
+ * NF22: this used to be two regexes that were supposed to cover the same
+ * family and drifted apart. `MCP_MODAL_QUESTION_RE` (the *gate*, deciding
+ * whether a pane is a modal at all) knew only `Do you want to proceed?`;
+ * `PERMISSION_HINT_RE` (the *classifier*, deciding `permission` vs
+ * `question`) knew that plus `Do you want to allow`. Neither knew the
+ * file-approval wording, so a `Write` approval was not misclassified — it was
+ * never detected, and the session parked `running` with `pendingPrompt: null`
+ * for the life of the modal. Gate and classifier are now literally the same
+ * pattern so they cannot drift again.
+ *
+ * The verbs are taken from captured panes only:
+ *   - `Do you want to proceed?`            — Bash/WebFetch (batch-10 capture)
+ *   - `Do you want to create b11.txt?`     — Write        (batch-11 capture)
+ * `allow`, `edit`, `modify` and `delete` are included as the rest of the
+ * imperative family Claude uses for tool approvals. `make` is deliberately
+ * NOT here: the only string containing it (`Do you want to make this edit?`)
+ * lives in a *reconstructed* fixture, and widening a regex to match wording
+ * this repo invented is the mistake batch-11 refused to make. See
+ * `tests/fixtures/panes/README.md`.
+ */
+const PERMISSION_QUESTION_RE =
+  /Do\s+you\s+want\s+to\s+(?:proceed|allow|create|edit|modify|delete)\b/i
+
+/** Alias kept for the classifier's reading site. Same object, by design. */
+const PERMISSION_HINT_RE = PERMISSION_QUESTION_RE
 
 /** Lines that belong to the conversation above the modal, not to the modal.
  *  Terminates the upward title scan when Claude drew no separator rule. */
@@ -337,14 +382,34 @@ export function parseNativeToolModal(pane: string): import('@agent-hq-orchestron
   const footerIdx = lines.findIndex((l) => MCP_MODAL_FOOTER_RE.test(l))
   if (questionIdx === -1 || footerIdx === -1 || questionIdx >= footerIdx) return null
 
+  // Options, with the wrapped ones put back together. NF22's capture is the
+  // first pane in the fixtures whose option 2 is too long for the pane and
+  // runs onto a second line:
+  //
+  //     2. Yes, and switch to accept edits (auto-approve file edits and common file
+  //        commands) for this session (shift+tab)
+  //
+  // Taking only the matched line truncates the label mid-sentence. `--choice`
+  // still works (it indexes, it does not match text), so this is cosmetic —
+  // but the label is what an operator reads before approving, and half a
+  // sentence ending in `and common file` is a poor basis for that decision.
+  // A continuation is an indented, non-empty line that is not itself an
+  // option and not a rule, once at least one option is open.
   const options: string[] = []
   for (let i = questionIdx + 1; i < footerIdx; i++) {
-    const m = (lines[i] ?? '').match(OPTION_LINE_RE)
+    const raw = lines[i] ?? ''
+    const m = raw.match(OPTION_LINE_RE)
     if (m) {
       const num = Number.parseInt(m[1] ?? '0', 10)
       const label = (m[2] ?? '').trim()
       if (num > 0 && label) options.push(label)
+      continue
     }
+    const trimmed = raw.trim()
+    if (options.length === 0 || !trimmed) continue
+    if (SEPARATOR_RE.test(trimmed) || MODAL_INNER_RULE_RE.test(trimmed)) continue
+    if (!/^\s/.test(raw)) continue
+    options[options.length - 1] += ` ${trimmed}`
   }
   if (options.length === 0) return null
 
@@ -362,7 +427,7 @@ export function parseNativeToolModal(pane: string): import('@agent-hq-orchestron
     const line = (lines[i] ?? '').trim()
     if (SEPARATOR_RE.test(line)) break
     if (TRANSCRIPT_GLYPH_RE.test(line)) break
-    if (!line) continue
+    if (!line || MODAL_INNER_RULE_RE.test(line)) continue
     band.unshift(line)
   }
 
@@ -410,7 +475,9 @@ export function parseNativeToolModal(pane: string): import('@agent-hq-orchestron
  *  2. No matches). Kicks in on top of the native selector detector
  *  below so both modal families surface as PendingPromptBanner. */
 const MCP_MODAL_HEADER_RE = /^\s*About\s+the\s+(\S+)\s+[—–-]\s+(.+?)\s+Tool:\s*$/i
-const MCP_MODAL_QUESTION_RE = /Do\s+you\s+want\s+to\s+proceed\??/i
+/** Alias kept for the gate's reading sites. Same object, by design — see
+ *  PERMISSION_QUESTION_RE for why these two must never diverge again. */
+const MCP_MODAL_QUESTION_RE = PERMISSION_QUESTION_RE
 const MCP_MODAL_FOOTER_RE = /Esc\s+to\s+cancel(?:.*Tab\s+to\s+amend)?/i
 
 export function parseMcpToolModal(pane: string): import('@agent-hq-orchestron/shared').PendingPrompt | null {
@@ -442,7 +509,7 @@ export function parseMcpToolModal(pane: string): import('@agent-hq-orchestron/sh
   const detailLines: string[] = []
   for (let i = headerIdx + 1; i < questionIdx; i++) {
     const line = (lines[i] ?? '').replace(/^\s*│\s?|\s*│\s*$/g, '').trim()
-    if (!line || SEPARATOR_RE.test(line)) continue
+    if (!line || SEPARATOR_RE.test(line) || MODAL_INNER_RULE_RE.test(line)) continue
     if (/\(ctrl\+o\s+to\s+expand/i.test(line)) continue
     detailLines.push(line)
   }

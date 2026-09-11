@@ -38,6 +38,7 @@ const pane = (name: string): string =>
 const NATIVE = 'claude-2.1.268-bash-permission.txt'
 const SELECTOR = 'claude-2.1.267-selector-modal.txt'
 const MCP = 'mcp-tool-approval.txt'
+const WRITE = 'claude-2.1.268-write-permission.txt'
 
 describe('parseNativeToolModal (NF20)', () => {
   it('reads the pane that went unread for 60 seconds', () => {
@@ -92,6 +93,94 @@ describe('parseNativeToolModal (NF20)', () => {
   })
 })
 
+describe('parseNativeToolModal — file approvals (NF22)', () => {
+  /**
+   * NF22 supersedes B11-1. B11-1 predicted that a file-approval modal would be
+   * detected but misclassified as `kind: 'question'`. The batch-11 sweep
+   * captured one and found something worse: `kind` was never computed at all,
+   * because the question-line gate rejected the pane first. All three parsers
+   * returned `null` and the session sat `running` with `pendingPrompt: null`
+   * across three 14s polls — the identical symptom NF20 had just fixed for
+   * Bash.
+   *
+   * This fixture is a REAL CAPTURE (claude 2.1.268, session `013368f7` of the
+   * batch-11 sweep), which is the whole reason the fix was allowed to be
+   * written. `Edit` could not be the probe on that host: the Nanovest managed
+   * policy allowlists `Edit` org-wide so it never prompts. `Write` is not
+   * allowlisted, so `Write`/create is the family this rests on.
+   */
+  it('detects the Write approval that parked a session on running', () => {
+    const prompt = parseNativeToolModal(pane(WRITE))
+    expect(prompt).not.toBeNull()
+    // The point of the finding: not a wrong kind, a missing prompt.
+    expect(prompt?.options).toEqual([
+      'Yes',
+      'Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)',
+      'No',
+    ])
+  })
+
+  it('classifies it as a permission, not a question', () => {
+    // B11-1's original claim, now actually reachable and actually asserted.
+    expect(parseNativeToolModal(pane(WRITE))?.kind).toBe('permission')
+  })
+
+  it('titles it from the modal, not from the transcript above it', () => {
+    const prompt = parseNativeToolModal(pane(WRITE))
+    // The capture's header band is `Create file` / `b11.txt`. Above the rule
+    // sits a `● Write(b11.txt)` transcript glyph and the echoed user prompt;
+    // neither is modal content.
+    expect(prompt?.title).toBe('Create file')
+    expect(prompt?.detail).toContain('b11.txt')
+    expect(prompt?.title).not.toContain('Use the Write tool')
+    expect(prompt?.detail ?? '').not.toContain('Use the Write tool')
+  })
+
+  it('drops the dashed rules Claude draws around the content preview', () => {
+    // The file-preview band is fenced with `╌`, which the old SEPARATOR_RE
+    // did not know — it only covered the solid `─`. Left unhandled the rules
+    // land in `detail` as runs of box-drawing noise.
+    const detail = parseNativeToolModal(pane(WRITE))?.detail ?? ''
+    expect(detail).not.toMatch(/[\u254C\u254D\u2504\u2505\u2508\u2509]{3,}/)
+    // The preview itself is still kept — it is what the operator approves.
+    expect(detail).toContain('draft')
+  })
+
+  it('still refuses prose that merely quotes the new wording', () => {
+    // Widening the verb list widens the false-positive surface too. The gate
+    // is question + footer + a numbered option between them; none of these
+    // clear it.
+    expect(
+      parseNativeToolModal('● It asked "Do you want to create b11.txt?" — Esc to cancel.'),
+    ).toBeNull()
+    expect(
+      parseNativeToolModal(['Do you want to create x.txt?', '', 'Esc to cancel'].join('\n')),
+    ).toBeNull()
+  })
+
+  it('gate and classifier agree on every attested verb', () => {
+    // NF22's root cause was two regexes for one family drifting apart: the
+    // gate knew `proceed`, the classifier knew `proceed` and `allow`, and
+    // neither knew `create`. They are one object now, so a verb that opens
+    // the gate must also classify as `permission` — assert that rather than
+    // trusting the aliasing.
+    for (const verb of ['proceed', 'allow', 'create', 'edit', 'modify', 'delete']) {
+      const synthetic = [
+        '────────────────────────────────────────',
+        ' Tool approval',
+        ` Do you want to ${verb} something?`,
+        ' ❯ 1. Yes',
+        '   2. No',
+        '',
+        ' Esc to cancel · Tab to amend',
+      ].join('\n')
+      const prompt = parseNativeToolModal(synthetic)
+      expect(prompt, `verb ${verb} did not open the gate`).not.toBeNull()
+      expect(prompt?.kind, `verb ${verb} did not classify as permission`).toBe('permission')
+    }
+  })
+})
+
 describe('the three families do not poach each other', () => {
   // Precedence at the call site is selector → mcp → native. That only holds
   // if each parser declines the panes it does not own.
@@ -99,6 +188,19 @@ describe('the three families do not poach each other', () => {
     expect(parseSelectorModal(pane(NATIVE))).toBeNull()
     expect(parseMcpToolModal(pane(NATIVE))).toBeNull()
     expect(parseNativeToolModal(pane(NATIVE))).not.toBeNull()
+  })
+
+  it('the Write approval is claimed by neither older parser either', () => {
+    // Widening the question regex could have handed this pane to the MCP
+    // parser, which shares the gate. It has no `About the <server> — <Tool>
+    // Tool:` header and no `☐`, so both older parsers must still decline.
+    expect(parseSelectorModal(pane(WRITE))).toBeNull()
+    expect(parseMcpToolModal(pane(WRITE))).toBeNull()
+    const winner =
+      parseSelectorModal(pane(WRITE)) ??
+      parseMcpToolModal(pane(WRITE)) ??
+      parseNativeToolModal(pane(WRITE))
+    expect(winner?.title).toBe('Create file')
   })
 
   it('the selector modal still belongs to parseSelectorModal', () => {
@@ -110,14 +212,18 @@ describe('the three families do not poach each other', () => {
     // And the new parser must not steal it — no "Do you want to proceed?".
     expect(parseNativeToolModal(pane(SELECTOR))).toBeNull()
 
-    // `kind` is deliberately NOT asserted here. It is decided by
-    // PERMISSION_HINT_RE, which knows only "do you want to proceed" and "do
-    // you want to allow", so this edit-approval pane classifies as
-    // `question` rather than `permission`. That may well be a real defect —
-    // an Edit approval is a permission by any reading — but this fixture is a
-    // reconstruction, and its wording is not evidence about what the harness
-    // actually prints. Filed for the sweep to settle against a real capture
-    // rather than fixed here against a string this repo invented.
+    // `kind` is STILL deliberately not asserted, and NF22 is the reason it
+    // stays that way. This fixture asks "Do you want to make this edit?" —
+    // `make`, a verb that appears nowhere in any captured pane. The sweep
+    // settled B11-1 against a real capture and found the wording was
+    // `Do you want to create <file>?`, which no reconstruction produced. So
+    // the family regex was widened to the verbs that are attested and no
+    // further: adding `make` would be widening it to match a sentence this
+    // repo wrote for itself, and the fixture would then "prove" a fix to its
+    // own invention. This pane consequently still classifies as `question`.
+    // That is a known, deliberate gap — see the WRITE suite below for what
+    // evidence-backed detection looks like, and fixtures/panes/README.md.
+    expect(prompt?.kind).toBe('question')
   })
 
   it('the MCP modal still belongs to parseMcpToolModal', () => {
