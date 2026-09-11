@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchJson } from '@/lib/fetcher'
 import { isTerminal } from '@/lib/status'
+import { DEFAULT_IDLE_TIMEOUT_MS } from '@/lib/idle-chip'
 import type { SessionStatus } from '@agent-hq-orchestron/shared'
 
 /** Authed server diagnostics. `/api/health` is anonymous `{ok:true}` only —
@@ -21,6 +22,9 @@ export interface HealthDetail {
    *  the server coerces headless requests to tmux anyway, so there is no
    *  choice left to present. Absent on servers older than the flag. */
   enableHeadlessMode?: boolean
+  /** Auto-sleep threshold in force on this server. Absent on servers older
+   *  than the field — callers fall back to the schema default, and say so. */
+  idleTimeoutMs?: number
 }
 
 /** Shares the `['health']` query key with the Settings page so the dialogs
@@ -34,6 +38,20 @@ export function useHealthDetail() {
     // ride the same cache and unmount long before it matters.
     refetchInterval: 30_000,
   })
+}
+
+/**
+ * The server's auto-sleep threshold, for the idle chips.
+ *
+ * Falls back to the schema default while the health fetch is in flight, on
+ * error, and against a server that predates the field — the same optimism as
+ * `useHeadlessEnabled`, and for the same reason: the chip is cosmetic, and a
+ * momentarily stale tooltip beats a blank one. What it must not do is what it
+ * did before (NF14) — hardcode 15 minutes on an instance running 60 seconds.
+ */
+export function useIdleTimeoutMs(): number {
+  const { data } = useHealthDetail()
+  return data?.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
 }
 
 /**

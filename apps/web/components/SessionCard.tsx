@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button'
 import { StatusPill } from '@/components/StatusPill'
 import { formatRelative, formatDuration } from '@/lib/time'
 import { isActive } from '@/lib/status'
-import { useHeadlessBadgeVisible } from '@/lib/server-config'
+import { useHeadlessBadgeVisible, useIdleTimeoutMs } from '@/lib/server-config'
+import { idleChipState } from '@/lib/idle-chip'
 import { Sparkles, Terminal, Bot, X, GitBranch, Zap } from 'lucide-react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 
@@ -49,6 +50,7 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
   // Hidden on terminal sessions while the global headless switch is off —
   // see useHeadlessBadgeVisible for why a *running* one keeps it.
   const showHeadlessBadge = useHeadlessBadgeVisible(session.useTmux, session.status)
+  const idleTimeoutMs = useIdleTimeoutMs()
   const icon = AGENT_ICON[session.agentType] ?? <Bot className="w-4 h-4" />
 
   return (
@@ -139,8 +141,9 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
               </span>
             )}
             {session.idleSince && (session.status === 'idle' || session.status === 'needs_input') && (() => {
-              const idleMin = Math.floor((Date.now() - new Date(session.idleSince).getTime()) / 60_000)
-              const nearSleep = idleMin >= 10
+              // Threshold comes from the server (`/api/health/detail`), not from
+              // the 15-minute schema default this used to hardcode — see NF14.
+              const { idleMin, nearSleep, title } = idleChipState(session.idleSince, idleTimeoutMs)
               return (
                 <span
                   className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
@@ -148,7 +151,7 @@ export function SessionCard({ session, onKill, killing, projectName, projectDefa
                       ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300'
                       : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
                   }`}
-                  title={`Idle since ${new Date(session.idleSince).toLocaleTimeString()}. Auto-sleeps at 15 min.`}
+                  title={title}
                 >
                   idle {idleMin}m
                 </span>
