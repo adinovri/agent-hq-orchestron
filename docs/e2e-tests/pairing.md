@@ -83,7 +83,7 @@ URL bar; it contains the token.
 ### PAIR-02 — No token in the URL
 
 **Covers**: the only error state the page has, and the instruction it
-gives — which is currently wrong (see below).
+gives.
 
 **Steps**
 
@@ -92,8 +92,8 @@ gives — which is currently wrong (see below).
 3. Read the command it names, then try it:
 
    ```bash
-   orchestron pair    # what the page tells you to run
-   orchestron --help  # what actually exists
+   orchestron qr      # what the page tells you to run
+   orchestron --help  # confirm it is a registered command
    ```
 
 4. Confirm nothing was written:
@@ -111,12 +111,17 @@ gives — which is currently wrong (see below).
 - Storage is untouched: a clean profile still reads `null`, and an
   already-paired profile **keeps its existing token**. Visiting `/pair`
   bare must never clear a working pairing.
-- **The named command does not exist.** The page says to run
-  `orchestron pair`; the CLI registers `qr`, `token`, `project`,
-  `session`, `schedule`, `serve`, `tui` and `doctor` — there is no
-  `pair`. The command that prints the pairing QR is
-  **`orchestron qr`**. Record this as a UI-copy defect; the fix is one
-  string, but it belongs to whoever owns that copy, not to a sweep.
+- **The named command is `orchestron qr`, and it exists.** The CLI
+  registers `qr`, `token`, `project`, `session`, `schedule`, `serve`,
+  `tui` and `doctor` — `qr` is the one that prints the pairing QR.
+  *Until batch-7 the page said `orchestron pair`, which was never a
+  registered command (B6-F4). If this text reads `pair` again, that is
+  a regression, not a doc drift.*
+- `orchestron qr` must actually find the token. It reads
+  `ORCHESTRON_REMOTE_TOKEN`, then `--token`, then the `remoteToken` key
+  of `config.json` (legacy `token` as a fallback). A provisioned
+  instance with no env var set must still print a pair URL — that path
+  was broken alongside the copy (B6-F1).
 - An **empty** token (`/pair?token=`) takes the same branch as no token
   at all — `searchParams.get` returns `''`, which is falsy. Confirm the
   `✗` state, not a stored empty string.

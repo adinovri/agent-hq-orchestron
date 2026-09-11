@@ -72,7 +72,7 @@ function PairInner() {
             <div className="text-4xl">✗</div>
             <p className="text-sm text-red-500">No token found in URL.</p>
             <p className="text-xs text-zinc-500">
-              Open the pairing link from the CLI: <code className="font-mono">orchestron pair</code>
+              Open the pairing link from the CLI: <code className="font-mono">orchestron qr</code>
             </p>
           </>
         )}
