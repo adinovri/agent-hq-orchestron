@@ -184,6 +184,107 @@ describe('rollupSessionUsage — NF10 per-event pricing', () => {
   })
 })
 
+describe('rollupSessionUsage — NF12 <synthetic> is not a model', () => {
+  // Claude Code writes the resume reply "No response requested." as an
+  // assistant row with model "<synthetic>" and an all-zero usage object.
+  const synthetic = () => row({ id: 'msg_S', model: '<synthetic>' })
+
+  it('a trailing synthetic row does not become the session attribution', () => {
+    const raw = [
+      row({ id: 'm1', model: 'claude-haiku-4-5', input: 100, output: 200 }),
+      synthetic(),
+    ].join('\n')
+
+    const r = rollupSessionUsage(raw, 'claude-haiku-4-5', START)
+
+    // The defect: lastModel became '<synthetic>', and lastModel is the
+    // groupBy=model bucket key.
+    expect(r.lastModel).toBe('claude-haiku-4-5')
+    expect(r.input).toBe(100)
+    expect(r.output).toBe(200)
+  })
+
+  it('falls back to the session model rather than the marker when pricing', () => {
+    // If a marker row ever carries usage, '<synthetic>' names no rate and
+    // would price at DEFAULT_PRICING (Sonnet) — 18.75x a Haiku session.
+    const raw = row({ id: 'm1', model: '<synthetic>', input: 1_000_000, output: 1_000_000 })
+
+    const r = rollupSessionUsage(raw, 'claude-haiku-4-5', START)
+
+    expect(r.lastModel).toBe('claude-haiku-4-5')
+    expect(r.costUsd).toBeCloseTo(
+      computeCost({ input: 1_000_000, output: 1_000_000 }, 'claude-haiku-4-5'), 12)
+    // And specifically NOT the Sonnet-rate reading of the same tokens.
+    expect(r.costUsd).not.toBeCloseTo(
+      computeCost({ input: 1_000_000, output: 1_000_000 }, 'claude-sonnet-5'), 6)
+  })
+
+  it('a synthetic row still advances lastTs — the session did emit then', () => {
+    const raw = [
+      row({ id: 'm1', model: 'claude-haiku-4-5', ts: '2026-09-11T10:01:00.000Z', input: 100 }),
+      row({ id: 'msg_S', model: '<synthetic>', ts: '2026-09-11T10:02:00.000Z' }),
+    ].join('\n')
+
+    const r = rollupSessionUsage(raw, 'claude-haiku-4-5', START)
+
+    expect(r.lastTs).toBe('2026-09-11T10:02:00.000Z')
+    expect(r.lastModel).toBe('claude-haiku-4-5')
+  })
+
+  it("a session of nothing but synthetic rows keeps 'unknown' and stays at zero", () => {
+    const raw = [synthetic(), row({ id: 'msg_T', model: '<synthetic>' })].join('\n')
+
+    const r = rollupSessionUsage(raw, undefined, START)
+
+    expect(r.lastModel).toBe('unknown')
+    expect(r.input + r.output + r.cacheRead + r.cacheCreation).toBe(0)
+    expect(r.costUsd).toBe(0)
+  })
+
+  it('no groupBy=model bucket is ever keyed <synthetic>', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'orch-metrics-nf12-'))
+    try {
+      const jsonl = path.join(dir, 'synthetic-last.jsonl')
+      await writeFile(jsonl, [
+        row({ id: 'm1', model: 'claude-haiku-4-5', ts: '2026-09-11T10:01:00.000Z', input: 10, output: 20 }),
+        // the marker lands LAST — the ordering the sweep could not provoke
+        row({ id: 'msg_S', model: '<synthetic>', ts: '2026-09-11T10:02:00.000Z' }),
+      ].join('\n') + '\n', 'utf8')
+
+      const sessions = [{
+        id: 'sess-nf12',
+        projectId: 'proj-alpha',
+        agentType: 'claude',
+        model: 'claude-haiku-4-5',
+        status: 'completed',
+        parentSessionId: null,
+        detached: false,
+        claudeSessionUuid: 'sess-nf12',
+        tmuxName: 'orch-nf12',
+        jsonlPath: jsonl,
+        initialPrompt: 'x',
+        finalResponse: 'y',
+        tokenUsage: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
+        costUsd: 0,
+        startedAt: START,
+        endedAt: '2026-09-11T10:05:00.000Z',
+        metadata: {},
+      }] as unknown as SessionMetadata[]
+
+      const sm = { list: async () => sessions } as unknown as SessionManager
+      const col = new MetricsCollector(path.join(dir, 'data'), sm)
+
+      const byModel = await col.query({ groupBy: 'model' })
+
+      expect(byModel.buckets.map((b) => b.key)).toEqual(['claude-haiku-4-5'])
+      expect(byModel.buckets.map((b) => b.key)).not.toContain('<synthetic>')
+      expect(byModel.total.tokens).toBe(30)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('MetricsCollector.query — dedup and per-event pricing end to end', () => {
   let dir = ''
   afterEach(async () => { if (dir) await rm(dir, { recursive: true, force: true }); dir = '' })

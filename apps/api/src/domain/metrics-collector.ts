@@ -162,12 +162,25 @@ export interface SessionUsageRollup {
   cacheCreation: number
   /** Sum of per-event costs, each priced at the model that produced that event. */
   costUsd: number
-  /** Model of the last assistant event carrying usage — session-level attribution only. */
+  /** Model of the last assistant event that named a real one — session-level
+   *  attribution only. `<synthetic>` marker rows do not advance it. */
   lastModel: string
   /** Timestamp of the last assistant event carrying usage. */
   lastTs: string
   /** Rows skipped because an earlier row already billed the same `message.id`. */
   duplicateRows: number
+}
+
+/** Claude Code's marker model for machinery rows (the resume reply). Not a real
+ *  model: it names no rate and must not become an attribution bucket key. */
+const SYNTHETIC_MODEL = '<synthetic>'
+
+/** The event's model, or `undefined` when it names none — treating the
+ *  `<synthetic>` marker as naming none, so every caller falls back to the
+ *  session's model the same way it already does for a row with no field. */
+function eventModel(ev: AssistantEvent): string | undefined {
+  const m = ev.message?.model
+  return m && m !== SYNTHETIC_MODEL ? m : undefined
 }
 
 function sameUsage(a: AssistantEventUsage, b: AssistantEventUsage): boolean {
@@ -197,9 +210,23 @@ function sameUsage(a: AssistantEventUsage, b: AssistantEventUsage): boolean {
  *     either direction. Each event is now priced at its own model, falling back to
  *     the session's recorded model when the row omits one.
  *
+ *  3. **Ignore `<synthetic>` as a model.** Claude Code writes the resume reply
+ *     *"No response requested."* as an assistant row carrying
+ *     `"model":"<synthetic>"` and an all-zero `usage`. That is a marker, not a
+ *     model: it names no rate in the pricing table, so it would price at
+ *     `DEFAULT_PRICING` (Sonnet) if it ever carried usage, and — worse — it
+ *     would advance `lastModel`, which is the `groupBy=model` bucket key. A
+ *     session whose last usage-bearing row was synthetic would have been filed
+ *     under a bucket literally named `<synthetic>`. Nothing prevented that
+ *     except ordering luck: the resume pair is injected *before* each new turn,
+ *     so a real reply normally lands last. Such a row is now treated exactly
+ *     like a row with no `model` field at all — the session's own model.
+ *
  * `lastModel` / `lastTs` still advance on duplicate rows: they describe when the
  * session last emitted and under which model, which a duplicate row answers just
- * as truthfully as the row it duplicates.
+ * as truthfully as the row it duplicates. Only `<synthetic>` is filtered, and
+ * only as a *model*; the row still advances `lastTs`, because the session really
+ * did emit at that moment.
  */
 export function rollupSessionUsage(
   raw: string,
@@ -221,7 +248,8 @@ export function rollupSessionUsage(
     if (ev.type !== 'assistant' || !ev.message?.usage) continue
     const u = ev.message.usage
 
-    if (ev.message.model) out.lastModel = ev.message.model
+    const evModel = eventModel(ev)
+    if (evModel) out.lastModel = evModel
     if (ev.timestamp) out.lastTs = ev.timestamp
 
     const id = ev.message.id
@@ -254,7 +282,7 @@ export function rollupSessionUsage(
     out.cacheCreation += cacheCreation
     out.costUsd += computeCost(
       { input, output, cacheRead, cacheCreation },
-      ev.message.model ?? fallbackModel,
+      evModel ?? fallbackModel,
     )
   }
 
