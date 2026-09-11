@@ -208,13 +208,43 @@ export const RegisterProjectBodySchema = z.object({
   name: z.string().min(1),
   path: z.string().min(1),
   agentType: AgentTypeSchema,
-  defaultModel: z.string().optional(),
+  // `.min(1)` — an empty model string is not "no model", it is a model
+  // named "" that every later spawn would try to pass to the harness.
+  // Callers clearing a default send `null` on PATCH; see
+  // PatchProjectBodySchema.
+  defaultModel: z.string().min(1).optional(),
   defaultEffort: EffortLevelSchema.optional(),
   defaultUseTmux: z.boolean().optional(),
   group: z.string().nullable().optional(),
   tags: z.array(z.string()).optional(),
   agentConfig: AgentConfigSchema.optional(),
   config: z.record(z.unknown()).optional(),
+})
+
+/**
+ * Body of `PATCH /api/projects/:id`.
+ *
+ * Every field of the register body, all optional, plus one addition:
+ * `defaultModel`, `defaultEffort` and `agentConfig` also accept `null`,
+ * meaning **unset this field**.
+ *
+ * Why `null` and not "omit it": the update is a shallow merge, so an
+ * omitted key keeps whatever the record already had. That is the right
+ * behaviour for a partial update and the wrong one for a form — the
+ * project dialog omitted these keys whenever the user picked "harness
+ * default", which made a project pinned to an expensive model
+ * impossible to un-pin from the UI (B6-F2). Omission still merges, for
+ * every API client written against the old shape; `null` is the new,
+ * explicit clear.
+ *
+ * Empty string is still a 400. `null` is the clear; `""` is a typo.
+ */
+export const UNSETTABLE_PROJECT_FIELDS = ['defaultModel', 'defaultEffort', 'agentConfig'] as const
+
+export const PatchProjectBodySchema = RegisterProjectBodySchema.partial().extend({
+  defaultModel: z.string().min(1).nullable().optional(),
+  defaultEffort: EffortLevelSchema.nullable().optional(),
+  agentConfig: AgentConfigSchema.nullable().optional(),
 })
 
 // ============================================================================

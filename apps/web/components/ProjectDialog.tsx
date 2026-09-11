@@ -12,6 +12,7 @@ import {
 import { fetchJson } from '@/lib/fetcher'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
+import { buildProjectBody } from '@/lib/project-body'
 import { useHeadlessEnabled } from '@/lib/server-config'
 
 interface Props {
@@ -117,39 +118,10 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
     setSaving(true)
     setError(null)
 
-    const env: Record<string, string> = {}
-    // Harness-specific config-dir env: CLAUDE_CONFIG_DIR for claude,
-    // CODEX_HOME for codex. Only persist the one that matches this
-    // project's agentType so unrelated env vars aren't carried over
-    // when the harness is switched.
-    if (form.agentType === 'claude' && form.claudeConfigDir.trim()) {
-      env['CLAUDE_CONFIG_DIR'] = form.claudeConfigDir.trim()
-    }
-    if (form.agentType === 'codex' && form.codexHome.trim()) {
-      env['CODEX_HOME'] = form.codexHome.trim()
-    }
-    form.extraEnvPairs.forEach(({ key, value }) => { if (key) env[key] = value })
-
-    const agentConfig = {
-      ...(Object.keys(env).length > 0 ? { env } : {}),
-      ...(form.extraArgs.trim()
-        ? { extraArgs: form.extraArgs.split(',').map((s) => s.trim()).filter(Boolean) }
-        : {}),
-    }
-
-    const body = {
-      name: form.name.trim(),
-      path: form.path.trim(),
-      agentType: form.agentType,
-      ...(form.defaultModel ? { defaultModel: form.defaultModel } : {}),
-      ...(form.defaultEffort ? { defaultEffort: form.defaultEffort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}),
-      // Always sent, unlike model/effort: `false` is the meaningful value
-      // here, so an "only when truthy" spread would make headless unsavable.
-      defaultUseTmux: form.defaultUseTmux,
-      group: form.group.trim() || null,
-      tags: form.tags.split(',').map((s) => s.trim()).filter(Boolean),
-      ...(Object.keys(agentConfig).length > 0 ? { agentConfig } : {}),
-    }
+    // On update every clearable field is sent explicitly — `null` when the
+    // user picked "harness default" — because the PATCH shallow-merges and
+    // an omitted key would keep the old value (B6-F2). See lib/project-body.
+    const body = buildProjectBody(form, { isUpdate: Boolean(project) })
 
     try {
       if (project) {

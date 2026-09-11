@@ -1,10 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import fp from 'fastify-plugin'
 import { z } from 'zod'
-import { RegisterProjectBodySchema } from '@agent-hq-orchestron/shared'
+import { RegisterProjectBodySchema, PatchProjectBodySchema } from '@agent-hq-orchestron/shared'
 import { ProjectRegistry, ProjectNotFoundError, ProjectPathError } from '../domain/project-registry.js'
-
-const PatchProjectBodySchema = RegisterProjectBodySchema.partial()
 
 export function projectsPlugin(registry: ProjectRegistry) {
   return fp(async (app: FastifyInstance) => {

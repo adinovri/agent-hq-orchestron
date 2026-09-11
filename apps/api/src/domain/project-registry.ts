@@ -2,7 +2,22 @@ import crypto from 'node:crypto'
 import fsPromises from 'node:fs/promises'
 import path from 'node:path'
 import { writeJson, readJson, listDir } from '@agent-hq-orchestron/file-store'
-import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
+import { UNSETTABLE_PROJECT_FIELDS, type ProjectMetadata } from '@agent-hq-orchestron/shared'
+
+/**
+ * Patch accepted by `ProjectRegistry.update`.
+ *
+ * Mirrors `PatchProjectBodySchema`: any field of the record, plus `null`
+ * on the three clearable ones. `null` means "delete this key", which is
+ * distinct from omitting it (keep the stored value).
+ */
+export type UpdateProjectPatch = Partial<
+  Omit<ProjectMetadata, 'id' | 'createdAt' | 'defaultModel' | 'defaultEffort' | 'agentConfig'>
+> & {
+  defaultModel?: ProjectMetadata['defaultModel'] | null
+  defaultEffort?: ProjectMetadata['defaultEffort'] | null
+  agentConfig?: ProjectMetadata['agentConfig'] | null
+}
 
 export interface CreateProjectInput {
   name: string
@@ -104,9 +119,30 @@ export class ProjectRegistry {
     return projects
   }
 
-  async update(id: string, patch: Partial<Omit<ProjectMetadata, 'id' | 'createdAt'>>): Promise<ProjectMetadata> {
+  /**
+   * Shallow-merge a patch over the stored record.
+   *
+   * An **absent** key keeps the stored value — that is what makes this a
+   * partial update, and every existing API client depends on it.
+   *
+   * An explicit `null` on one of `UNSETTABLE_PROJECT_FIELDS` **deletes**
+   * the key instead. Without this there was no way to clear a default
+   * from the UI at all: the dialog omitted the field when the user chose
+   * "harness default", the merge kept the old value, and a project
+   * pinned to an expensive model stayed pinned forever (B6-F2).
+   *
+   * `group` is deliberately not in that set — it is `string | null` in
+   * `ProjectMetadata`, so `null` there is a value, not an erasure.
+   */
+  async update(id: string, patch: UpdateProjectPatch): Promise<ProjectMetadata> {
     const existing = await this.get(id)
-    const updated: ProjectMetadata = { ...existing, ...patch, id: existing.id, createdAt: existing.createdAt }
+    const merged: Record<string, unknown> = { ...existing, ...patch }
+
+    for (const key of UNSETTABLE_PROJECT_FIELDS) {
+      if (key in patch && patch[key] === null) delete merged[key]
+    }
+
+    const updated = { ...merged, id: existing.id, createdAt: existing.createdAt } as ProjectMetadata
     await writeJson(this.projectPath(id), updated)
     return updated
   }
