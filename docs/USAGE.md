@@ -1521,21 +1521,203 @@ cd apps/cli && npm link         # exposes `orchestron` globally
 orchestron --help
 ```
 
-Subcommands:
+Command groups:
 
 | Command | Purpose |
 |---|---|
 | `orchestron serve` | Boot the API + web bundle (dev alt to systemd) |
 | `orchestron tui` | Launch the Ink-based TUI |
-| `orchestron token rotate` | Regenerate Bearer token in config.json |
-| `orchestron project` | CRUD projects (`list`, `add`, `remove`) |
-| `orchestron session` | Spawn / list / kill sessions |
-| `orchestron schedule` | Manage cron entries |
+| `orchestron token` | Generate / rotate the Bearer token in config.json |
+| `orchestron project` | Projects — `list`, `get`, `add`, `edit`, `rm` |
+| `orchestron session` | Sessions — spawn, drive, revive, adopt, import/export |
+| `orchestron schedule` | Cron entries — full CRUD, pause/resume, YAML round trip |
+| `orchestron metrics` | Token and cost query, five group-by axes |
 | `orchestron qr` | Print pairing QR to terminal (for phone scan) |
 | `orchestron doctor` | Health check — tmux, claude, config, adapters |
 
-Good for scripting: e.g. `orchestron session spawn --project=<uuid> --prompt="…"`
-from a git hook or a shell one-liner.
+The session, project, schedule and metrics groups cover the same
+mutations the dashboard does, which is what lets the TUI and a
+scripted workflow driver run without a browser.
+
+#### 10.1 Conventions every command shares
+
+**Where it connects.** `--url`, then `$ORCHESTRON_URL`, then
+`bindHost` + `port` from the config file, then
+`http://127.0.0.1:8080`. `--host` is a deprecated alias for `--url`,
+kept because `schedule` shipped with it.
+
+**How it authenticates.** `--token`, then `$ORCHESTRON_TOKEN`, then
+`remoteToken` from the config file, then the legacy `token` key (read
+only — `token rotate` writes `remoteToken`).
+
+The config file is the one the API itself reads:
+`$ORCHESTRON_CONFIG`, else `$ORCHESTRON_DATA_DIR/config.json`, else
+`~/.orchestron/config.json`. So on the host that runs the server, a
+bare `orchestron session list` already points at the right instance
+with the right bearer — and inside a second instance's env (the E2E
+environment, say) it points at *that* one.
+
+**Output.** Human by default: one line per action, or a table for the
+list commands. `--json` prints a single envelope instead:
+
+```jsonc
+{ "ok": true,  "id": "…", "sessionUuid": "…", "status": "idle", … }
+{ "ok": false, "error": "Cannot reopen from status running", "status": 409 }
+```
+
+The envelope always goes to **stdout**, success or failure, so a caller
+can `| jq` without branching. In human mode the error goes to stderr
+instead. Exit code is `0` on success and `1` on any failure; callers
+that need to tell failures apart read `status` out of the envelope.
+
+**Long prompts.** Anything that takes `--prompt` reads stdin instead
+when the flag is absent and stdin is not a terminal:
+
+```bash
+orchestron session send "$ID" <<'EOF'
+A prompt with blank lines,
+
+quotes and $shell metacharacters, arriving intact.
+EOF
+```
+
+An interactive shell with no `--prompt` errors immediately rather than
+hanging on a terminal nobody is typing into.
+
+**Run mode.** `--headless` and `--tmux` are the two halves of one
+tri-state, and passing neither is a third, meaningful value: on
+`reopen`, `fork`, `respawn` and `metadata` it means *keep the mode this
+session already has*. Passing both is refused rather than resolved.
+
+#### 10.2 Sessions
+
+```bash
+# Create
+orchestron session spawn --project "$PID" --prompt "…" \
+  --model claude-haiku-4-5 --effort low --headless
+orchestron session spawn --project "$PID" --template daily-report --var env=stg
+orchestron session spawn --project "$PID" --prompt "…" \
+  --attachment ./design.png --attachment ./notes.md
+
+# Drive
+orchestron session send "$ID" --prompt "next turn"
+orchestron session answer "$ID" --choice 2            # tmux selector modal
+orchestron session answer "$ID" --field env=staging --field ref=main
+orchestron session interrupt "$ID"
+
+# Revive
+orchestron session reopen "$ID"                       # keeps its mode
+orchestron session fork "$ID" --prompt "try another way"
+orchestron session respawn "$ID" --tmux
+
+# Edit + close
+orchestron session metadata "$ID" --model claude-opus-5 --effort high
+orchestron session archive "$ID"                      # alias: mark-success
+orchestron session kill "$ID"
+orchestron session rm "$ID"                           # delete the record
+
+# Move between hosts
+orchestron session export "$ID" --out bundle.jsonl
+orchestron session import bundle.jsonl --project "$PID"
+orchestron session adopt "$HARNESS_UUID" --project "$PID" --dry-run
+
+# Read
+orchestron session list --project "$PID" --status idle
+orchestron session get "$ID" --json
+orchestron session logs "$ID"
+```
+
+`session answer` is the one command that does real work of its own.
+A session can be waiting in two unrelated ways — a **selector modal**
+scraped off a live tmux pane, answered by option index, or a
+**structured inquiry** returned by a headless turn, answered by text
+that starts the next `-p --resume` turn. The command reads the record
+and picks; the caller does not have to know which. `--choice` takes
+either a number as displayed or text matching an option (exact first,
+then unique substring); an ambiguous match is refused with the numbered
+list rather than resolved to the first hit.
+
+`session export --format` is an **assertion**, not a request parameter.
+The bundle format follows the session's harness and transcript — raw
+`.jsonl` for claude and for codex with a rollout on disk, `.tar.gz` for
+a codex TUI-only session — so `--format` only fails the command when
+what arrived is not what the next step was written for.
+
+`session archive` and `session mark-success` are the same endpoint:
+`POST /api/sessions/:uuid/archive` transitions the record through
+`completing` to `succeeded`.
+
+There is **no** session-level `--group`. Groups live on projects
+(`project add --group`, `project edit --group`); the dashboard's
+"group by project" control is a client-side view over `projectId`.
+
+#### 10.3 Schedules
+
+```bash
+orchestron schedule create --cron "0 9 * * 1" --project "$PID" \
+  --prompt "weekly report" --model claude-haiku-4-5 --headless
+orchestron schedule edit "$SID" --cron "0 8 * * 1"
+orchestron schedule pause "$SID"
+orchestron schedule resume "$SID"
+orchestron schedule run "$SID"                  # fire once, now
+orchestron schedule delete "$SID"
+
+orchestron schedule export --out schedules.yml
+orchestron schedule import schedules.yml --mode merge   # or: replace
+```
+
+The three per-schedule overrides (model, effort, run mode) are
+three-valued, exactly as they are in the dialog — see
+[§ 4.1](#41-model-effort-and-run-mode). Setting one is
+`--model` / `--effort` / `--headless|--tmux`; leaving one alone is
+omitting the flag; **taking one back off** needs an explicit clear,
+because an omitted key merges:
+
+```bash
+orchestron schedule edit "$SID" --clear-model --clear-effort --follow-project-mode
+```
+
+`schedule export` with no `--out` writes the YAML to stdout;
+`--json` then errors, because a YAML document nested inside a JSON
+string is not something a caller can use. `--mode replace` deletes
+every existing schedule before importing — export a backup first.
+
+**Pin a cheap model on any schedule you will `run` during testing.**
+An unpinned entry resolves against its project at fire time, and a
+single unattended Opus spawn has cost more than a whole sweep.
+
+#### 10.4 Metrics
+
+```bash
+orchestron metrics --group-by day
+orchestron metrics --group-by model --from 2026-09-01 --to 2026-09-11
+orchestron metrics --group-by session --project "$PID" --json
+```
+
+`--group-by` is one of `day`, `project`, `session`, `adapter`, `model`.
+`--from` / `--to` accept `YYYY-MM-DD` or a full ISO timestamp, which is
+truncated to the date — so a bound copied straight out of
+`session list --json` works. The human table appends a **TOTAL** row.
+
+These numbers are priced from the transcript by orchestron's own rate
+table and will not match a session record's `costUsd`, which is what
+the harness reported. Neither is wrong; they measure different things.
+See [§ 3](#3-sessions--the-core-loop).
+
+#### 10.5 Projects
+
+```bash
+orchestron project add --name web --path ~/Works/web --agent claude \
+  --group frontend --default-model claude-haiku-4-5 --default-headless
+orchestron project edit "$PID" --clear-default-model --group ""
+orchestron project rm "$PID"
+```
+
+`--clear-default-model` / `--clear-default-effort` send `null`, which
+is the API's "unset this field". An omitted key merges instead, which
+is why clearing needs its own flag — without one, a project pinned to
+an expensive model could never be un-pinned. `--group ""` clears the
+group.
 
 ### TUI — Ink-based dashboard
 

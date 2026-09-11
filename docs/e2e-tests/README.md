@@ -71,6 +71,7 @@ Read [`00-setup.md`](00-setup.md) first. The rest are independent.
 | [`pairing.md`](pairing.md) | `/pair` — token sink, no-token state, unverified tokens, PWA install prompt |
 | [`reset.md`](reset.md) | `/reset` and `/api/reset` — client-only wipe, blast radius, the two origins |
 | [`diagnostics.md`](diagnostics.md) | `/session-diag/<uuid>` — the minimal SSE transcript dump |
+| [`cli.md`](cli.md) | `orchestron` the binary — session mutations, schedule CRUD, metrics, adopt/import/export, the `--json` envelope |
 
 ---
 
@@ -114,7 +115,7 @@ which case USAGE.md is stale.
 
 ## Smoke set
 
-The short pre-deploy sweep — 14 scenarios, roughly 25 minutes by hand.
+The short pre-deploy sweep — 17 scenarios, roughly 30 minutes by hand.
 
 | Id | Scenario |
 |---|---|
@@ -132,9 +133,19 @@ The short pre-deploy sweep — 14 scenarios, roughly 25 minutes by hand.
 | `PROJ-01` | Register a project through the form |
 | `METRICS-01` | Summary tiles and the range they describe |
 | `SET-05` | `/api/readiness` answers the anonymous probe |
+| `CLI-01` | Spawn headless, send a turn, archive — all from the shell |
+| `CLI-02` | Every command speaks one `--json` envelope |
+| `CLI-06` | `session answer` picks index vs text off the record |
 
-All fourteen run with `enableHeadlessMode` **on** — its default — so the
-sweep needs no config change and no API restart.
+All seventeen run with `enableHeadlessMode` **on** — its default — so
+the sweep needs no config change and no API restart.
+
+The three `CLI-*` entries run in a shell rather than a browser, which
+makes them the cheapest part of the sweep and the only part an agent
+can execute today without driving Chrome. `CLI-02` in particular is the
+contract the TUI and the Phase 3 executor are written against: if the
+`--json` envelope stops parsing, every automated caller breaks at once
+and no browser scenario would notice.
 
 `SET-05` earns its place despite being a single `curl`: the route it
 covers did not exist at all until batch 8, whitelisted and documented
