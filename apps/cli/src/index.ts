@@ -26,5 +26,8 @@ registerMetrics(program)
 
 program.parseAsync(process.argv).catch((e: unknown) => {
   process.stderr.write(String(e) + '\n')
-  process.exit(1)
+  // Last-resort handler for anything the per-command `action()` wrapper did
+  // not catch. `exitCode` rather than `exit` so a partially written stdout
+  // document still reaches the pipe before the process ends.
+  process.exitCode = 1
 })

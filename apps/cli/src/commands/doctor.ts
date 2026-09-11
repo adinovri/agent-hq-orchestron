@@ -105,8 +105,12 @@ export function registerDoctor(program: Command): void {
 
       if (opts.json) {
         process.stdout.write(JSON.stringify(allResults, null, 2) + '\n')
-        const hasCriticalFail = allResults.some((r) => r.status === 'fail' && r.critical)
-        process.exit(hasCriticalFail ? 1 : 0)
+        // `process.exitCode`, never `process.exit`: the JSON document was
+        // just handed to stdout, and a write to a PIPE is asynchronous.
+        // `doctor --json | jq` exited before the buffer drained and jq read an
+        // empty document — the exact shape of the truncation the `--json`
+        // envelope exists to avoid.
+        if (allResults.some((r) => r.status === 'fail' && r.critical)) process.exitCode = 1
         return
       }
 
@@ -133,7 +137,7 @@ export function registerDoctor(program: Command): void {
       const criticalFails = allResults.filter((r) => r.status === 'fail' && r.critical)
       if (criticalFails.length > 0) {
         process.stdout.write(pc.red(`\n${criticalFails.length} critical check(s) failed.\n`))
-        process.exit(1)
+        process.exitCode = 1
       } else {
         process.stdout.write(pc.green('\nAll critical checks passed.\n'))
       }

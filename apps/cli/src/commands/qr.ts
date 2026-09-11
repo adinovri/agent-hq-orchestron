@@ -42,7 +42,11 @@ export function registerQr(program: Command): void {
             'Error: no token found. Set ORCHESTRON_REMOTE_TOKEN, pass --token, or run `orchestron token rotate` (which writes remoteToken into the config file — `token generate` only prints one).\n',
           ),
         )
-        process.exit(1)
+        // exitCode + return, not `process.exit`: the same drain rule as every
+        // other command, and the `return` is load-bearing now that the call
+        // no longer tears the process down where it stands.
+        process.exitCode = 1
+        return
       }
 
       const { host } = await resolveHost()
