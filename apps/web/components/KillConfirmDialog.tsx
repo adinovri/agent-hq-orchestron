@@ -9,6 +9,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { createOpenChangeGuard } from '@/lib/dialog-dismiss'
+import { useFocusReturn } from '@/lib/use-focus-return'
 import { DialogError } from '@/components/ui/dialog-error'
 
 interface Props {
@@ -23,6 +24,12 @@ interface Props {
 }
 
 export function KillConfirmDialog({ open, onClose, onConfirm, descendantCount, killing, error }: Props) {
+  // The primitive returns focus to whatever was focused before it opened,
+  // which covers the ordinary case and quietly does nothing when that
+  // element did not survive the action. This is the floor under it: focus is
+  // never left on <body> (NF28). It only acts if the primitive did not.
+  useFocusReturn(open)
+
   // Base UI routes Escape, the backdrop and its own × through one
   // `onOpenChange`. Guarding it there is how this dialog says the same "not
   // mid-kill" that its disabled Cancel already says; the dialog is controlled,

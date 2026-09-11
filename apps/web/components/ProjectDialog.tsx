@@ -10,6 +10,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { createOpenChangeGuard } from '@/lib/dialog-dismiss'
+import { useFocusReturn } from '@/lib/use-focus-return'
 import { fetchJson } from '@/lib/fetcher'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
@@ -149,6 +150,12 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
 
   const inputCls =
     'w-full h-9 px-3 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-400'
+
+  // The primitive returns focus to whatever was focused before it opened,
+  // which covers the ordinary case and quietly does nothing when that
+  // element did not survive the action. This is the floor under it: focus is
+  // never left on <body> (NF28). It only acts if the primitive did not.
+  useFocusReturn(open)
 
   // One `onOpenChange` covers Escape, the backdrop and the built-in × — all
   // three wait for the save, as Cancel already does (NF25).

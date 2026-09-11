@@ -10,6 +10,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { createOpenChangeGuard } from '@/lib/dialog-dismiss'
+import { useFocusReturn } from '@/lib/use-focus-return'
 import { apiFetch } from '@/lib/fetcher'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
 
@@ -39,6 +40,12 @@ export function DeleteProjectDialog({ project, onClose, onDeleted, sessionCount 
       setDeleting(false)
     }
   }
+
+  // The primitive returns focus to whatever was focused before it opened,
+  // which covers the ordinary case and quietly does nothing when that
+  // element did not survive the action. This is the floor under it: focus is
+  // never left on <body> (NF28). It only acts if the primitive did not.
+  useFocusReturn(!!project)
 
   // One `onOpenChange` covers Escape, the backdrop and the built-in × — all
   // three wait for the delete, as Cancel already does (NF25).

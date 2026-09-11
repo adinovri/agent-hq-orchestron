@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { useHeadlessEnabled } from '@/lib/server-config'
 import { noticeIfCoerced } from '@/lib/notice'
 import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
+import { useFocusReturn } from '@/lib/use-focus-return'
 import { DialogCloseButton } from '@/components/ui/dialog-close-button'
 import { Loader2, AlertTriangle, Upload, FileArchive, FileText } from 'lucide-react'
 
@@ -132,6 +133,11 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
   // backdrop click halfway through leaves it running with nowhere to report.
   // Escape, backdrop and × all wait for it (NF25).
   const dismiss = useDialogDismiss(open && !importMutation.isPending, onClose)
+
+  // Whatever closed this dialog, focus does not get left on <body> (NF28).
+  // The confirm button disables itself while the mutation runs, so the
+  // browser has already dropped focus by the time `onSuccess` closes us.
+  useFocusReturn(open)
 
   if (!open) return null
 

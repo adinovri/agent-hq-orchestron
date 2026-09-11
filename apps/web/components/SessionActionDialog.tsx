@@ -6,6 +6,7 @@ import type { AgentType, EffortLevel } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
 import { useHeadlessEnabled } from '@/lib/server-config'
 import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
+import { useFocusReturn } from '@/lib/use-focus-return'
 import type { SessionActionKind } from '@/lib/session-action-dialog'
 import { DialogError } from '@/components/ui/dialog-error'
 
@@ -105,6 +106,11 @@ export function SessionActionDialog({
   // Same as Cancel, which is disabled while the action is in flight — for
   // Escape, for the backdrop, and for the × alike (NF25).
   const dismiss = useDialogDismiss(open && !pending, onClose)
+
+  // Whatever closed this dialog, focus does not get left on <body> (NF28).
+  // The confirm button disables itself while the mutation runs, so the
+  // browser has already dropped focus by the time `onSuccess` closes us.
+  useFocusReturn(open)
 
   if (!open) return null
 

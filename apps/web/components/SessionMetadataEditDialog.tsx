@@ -6,6 +6,7 @@ import type { AgentType, EffortLevel, SessionStatus } from '@agent-hq-orchestron
 import { modelsFor, effortsFor } from '@/lib/models'
 import { useHeadlessEnabled } from '@/lib/server-config'
 import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
+import { useFocusReturn } from '@/lib/use-focus-return'
 import { DialogError } from '@/components/ui/dialog-error'
 
 const RESET: { value: ''; label: string } = { value: '', label: '— Reset to project default' }
@@ -66,6 +67,11 @@ export function SessionMetadataEditDialog({
   // disables mid-save. Escape, the backdrop and the × must not be three more
   // ways past that (NF21, NF25).
   const dismiss = useDialogDismiss(open && !pending, onClose)
+
+  // Whatever closed this dialog, focus does not get left on <body> (NF28).
+  // The confirm button disables itself while the mutation runs, so the
+  // browser has already dropped focus by the time `onSuccess` closes us.
+  useFocusReturn(open)
 
   if (!open) return null
 

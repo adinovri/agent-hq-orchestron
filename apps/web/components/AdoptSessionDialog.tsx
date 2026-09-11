@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { useHeadlessEnabled } from '@/lib/server-config'
 import { noticeIfCoerced } from '@/lib/notice'
 import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
+import { useFocusReturn } from '@/lib/use-focus-return'
 import { DialogCloseButton } from '@/components/ui/dialog-close-button'
 import { Loader2, CheckCircle2, AlertTriangle, Import } from 'lucide-react'
 
@@ -134,6 +135,11 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
   // running none of Escape, the backdrop or the × may take the dialog away —
   // the same line the Cancel button already draws (NF25).
   const dismiss = useDialogDismiss(open && !adoptMutation.isPending, onClose)
+
+  // Whatever closed this dialog, focus does not get left on <body> (NF28).
+  // The confirm button disables itself while the mutation runs, so the
+  // browser has already dropped focus by the time `onSuccess` closes us.
+  useFocusReturn(open)
 
   if (!open) return null
 

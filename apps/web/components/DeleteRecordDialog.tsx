@@ -4,6 +4,7 @@ import { Trash2, AlertTriangle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { SessionMetadata } from '@agent-hq-orchestron/shared'
 import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
+import { useFocusReturn } from '@/lib/use-focus-return'
 import { DialogCloseButton } from '@/components/ui/dialog-close-button'
 import { DialogError } from '@/components/ui/dialog-error'
 
@@ -22,6 +23,11 @@ export function DeleteRecordDialog({ open, session, workspacePath, onClose, onCo
   // Not while the delete is running — Cancel is disabled then too, and the
   // backdrop and the × are held to the same answer (NF25).
   const dismiss = useDialogDismiss(open && !deleting, onClose)
+
+  // Whatever closed this dialog, focus does not get left on <body> (NF28).
+  // The confirm button disables itself while the mutation runs, so the
+  // browser has already dropped focus by the time `onSuccess` closes us.
+  useFocusReturn(open)
 
   if (!open) return null
 

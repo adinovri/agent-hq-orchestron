@@ -12,6 +12,7 @@ import { ProjectInfoPanel } from '@/components/ProjectInfoPanel'
 import { projectFieldDefaults, defaultRowLabel } from '@/lib/project-info'
 import { buildSchedulePayload, type ScheduleProjectOption } from '@/lib/schedule-fields'
 import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
+import { useFocusReturn } from '@/lib/use-focus-return'
 import { DialogCloseButton } from '@/components/ui/dialog-close-button'
 
 interface Props {
@@ -186,6 +187,11 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
   // Cancel is disabled while the schedule is being written; Escape, the
   // backdrop and the × are held to the same decision (NF25).
   const dismiss = useDialogDismiss(open && !saving, onClose)
+
+  // Whatever closed this dialog, focus does not get left on <body> (NF28).
+  // The confirm button disables itself while the mutation runs, so the
+  // browser has already dropped focus by the time `onSuccess` closes us.
+  useFocusReturn(open)
 
   async function handleSave() {
     if (!projectId) { setError('Select a project'); return }

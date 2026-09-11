@@ -10,6 +10,7 @@ import { noticeIfCoerced } from '@/lib/notice'
 import { ProjectInfoPanel } from '@/components/ProjectInfoPanel'
 import { projectFieldDefaults, defaultRowLabel, type ProjectFormOption } from '@/lib/project-info'
 import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
+import { useFocusReturn } from '@/lib/use-focus-return'
 import { DialogCloseButton } from '@/components/ui/dialog-close-button'
 
 interface AttachedFile {
@@ -141,6 +142,11 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
   // Cancel is disabled while the spawn POST is out; Escape, the backdrop and
   // the × are held to the same decision (NF25).
   const dismiss = useDialogDismiss(open && !spawning, onClose)
+
+  // Whatever closed this dialog, focus does not get left on <body> (NF28).
+  // The confirm button disables itself while the mutation runs, so the
+  // browser has already dropped focus by the time `onSuccess` closes us.
+  useFocusReturn(open)
 
   async function handleSpawn() {
     if (!projectId) { setError('Select a project'); return }
