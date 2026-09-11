@@ -1,0 +1,15 @@
+● I need to write the migration before I can continue.
+
+────────────────────────────────────────────────────────────────────────────────
+ ☐ Edit file
+
+   src/db/migrations/0007_add_index.sql
+   Do you want to make this edit?
+
+ ❯ 1. Yes
+   2. Yes, allow all edits during this session
+   3. No, and tell Claude what to do differently
+   ─────────────────────────────────────────
+   4. Chat about this
+
+ Enter to select · ↑/↓ to navigate · Esc to cancel

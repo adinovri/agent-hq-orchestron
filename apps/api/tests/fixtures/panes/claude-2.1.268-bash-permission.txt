@@ -1,0 +1,24 @@
+▎ Message from Nanovest:
+▎ Welcome to Nanovest Managed Claude Code! Visit our Slack channel
+▎ (https://nanovestio.slack.com/archives/C087BS09GA2) for our Agentic
+▎ Engineering cultures: in-house plugins, procedures, guides, workflows, tips,
+▎ and tricks.
+  +1 more · /status
+
+❯ Run the shell command: ls /tmp/orchestron-e2e . Use the Bash tool to do it.
+
+● Listing contents of /tmp/orchestron-e2e and current directory
+  ⎿  $ ls /tmp/orchestron-e2e .
+
+────────────────────────────────────────────────────────────────────────────────
+ Bash command
+
+   ls /tmp/orchestron-e2e .
+   List contents of /tmp/orchestron-e2e and current directory
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, allow reading from /tmp/orchestron-e2e from this project
+   3. No
+
+ Esc to cancel · Tab to amend

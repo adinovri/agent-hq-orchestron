@@ -1,0 +1,12 @@
+● Looking up the issue.
+
+ About the atlassian — getJiraIssue Tool:
+ │ Fetch a single Jira issue by key.                                          │
+ │ Requires read:jira-work.                                                   │
+ (ctrl+o to expand description)
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend

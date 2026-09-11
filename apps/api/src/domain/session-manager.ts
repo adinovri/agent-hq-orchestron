@@ -286,6 +286,91 @@ const MODAL_HEADER_RE = /^\s*☐\s+(.+?)\s*$/
 const SEPARATOR_RE = /^[─━=—-]{3,}$/
 const PERMISSION_HINT_RE = /(Do\s+you\s+want\s+to\s+proceed\??|Do\s+you\s+want\s+to\s+allow)/i
 
+/** Lines that belong to the conversation above the modal, not to the modal.
+ *  Terminates the upward title scan when Claude drew no separator rule. */
+const TRANSCRIPT_GLYPH_RE = /^[\u258E\u25CF\u23BF\u276F\u273B]/
+/** How far above the question to look for a title when there is no separator.
+ *  Bounded so a long transcript cannot leak into the modal's title. */
+const NATIVE_MODAL_BAND_LOOKBACK = 12
+
+/**
+ * The **native** tool-approval modal, as Claude Code 2.1.268 draws it.
+ *
+ * NF20: a tmux session blocked on a Bash-permission prompt stayed `running`
+ * with `pendingPrompt: null` for the life of the modal — no `needs_input`, no
+ * approval banner, and `session answer --choice` refusing because nothing was
+ * on the record. Neither existing parser matches this pane:
+ *
+ *     ────────────────────────────────────   <- separator (top boundary)
+ *      Bash command                          <- title
+ *
+ *        ls /tmp/orchestron-e2e .            <- detail
+ *        List contents of /tmp/orchestron-e2e and current directory
+ *
+ *      Do you want to proceed?
+ *      \u276F 1. Yes
+ *        2. Yes, allow reading from /tmp/orchestron-e2e from this project
+ *        3. No
+ *
+ *      Esc to cancel \u00B7 Tab to amend          <- footer
+ *
+ * `parseSelectorModal` bails at its first gate — there is no `\u2610` header and the
+ * footer says "Esc to cancel \u00B7 Tab to amend", not "\u2191/\u2193 to navigate" /
+ * "Enter to select". `parseMcpToolModal` bails on its MCP-only
+ * `About the <server> \u2014 <Tool> Tool:` header. So the modal family that gates
+ * every Bash approval was the one family nothing read.
+ *
+ * Gated on the two markers it does share with the MCP shape — the proceed
+ * question and the "Esc to cancel" footer — plus **at least one numbered
+ * option between them**, which is what separates a modal from prose that
+ * happens to contain those words. Runs last, so the two more specific parsers
+ * keep the panes they already match.
+ *
+ * Pinned by a saved pane fixture (`tests/fixtures/`) rather than a hand-typed
+ * string, so the next harness bump fails a test instead of a sweep — this is
+ * the same version-drift class as the TUI ready-detection fragility.
+ */
+export function parseNativeToolModal(pane: string): import('@agent-hq-orchestron/shared').PendingPrompt | null {
+  if (!MCP_MODAL_QUESTION_RE.test(pane) || !MCP_MODAL_FOOTER_RE.test(pane)) return null
+  const lines = pane.split(/\r?\n/)
+  const questionIdx = lines.findIndex((l) => MCP_MODAL_QUESTION_RE.test(l))
+  const footerIdx = lines.findIndex((l) => MCP_MODAL_FOOTER_RE.test(l))
+  if (questionIdx === -1 || footerIdx === -1 || questionIdx >= footerIdx) return null
+
+  const options: string[] = []
+  for (let i = questionIdx + 1; i < footerIdx; i++) {
+    const m = (lines[i] ?? '').match(OPTION_LINE_RE)
+    if (m) {
+      const num = Number.parseInt(m[1] ?? '0', 10)
+      const label = (m[2] ?? '').trim()
+      if (num > 0 && label) options.push(label)
+    }
+  }
+  if (options.length === 0) return null
+
+  // Title + detail band: walk UP from the question and stop at the first thing
+  // that belongs to the conversation rather than the modal — the rule Claude
+  // draws above it, a transcript glyph, or the lookback bound. Scanning
+  // downward from a fixed offset instead was wrong in the case that matters:
+  // with the rule absent, a 12-line window reaches past the transcript and
+  // titles the prompt `+1 more · /status`. Stopping on first sight of the
+  // conversation needs no window at all when the rule is there, and degrades
+  // to the nearest transcript line when it is not.
+  const floor = Math.max(0, questionIdx - NATIVE_MODAL_BAND_LOOKBACK)
+  const band: string[] = []
+  for (let i = questionIdx - 1; i >= floor; i--) {
+    const line = (lines[i] ?? '').trim()
+    if (SEPARATOR_RE.test(line)) break
+    if (TRANSCRIPT_GLYPH_RE.test(line)) break
+    if (!line) continue
+    band.unshift(line)
+  }
+
+  const title = band[0] ?? 'Tool approval'
+  const detail = band.length > 1 ? band.slice(1).join('\n') : undefined
+  return { kind: 'permission', title, detail, options, capturedAt: new Date().toISOString() }
+}
+
 /** Parse a captured tmux pane into a PendingPrompt when the Claude selector
  *  modal (AskUserQuestion or permission approval) is currently displayed.
  *  Returns null when no modal is present.
@@ -328,7 +413,7 @@ const MCP_MODAL_HEADER_RE = /^\s*About\s+the\s+(\S+)\s+[—–-]\s+(.+?)\s+Tool:
 const MCP_MODAL_QUESTION_RE = /Do\s+you\s+want\s+to\s+proceed\??/i
 const MCP_MODAL_FOOTER_RE = /Esc\s+to\s+cancel(?:.*Tab\s+to\s+amend)?/i
 
-function parseMcpToolModal(pane: string): import('@agent-hq-orchestron/shared').PendingPrompt | null {
+export function parseMcpToolModal(pane: string): import('@agent-hq-orchestron/shared').PendingPrompt | null {
   if (!MCP_MODAL_QUESTION_RE.test(pane) || !MCP_MODAL_FOOTER_RE.test(pane)) return null
   const lines = pane.split(/\r?\n/)
   const headerIdx = lines.findIndex((l) => MCP_MODAL_HEADER_RE.test(l))
@@ -372,7 +457,7 @@ function parseMcpToolModal(pane: string): import('@agent-hq-orchestron/shared').
   }
 }
 
-function parseSelectorModal(pane: string): import('@agent-hq-orchestron/shared').PendingPrompt | null {
+export function parseSelectorModal(pane: string): import('@agent-hq-orchestron/shared').PendingPrompt | null {
   if (!MODAL_FOOTER_RE.test(pane) || !MODAL_SELECT_RE.test(pane)) return null
 
   const lines = pane.split(/\r?\n/)
@@ -1907,10 +1992,13 @@ export class SessionManager {
       if (!s.tmuxName) continue
       try {
         const pane = await tmux.capturePane(s.tmuxName)
-        // Try native selector modal first (Bash/WebFetch/etc. approval);
-        // fall back to MCP tool approval modal (different shape — see
-        // parseMcpToolModal). Either result exposes as PendingPromptBanner.
-        const prompt = parseSelectorModal(pane) ?? parseMcpToolModal(pane)
+        // Three modal families, most specific first. `parseSelectorModal`
+        // reads the ☐ + "↑/↓ to navigate" shape, `parseMcpToolModal` the
+        // "About the <server> — <Tool> Tool:" shape, and
+        // `parseNativeToolModal` the plain Bash/WebFetch approval that
+        // matches neither (NF20). All three expose as PendingPromptBanner.
+        const prompt =
+          parseSelectorModal(pane) ?? parseMcpToolModal(pane) ?? parseNativeToolModal(pane)
         if (prompt) {
           if (s.status === 'running') {
             await this.reconcilePendingUserQuestion(s.id).catch(() => {})
