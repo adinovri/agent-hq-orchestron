@@ -94,6 +94,13 @@ built against.
    ```bash
    orch session metadata 00000000-0000-4000-8000-000000000000 --json | jq .
    ```
+3. Prove the pipe on a payload that can actually truncate, and on a
+   reader that walks away:
+   ```bash
+   orch session list --json | wc -c        # must print > 65536
+   orch session list --json | jq -e .ok
+   orch session list --json | head -c 1000 ; echo "exit=$?"
+   ```
 
 **Expect**
 
@@ -106,6 +113,18 @@ built against.
 - An HTTP failure additionally carries `status` (e.g. `404`, `409`).
 - Human mode (no `--json`) prints one line, and the error goes to
   **stderr** instead.
+- Step 3 is the only part of this scenario that tests truncation, and it
+  only does so if `wc -c` clears **65536** — a pipe buffers 64 KiB for
+  free, so any smaller document arrives whole whether the flush is
+  handled or not. On an env without enough sessions to clear it, seed
+  more or use `metrics --group-by session`; do **not** substitute a
+  small document. `doctor --json` is ~1 KB (NEW-4) and passes this step
+  no matter what the code does — a sweep that cites it has measured
+  nothing.
+- `head -c 1000` must exit **0** with an empty stderr (NEW-1). A reader
+  that stops reading is not an error, and an unhandled `EPIPE` turns it
+  into a stack trace and a non-zero status for a pipeline the operator
+  considers fine.
 
 **Cleanup**: none.
 

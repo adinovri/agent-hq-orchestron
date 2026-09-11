@@ -8,7 +8,7 @@
  * |-----------------------------------------|----------------------------------|
  * | `POST /api/sessions` (spawn)            | low high medium xhigh max ultra  |
  * | `POST /api/sessions/:id/{reopen,respawn,clone}` | …no `ultra`               |
- * | `POST /api/sessions/adopt[/validate]`   | …no `xhigh`, no `max`            |
+ * | `POST /api/sessions/adopt`              | …no `xhigh`, no `max`            |
  * | `PATCH /api/sessions/:id` (metadata)    | …no `ultra`                      |
  * | `POST|PATCH /api/schedules`             | all six                          |
  * | `POST|PATCH /api/projects`              | all six                          |
@@ -19,6 +19,15 @@
  * same word is legal on `spawn`, which reads like a typo rather than a
  * per-route difference. Validating locally also means a rejected value sends
  * **no request at all**, which is what an unattended caller needs.
+ *
+ * `POST /api/sessions/adopt/validate` is deliberately **not** in that table
+ * (NEW-2). It used to be listed alongside `adopt`, which read as though the two
+ * shared an enum; its zod schema in fact has no `effort` field at all — only
+ * `projectId` and `harnessSessionId` — so an `--effort` sent with `--dry-run`
+ * is parsed off and ignored, and the dry run validates a body the real adopt
+ * will not be given. The CLI still checks the value locally before a `--dry-run`
+ * adopt, which is the useful behaviour: a level the real call would reject is
+ * worth catching in the rehearsal rather than in the performance.
  *
  * Each list is transcribed from the zod enum it mirrors; a route that widens
  * its enum has to be reflected here, and the live-API test asserts every
