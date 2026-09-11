@@ -89,7 +89,7 @@ built against.
 
 1. Run each of these and pipe to `jq -e .ok`:
    `session list`, `session get <id>`, `project list`,
-   `schedule list`, `metrics --group-by day`.
+   `schedule list`, `metrics --group-by day`, `doctor`.
 2. Run a command that must fail, with `--json`, through a **pipe**:
    ```bash
    orch session metadata 00000000-0000-4000-8000-000000000000 --json | jq .
@@ -106,6 +106,15 @@ built against.
 
 - Every success document has `ok: true` at the top level and parses as
   a single JSON value — no log lines, no colour codes mixed in.
+- `doctor` is in step 1 because of **NF23**: it was the one verb that
+  printed a bare array, so `doctor --json | jq -e .ok` exited 5 with
+  `Cannot index array with string "ok"`. It now emits
+  `{ok, checks: [...]}`, and `ok` mirrors its **exit code** rather than
+  "the command ran" — a critical check failing gives
+  `{"ok": false, "error": "N critical check(s) failed: …", "checks": […]}`
+  and exit 1. Listing it here is the point of the fix: the contract was
+  never enforced on the command an automated caller runs *first*, before
+  it knows whether the host works at all.
 - The failure prints `{"ok": false, "error": "…"}` **on stdout** and
   exits **1**. It is not empty: writes to a pipe are asynchronous, and
   a `process.exit` here would truncate the document the caller is

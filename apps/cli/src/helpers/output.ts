@@ -9,10 +9,16 @@ import { ApiError, type CommonOpts } from './api.js'
  * knowing which command produced the document — the point of the flag is that
  * the TUI and the Phase 3 executor can drive the whole surface without a
  * per-command parser.
+ *
+ * Both branches carry arbitrary extra fields. The failure branch was once
+ * exactly `{ok, error, status?}`, which was right while the only failures
+ * were HTTP ones. `doctor` is not one: it fails on what it *found*, and the
+ * findings are the reason a caller ran it, so its `ok:false` document still
+ * has to carry `checks`. See NF23.
  */
 export type JsonEnvelope =
   | ({ ok: true } & Record<string, unknown>)
-  | { ok: false; error: string; status?: number }
+  | ({ ok: false; error: string; status?: number } & Record<string, unknown>)
 
 /** Attach `--url`, `--token` and `--json` in one place so every command spells
  *  them identically. `--host` is the deprecated alias `schedule` shipped with. */

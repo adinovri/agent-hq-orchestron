@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import pc from 'picocolors'
 import Table from 'cli-table3'
+import type { JsonEnvelope } from '../helpers/output.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -103,14 +104,39 @@ export function registerDoctor(program: Command): void {
       const fsResults = await checkFilesystem()
       const allResults = [...binaryResults, ...fsResults]
 
+      const criticalFailures = allResults.filter((r) => r.status === 'fail' && r.critical)
+
       if (opts.json) {
-        process.stdout.write(JSON.stringify(allResults, null, 2) + '\n')
+        // NF23: this printed a bare array. Every other `--json` verb emits an
+        // envelope with a top-level `ok`, which is the whole point of the
+        // flag — a caller branches on one field without knowing which command
+        // produced the document. `doctor` was the single exception, so any
+        // uniform consumer broke on precisely the command it would run first.
+        //
+        // `ok` tracks the exit code rather than "the command ran". doctor
+        // already exits 1 when a critical check fails; a document saying
+        // `ok: true` beside exit 1 is a contradiction a caller has to
+        // special-case, which is the problem being fixed, not a second one to
+        // introduce. So a critical failure means `ok: false` plus the `error`
+        // summary — and the `checks` array stays on the document either way,
+        // because the findings are why the caller ran doctor at all.
+        const envelope: JsonEnvelope =
+          criticalFailures.length > 0
+            ? {
+                ok: false,
+                error: `${criticalFailures.length} critical check(s) failed: ${criticalFailures
+                  .map((r) => r.name)
+                  .join(', ')}`,
+                checks: allResults,
+              }
+            : { ok: true, checks: allResults }
+        process.stdout.write(JSON.stringify(envelope, null, 2) + '\n')
         // `process.exitCode`, never `process.exit`: the JSON document was
         // just handed to stdout, and a write to a PIPE is asynchronous.
         // `doctor --json | jq` exited before the buffer drained and jq read an
         // empty document — the exact shape of the truncation the `--json`
         // envelope exists to avoid.
-        if (allResults.some((r) => r.status === 'fail' && r.critical)) process.exitCode = 1
+        if (criticalFailures.length > 0) process.exitCode = 1
         return
       }
 
@@ -134,9 +160,8 @@ export function registerDoctor(program: Command): void {
 
       process.stdout.write(t.toString() + '\n')
 
-      const criticalFails = allResults.filter((r) => r.status === 'fail' && r.critical)
-      if (criticalFails.length > 0) {
-        process.stdout.write(pc.red(`\n${criticalFails.length} critical check(s) failed.\n`))
+      if (criticalFailures.length > 0) {
+        process.stdout.write(pc.red(`\n${criticalFailures.length} critical check(s) failed.\n`))
         process.exitCode = 1
       } else {
         process.stdout.write(pc.green('\nAll critical checks passed.\n'))
