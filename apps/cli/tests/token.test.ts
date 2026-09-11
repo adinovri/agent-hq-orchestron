@@ -9,6 +9,10 @@ import os from 'node:os'
 const execFileAsync = promisify(execFile)
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const CLI_ENTRY = join(__dirname, '../src/index.ts')
+/** The workspace's own tsx, not `npx tsx`: npx re-resolves the package on
+ *  every spawn, and that resolution was the bulk of this file's wall clock. */
+const TSX = join(__dirname, '../../../node_modules/.bin/tsx')
+
 
 /**
  * B6-F1 — rotate wrote the config key `token`; the API reads
@@ -34,7 +38,7 @@ async function runCli(
   ...args: string[]
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   try {
-    const { stdout, stderr } = await execFileAsync('npx', ['tsx', CLI_ENTRY, ...args], {
+    const { stdout, stderr } = await execFileAsync(TSX, [CLI_ENTRY, ...args], {
       env: { ...process.env, ...env },
     })
     return { stdout, stderr, code: 0 }
