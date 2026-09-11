@@ -1,4 +1,5 @@
 import type { HeadlessResultDocument, Inquiry, InquiryField } from './types.js'
+import { STRUCTURED_OUTPUT_ENFORCE_PREFIX } from './inquiry-intent.js'
 
 /**
  * Structured-output contract for headless runs.
@@ -159,17 +160,14 @@ export const STRUCTURED_OUTPUT_TOOL_NAME = 'StructuredOutput'
  *  defence for a result that arrives without its call. */
 const STRUCTURED_OUTPUT_TOOL_RESULT = 'Structured output provided successfully'
 
-/** Prefix of the nudge Claude Code injects **as a user turn** when the model
- *  finished a turn without calling the tool: `[structured-output-enforce] You
- *  MUST call the StructuredOutput tool to complete this request. Call this
- *  tool now.`
+/** The enforce-nudge prefix, from `inquiry-intent.ts` — the same string the
+ *  coerced-inquiry classifier keys on (NF17), so there is one copy of it.
  *
- *  It is addressed to the model on Orchestron's behalf — the operator never
- *  typed it — and the model's reply to it is an acknowledgement of the
- *  plumbing ("Remembered the number 47 and replied as requested."), not an
- *  answer to anything the operator asked. Both halves are machinery.
- *  Verified against Claude Code 2.1.267. */
-const STRUCTURED_OUTPUT_ENFORCE_PREFIX = '[structured-output-enforce]'
+ *  Here it identifies machinery to hide: the nudge is addressed to the model
+ *  on Orchestron's behalf — the operator never typed it — and the model's
+ *  reply to it is an acknowledgement of the plumbing ("Remembered the number
+ *  47 and replied as requested."), not an answer to anything the operator
+ *  asked. Both halves are machinery. */
 
 /** Minimal shape of a parsed transcript entry — structurally compatible with
  *  the `RolloutEntry` the API's rollout parsers emit. Declared here so the

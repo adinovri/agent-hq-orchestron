@@ -335,6 +335,15 @@ export interface HeadlessResult {
   /** Tail of the child's stderr (bounded) — surfaced as `failureReason` on a
    *  non-zero exit so a headless failure isn't a silent dead end. */
   stderr?: string
+  /** A `[structured-output-enforce]` user turn appeared in this turn's stream
+   *  — Claude Code had to coerce the StructuredOutput call. Absent on a turn
+   *  that needed no nudge and on harnesses that emit none. See
+   *  `isCoercedInquiry` (NF17). */
+  enforceNudged?: boolean
+  /** The model's own assistant prose from before the first enforce nudge —
+   *  the last thing it said while it still thought the turn was over. The
+   *  safety valve that keeps a genuine-but-late inquiry. */
+  preNudgeAssistantText?: string
 }
 
 export interface AgentAdapter {

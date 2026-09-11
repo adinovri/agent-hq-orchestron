@@ -155,6 +155,82 @@ describe('SessionManager — headless lifecycle', () => {
     expect(asked.finalResponse).toBe('Blocked on the target environment.')
   })
 
+  it('lands idle when the inquiry only exists because enforcement coerced it (NF17)', async () => {
+    // Measured: prompt `Remember the number 47. Reply with just: ok.`, prose
+    // reply `ok`, then Claude Code's `[structured-output-enforce]` nudge, then
+    // a document whose `inquiry` the model invented to have something to put
+    // in the slot. This session had fully answered; parking it in
+    // `needs_input` left an operator chasing a question nobody asked, and it
+    // happened to an unattended scheduled run too.
+    const { adapter, releaseExit } = makeHeadlessAdapter({
+      exitCode: 0,
+      enforceNudged: true,
+      preNudgeAssistantText: 'ok',
+      finalResponse: JSON.stringify({
+        summary: 'Ready to assist with your request',
+        inquiry: {
+          message: "I'm ready to help. What would you like me to do?",
+          fields: [{ name: 'task', label: 'What should I do?', type: 'text', options: null }],
+        },
+      }),
+    })
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    releaseExit()
+    const done = await waitForRecord(mgr, s.id, (r) => r.status === 'idle', 'idle')
+    expect(done.status).toBe('idle')
+    expect(done.pendingInquiry).toBeNull()
+    // The summary is still recorded — the turn's output is not the casualty,
+    // only the claim that someone has to answer it.
+    expect(done.finalResponse).toBe('Ready to assist with your request')
+  })
+
+  it('still lands needs_input when the nudged model had asked in prose first', async () => {
+    // Same coercion, opposite provenance: the model wanted input and merely
+    // forgot the tool call. Dropping this one would be the real regression.
+    const { adapter, releaseExit } = makeHeadlessAdapter({
+      exitCode: 0,
+      enforceNudged: true,
+      preNudgeAssistantText: 'I found two candidates. Which one should I patch?',
+      finalResponse: JSON.stringify({
+        summary: 'Blocked on which candidate to patch.',
+        inquiry: {
+          message: 'Which candidate should I patch?',
+          fields: [{ name: 'which', label: 'Candidate', type: 'choice', options: ['a', 'b'] }],
+        },
+      }),
+    })
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn({ ...baseSpawn, useTmux: false })
+    releaseExit()
+    const asked = await waitForRecord(mgr, s.id, (r) => r.status === 'needs_input', 'needs_input')
+    expect(asked.pendingInquiry?.message).toBe('Which candidate should I patch?')
+  })
+
+  it('believes an inquiry from a harness that reports no nudge at all', async () => {
+    // Codex never emits the enforce nudge, so the provenance fields are
+    // absent on every one of its turns. Absent must not read as coerced.
+    const { adapter, releaseExit } = makeHeadlessAdapter(
+      {
+        exitCode: 0,
+        sessionId: 'thread-1',
+        finalResponse: JSON.stringify({
+          summary: 'Need the env.',
+          inquiry: {
+            message: 'Which environment?',
+            fields: [{ name: 'env', label: 'Environment', type: 'text', options: null }],
+          },
+        }),
+      },
+      { agentType: 'codex' },
+    )
+    const mgr = makeManager(adapter)
+    const s = await mgr.spawn({ ...baseSpawn, agentType: 'codex', useTmux: false })
+    releaseExit()
+    const asked = await waitForRecord(mgr, s.id, (r) => r.status === 'needs_input', 'needs_input')
+    expect(asked.pendingInquiry?.message).toBe('Which environment?')
+  })
+
   it('lands idle when the structured result carries no inquiry', async () => {
     const { adapter, releaseExit } = makeHeadlessAdapter({
       exitCode: 0,

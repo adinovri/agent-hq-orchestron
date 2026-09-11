@@ -23,7 +23,11 @@ import { spawn as spawnProcess, type ChildProcess } from 'node:child_process'
 import type {
   AgentAdapter, SpawnConfig, ResumeConfig, TmuxHandle, HeadlessResult, TokenUsage,
 } from '@agent-hq-orchestron/shared'
-import { resolveUseTmux, ORCHESTRON_RESULT_SCHEMA_JSON } from '@agent-hq-orchestron/shared'
+import {
+  resolveUseTmux,
+  ORCHESTRON_RESULT_SCHEMA_JSON,
+  STRUCTURED_OUTPUT_ENFORCE_PREFIX,
+} from '@agent-hq-orchestron/shared'
 import * as tmux from './tmux.js'
 
 const FORBIDDEN_FLAGS = new Set(['-p', '--print'])
@@ -274,6 +278,58 @@ function parseClaudeResultLine(line: string): Partial<HeadlessResult> | null {
   return out
 }
 
+/**
+ * The plain text a stream-json message event puts on screen.
+ *
+ * `content` is an array of blocks. Only `text` blocks are the model (or the
+ * harness) talking: `thinking` is not addressed to anyone, and `tool_use` /
+ * `tool_result` are machinery. The native JSONL writes the same nudge with
+ * `content` as a bare string, so both shapes are accepted.
+ */
+function messageText(message: unknown): string {
+  if (!message || typeof message !== 'object') return ''
+  const content = (message as { content?: unknown }).content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((b): b is { type?: string; text?: string } => !!b && typeof b === 'object')
+    .filter((b) => b.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text as string)
+    .join('\n')
+}
+
+/**
+ * One stream-json line, reduced to the only two things this adapter reads out
+ * of the stream.
+ *
+ * The `result` event carries the turn's outcome. The `user` / `assistant` text
+ * events carry the turn's *provenance* — specifically whether Claude Code had
+ * to inject a `[structured-output-enforce]` nudge to get a StructuredOutput
+ * call, and what the model had said before it did. Nothing downstream can
+ * recover that: by the time the document reaches the session manager the
+ * coerced `inquiry` is indistinguishable from a real one (NF17).
+ *
+ * Everything else on the stream is ignored — `system:thinking_tokens` alone
+ * accounted for 198 of 211 lines on a measured two-sentence turn, and the
+ * native JSONL already holds the full record.
+ */
+type StreamObservation =
+  | { kind: 'result'; result: Partial<HeadlessResult> }
+  | { kind: 'text'; role: 'user' | 'assistant'; text: string }
+
+function observeClaudeStreamLine(line: string): StreamObservation | null {
+  let ev: { type?: string; message?: unknown }
+  try { ev = JSON.parse(line) } catch { return null }
+  if (ev.type === 'result') {
+    const result = parseClaudeResultLine(line)
+    return result ? { kind: 'result', result } : null
+  }
+  if (ev.type !== 'user' && ev.type !== 'assistant') return null
+  const text = messageText(ev.message)
+  if (!text) return null
+  return { kind: 'text', role: ev.type, text }
+}
+
 /** A live headless child plus the promise that settles on its exit.
  *  The promise is built at spawn time, so a late `awaitHeadlessExit` still
  *  observes the real exit code instead of racing an already-fired event. */
@@ -368,6 +424,31 @@ export class ClaudeAdapter implements AgentAdapter {
       const collected: Partial<HeadlessResult> = {}
       let stdoutTail = ''
       let stderrTail = ''
+      // Inquiry provenance, accumulated as the stream arrives — see
+      // observeClaudeStreamLine and isCoercedInquiry (NF17).
+      let assistantRun = ''
+      let enforceNudged = false
+      let preNudgeAssistantText: string | undefined
+
+      const observe = (line: string) => {
+        const obs = observeClaudeStreamLine(line)
+        if (!obs) return
+        if (obs.kind === 'result') {
+          Object.assign(collected, obs.result)
+          return
+        }
+        if (obs.role === 'assistant') {
+          assistantRun = assistantRun ? `${assistantRun}\n${obs.text}` : obs.text
+          return
+        }
+        if (!obs.text.startsWith(STRUCTURED_OUTPUT_ENFORCE_PREFIX)) return
+        // Only the FIRST nudge is evidence. After it, everything the model
+        // says is under duress, so a later nudge must not overwrite the last
+        // thing it said while it still believed the turn was over.
+        if (!enforceNudged) preNudgeAssistantText = assistantRun
+        enforceNudged = true
+        assistantRun = ''
+      }
 
       proc.stdout?.setEncoding('utf8')
       proc.stdout?.on('data', (chunk: string) => {
@@ -377,8 +458,7 @@ export class ClaudeAdapter implements AgentAdapter {
         stdoutTail = lines.pop() ?? ''
         for (const line of lines) {
           if (!line.trim()) continue
-          const parsed = parseClaudeResultLine(line)
-          if (parsed) Object.assign(collected, parsed)
+          observe(line)
         }
       })
       proc.stderr?.setEncoding('utf8')
@@ -388,11 +468,15 @@ export class ClaudeAdapter implements AgentAdapter {
 
       const settle = (exitCode: number | null) => {
         // Flush a final line that arrived without a trailing newline.
-        if (stdoutTail.trim()) {
-          const parsed = parseClaudeResultLine(stdoutTail)
-          if (parsed) Object.assign(collected, parsed)
-        }
-        resolve({ ...collected, exitCode, stderr: stderrTail.trim() || undefined })
+        if (stdoutTail.trim()) observe(stdoutTail)
+        resolve({
+          ...collected,
+          exitCode,
+          stderr: stderrTail.trim() || undefined,
+          // Left absent rather than `false` when no nudge was seen: the field
+          // means "this harness reported one", and Codex never will.
+          ...(enforceNudged ? { enforceNudged: true, preNudgeAssistantText } : {}),
+        })
       }
 
       proc.on('close', (code) => settle(code))

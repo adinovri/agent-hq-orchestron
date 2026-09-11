@@ -13,6 +13,8 @@ import {
   DEFAULT_HEADLESS_STRUCTURED_OUTPUT,
   ORCHESTRON_RESULT_SCHEMA_FILENAME,
   ORCHESTRON_RESULT_SCHEMA_JSON,
+  textAsksQuestion,
+  isCoercedInquiry,
 } from '@agent-hq-orchestron/shared'
 import type { AdapterRegistry } from '../adapters/registry.js'
 import { TranscriptTailer } from '../streaming/transcript-tailer.js'
@@ -125,21 +127,10 @@ const IDLE_STATES: SessionStatus[] = ['idle', 'needs_input']
  */
 const SWEEPABLE_IDLE_STATES: SessionStatus[] = ['idle']
 
-// Detect whether an assistant text is soliciting user input (question).
-// Cheap heuristic: ends with `?`, or contains typical question phrases.
-const QUESTION_PHRASES = [
-  /\?\s*$/,                         // ends with ?
-  /would you like/i,
-  /do you want/i,
-  /should i /i,
-  /which (one|do you|would)/i,
-  /let me know/i,
-  /please (tell|specify|confirm|clarify|choose)/i,
-  /what (do you|would|should)/i,
-  /any (specific|preference|thoughts)/i,
-  /shall i/i,
-  /could you (tell|specify|clarify|share)/i,
-]
+// `textAsksQuestion` and its phrase list moved to
+// `@agent-hq-orchestron/shared` (inquiry-intent.ts): the headless
+// coerced-inquiry classifier needs the same heuristic, and two copies of it
+// would drift apart in exactly the place where both decide `needs_input`.
 /** Drop a model when it looks like it belongs to a different harness — e.g.
  *  a project's defaultModel `claude-sonnet-5` accidentally passed to a codex
  *  spawn. Adapter's own default is safer than a rejection at spawn time. */
@@ -153,11 +144,6 @@ function filterModelForHarness(model: string | undefined, agentType: import('@ag
   return model
 }
 
-function textAsksQuestion(text: string): boolean {
-  const t = text.trim()
-  if (!t) return false
-  return QUESTION_PHRASES.some((re) => re.test(t))
-}
 
 /** Scan /proc for a running claude / codex process that has the given
  *  harness session id somewhere in its argv (i.e. an active `--resume <uuid>`,
@@ -1143,7 +1129,27 @@ export class SessionManager {
     const ok = result.exitCode === 0 || interrupted
     // An inquiry from a turn that then failed is not actionable — the process
     // died, so there is nothing to resume into. Only honour it on a clean run.
-    const inquiry = result.exitCode === 0 ? doc.inquiry : null
+    const claimed = result.exitCode === 0 ? doc.inquiry : null
+    // ...and not every inquiry on a clean run is real. When `--json-schema` is
+    // on, Claude Code nudges a model that finished without calling
+    // StructuredOutput, and a model with nothing left to ask fills the
+    // schema's optional `inquiry` with filler — parking a session that had
+    // fully answered in `needs_input` forever (NF17). isCoercedInquiry reads
+    // the provenance the adapter collected off the stream.
+    const coerced =
+      claimed != null &&
+      isCoercedInquiry({
+        enforceNudged: result.enforceNudged,
+        preNudgeAssistantText: result.preNudgeAssistantText,
+      })
+    if (coerced) {
+      console.info(
+        `[session-manager] ${uuid.slice(0, 8)} discarded a coerced inquiry ` +
+          `(structured-output enforcement, no question in the model's own reply): ` +
+          `${JSON.stringify(claimed?.message ?? '').slice(0, 160)}`,
+      )
+    }
+    const inquiry = coerced ? null : claimed
     patched.pendingInquiry = inquiry
     if (!ok) {
       patched.failureReason = result.stderr
