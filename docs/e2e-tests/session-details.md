@@ -292,6 +292,19 @@ a value came from.
   range, not as something that grows with the session. Neither figure is
   wrong; they are simply not interchangeable, so reconciling them is not
   a bug hunt worth starting. **Gate budgets on `/api/metrics`.**
+- **Both ranges above were measured against a broken endpoint.** Prior to
+  the batch-5 fix, `/api/metrics` under-priced by 5-18.75x when the model
+  changed mid-session, and double-counted headless assistant messages by
+  about 2x. Both fixed at `bea9327`. Concretely: Claude Code writes a
+  split assistant message (thinking row + text row) as two rollout rows
+  sharing one `message.id` and one `usage` object, and the collector
+  summed both, so every headless total read exactly 2x; and the whole
+  token total was priced at the rate of the last billed event's model,
+  so a session that switched model mid-way priced its earlier turns at
+  the wrong tier. The 12-25% and 2.8-26.6% gaps recorded above therefore
+  measure the record against a figure that was itself wrong, and should
+  be re-measured before either range is quoted again. The advice to gate
+  budgets on `/api/metrics` holds from `bea9327` forward, not before it.
 - **Codex sessions have no cost.** Orchestron's pricing table carries
   Claude tier rates and no codex entries, because ChatGPT
   Plus/Pro/Enterprise is flat-rate bundled. Treat codex sessions as
