@@ -154,18 +154,20 @@ token.
   error message, and the Server Info rows are absent — not zeroed, not
   stale.
 
-> **`orchestron token rotate` does not rotate the token the API uses.**
-> The CLI writes `config.json` key **`token`**; the API reads
-> **`remoteToken`** (`ConfigSchema`). So the command prints a new token,
-> saves it under a key nothing reads, leaves the old token working, and
-> the printed one never authenticates. `orchestron qr` reads the same
-> wrong key, which is why it reports "no token found" on a normally
-> provisioned instance. One key mismatch, and this page advertises the
-> broken command as the way to *"invalidate all existing PWA
-> sessions"* — which it does not do. **Verify the claim, expect it to
-> fail, and record it**: rotate, then confirm the old token still
-> authorises and the new one does not. Do not fix it in a sweep; it
-> needs a decision about which key is canonical.
+> **`orchestron token rotate` — fixed at `a4a28dd`, verify it stays
+> fixed.** It used to write `config.json` key **`token`** while the API
+> read **`remoteToken`**, so rotate printed a token that never
+> authenticated and left the old one working — the page advertising it
+> as the way to *"invalidate all existing PWA sessions"* while it did
+> nothing (B6-F1, the only high-severity finding of the batch-6 sweep).
+> Batch-7 settled `remoteToken` as canonical and moved the CLI onto it,
+> with two migration layers for configs already written the old way: an
+> in-memory fold in `loadConfig` and a one-shot rewrite at API boot.
+> **Verify it now works**: rotate, restart the API (the process caches
+> the token at boot — the command prints that reminder for a reason),
+> then confirm the new token authorises and the old one 401s. A sweep
+> that reports "rotate is a no-op" is reading this note's pre-`a4a28dd`
+> revision, not the running code.
 
 **📷 Screenshot**: `set-02-server-info.png` — all seven rows plus the
 THIS HOST badge.
@@ -272,6 +274,94 @@ registered for an adapter the server will not run.
 
 **Cleanup**: restore the matrix to `{claude: true, codex: false,
 opencode: false}`, restart, and delete the codex project from step 4.
+
+---
+
+### SET-05 — `/api/readiness` answers the anonymous probe `[smoke]`
+
+**Covers**: the readiness endpoint — its anonymous access, its body,
+and the 503 path. Added in batch-8; before that the path was in
+`AUTH_WHITELIST` and in `HLD.md` but **no route served it**, so it
+answered 404 to everyone (NF13). It went unnoticed for months because
+`apps/api/tests/auth.test.ts` registered a `/api/readiness` stub in its
+own fixture and asserted the whitelist against that.
+
+**Steps**
+
+```bash
+. ~/.orchestron-e2e/e2e.env
+curl -s -o /dev/null -w 'anon      → %{http_code}\n' "$ORCH/api/readiness"
+curl -s -o /dev/null -w 'bad token → %{http_code}\n' -H 'Authorization: Bearer nope' "$ORCH/api/readiness"
+curl -s "$ORCH/api/readiness" | python3 -m json.tool
+```
+
+**Expect**
+
+- **200** on all three of anonymous, wrong bearer and good bearer — it
+  is whitelisted, so the bearer check never runs.
+- Body is `{"status":"ready","uptime":<seconds>,"checks":{"config":true,
+  "storage":true,"adapters":true}}`. `uptime` is `process.uptime()`
+  rounded, so it grows across two calls and resets on restart — a cheap
+  way to confirm a deploy actually restarted the process.
+- **No host detail in the body**: no `dataDir` path, no `bindHost`, no
+  adapter names. Same reasoning as anonymous `/api/health` — an
+  unauthed caller on the tailnet must not be able to fingerprint the
+  host. A scenario asserting rich fields here is asserting a security
+  regression.
+- **It does not gate on tmux**, though `HLD.md` once said it would. A
+  headless-only instance with no tmux installed is ready; failing it
+  would mark a working server permanently unhealthy to a balancer.
+- A failing check returns **503** with `status:"not_ready"` and the
+  offending check `false`. Not reproducible against a healthy instance
+  without breaking it — the unit suite
+  (`apps/api/tests/routes/readiness.test.ts`) covers the unwritable
+  data dir and the empty adapter registry instead. **Do not make the
+  data dir unwritable on a live E2E instance to see it.**
+
+**Cleanup**: none.
+
+---
+
+### SET-06 — The idle chip states the server's real sleep threshold
+
+**Covers**: NF14. Both idle chips (dashboard card and session header)
+used to hardcode *"Auto-sleeps at 15 min."* and an amber warning at a
+flat 10 minutes — the schema default, not the value in force. The E2E
+instance runs `idleTimeoutMs: 60000`, so the tooltip was 15x off and
+the amber warning, meant to fire five minutes before sleep, never fired
+at all.
+
+**Steps**
+
+1. Confirm the instance's threshold, and that the server publishes it:
+
+   ```bash
+   . ~/.orchestron-e2e/e2e.env
+   curl -s -H "Authorization: Bearer $TOKEN" "$ORCH/api/health/detail" \
+     | python3 -c 'import json,sys; print(json.load(sys.stdin)["idleTimeoutMs"])'
+   ```
+
+2. Bring a session to `idle` (any completed turn) and hover its chip on
+   the dashboard, then on `/session/<id>`.
+
+**Expect**
+
+- `/api/health/detail` carries **`idleTimeoutMs`**, matching the
+  instance's config — 60000 on the E2E instance, 900000 on a default
+  one.
+- Both tooltips read **`Idle since <time>. Auto-sleeps at 1 min.`** on
+  the E2E instance. **`15 min` appearing anywhere is the regression**,
+  and it is what the pre-batch-8 build printed.
+- The chip turns amber at `idleTimeoutMs − min(5 min, timeout/3)`: at
+  40s in on a 60s instance, at 10 minutes on a default one — the latter
+  reproducing the old rule exactly, which is the point of expressing it
+  as remaining time rather than as a constant.
+- Formatting boundaries are unit-tested in
+  `apps/web/lib/idle-chip.test.ts` (`45s`, `1 min`, `15 min`, `1h 30m`,
+  and `disabled` for `idleTimeoutMs: 0`); do not re-derive them by
+  reconfiguring a live server.
+
+**Cleanup**: none.
 
 ---
 

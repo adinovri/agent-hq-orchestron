@@ -114,7 +114,7 @@ which case USAGE.md is stale.
 
 ## Smoke set
 
-The short pre-deploy sweep — 13 scenarios, roughly 25 minutes by hand.
+The short pre-deploy sweep — 14 scenarios, roughly 25 minutes by hand.
 
 | Id | Scenario |
 |---|---|
@@ -131,9 +131,16 @@ The short pre-deploy sweep — 13 scenarios, roughly 25 minutes by hand.
 | `DETAIL-01` | Details panel shows four groups |
 | `PROJ-01` | Register a project through the form |
 | `METRICS-01` | Summary tiles and the range they describe |
+| `SET-05` | `/api/readiness` answers the anonymous probe |
 
-All thirteen run with `enableHeadlessMode` **on** — its default — so the
+All fourteen run with `enableHeadlessMode` **on** — its default — so the
 sweep needs no config change and no API restart.
+
+`SET-05` earns its place despite being a single `curl`: the route it
+covers did not exist at all until batch 8, whitelisted and documented
+the whole time, and a load balancer pointed at it would have marked the
+API permanently unhealthy. It is also the cheapest possible check that
+a deploy actually restarted the process — `uptime` resets.
 
 **The flag-off pair, run separately.** `FLAG-02` (every *Use tmux*
 control is hidden) and `FLAG-03` (a headless request is coerced, and
