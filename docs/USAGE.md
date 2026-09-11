@@ -1506,6 +1506,42 @@ Claude transcripts live in Claude CLI's own directory:
 `<CLAUDE_CONFIG_DIR>/projects/<mangled-cwd>/<uuid>.jsonl`. Orchestron
 reads these directly for the transcript view.
 
+### Claude Code transcript retention — heads up
+
+Claude CLI auto-cleans transcript `.jsonl` files older than
+`cleanupPeriodDays` (default **30 days**). Orchestron only stores the
+session record + metadata; the transcript itself belongs to Claude CLI.
+If a `.jsonl` is cleaned up:
+
+- **Adopt** on that session — the source file is gone, adoption fails
+  with "transcript not found"
+- **Reopen / Fork / Respawn** — Claude harness cannot `--resume` a
+  missing rollout, spawn fails
+- **Transcript view in UI** — the pane goes empty (session record
+  intact, but nothing to render)
+- **Export bundle** — jsonl half is missing; export refuses or emits
+  metadata-only bundle
+
+**If you rely on old sessions** (audit history, cross-machine adopt
+weeks later, DR restore), extend retention in
+`<CLAUDE_CONFIG_DIR>/settings.json`:
+
+```json
+{
+  "cleanupPeriodDays": 1095
+}
+```
+
+`1095` = 3 years. Pick a number that matches how long you actually
+need past sessions. Default 30 days is fine for active development;
+longer retention costs disk (~100 KB per session on average).
+
+Orchestron does not enforce or migrate this setting — it lives in
+Claude CLI's config, per config-dir. The E2E environment
+(`CLAUDE_CONFIG_DIR=~/ClaudeConfigs/e2e/`) intentionally uses the
+default 30-day retention because sweeps regenerate transcripts each
+run; there is nothing to preserve past a month.
+
 ---
 
 ## 10. Terminal interfaces (CLI + TUI)
