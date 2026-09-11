@@ -57,11 +57,18 @@ stops it reading as a terminal dump.
 - **Two-column grid at `sm` and up**, `sm:grid-cols-[7.5rem_minmax(0,1fr)]`
   — a fixed 7.5rem label column and a value column that takes
   everything else. Labels are **right-aligned** against their values.
-- **The value fills the rest of the row.** The value span is `flex-1
-  min-w-0`, so a short value's row still reaches the right edge of the
-  card and a copy button sits at a consistent x across every row.
-  Measure it: the values in two adjacent rows start at the same x, and
-  the row's right edge is the card's, not the end of the text.
+- **The value sits at its content width, and the copy button follows
+  it.** The `dd` is the full-width flex container — every row's `dd`
+  does span the whole value column — but the span inside it is
+  `min-w-0 break-words`, **deliberately not `flex-1`**. Grown to fill
+  the row, the button was flung to the panel's right edge with dead
+  space between it and a short value: a column of buttons aligned to
+  nothing. So the button lands one `gap-1` after the text it copies,
+  and its x **varies by row**. Measure it that way: values in two
+  adjacent rows start at the same x (the `dd` does align), while their
+  copy buttons do not. Whitespace to the right of a short row is the
+  expected trade; `min-w-0` still lets a long path wrap rather than
+  overflow.
 - **The panel occupies the full card width.** It renders as a sibling
   *below* the flex row that holds the action buttons, not inside it —
   so the 5 × 32px `shrink-0` button column takes nothing from it. Check
@@ -314,7 +321,8 @@ a value came from.
   Full-width and the rules between groups are the kind of regression
   that reads as "looks slightly off" rather than as a failure, so the
   scenario pins the mechanism (`grid-cols-[7.5rem_minmax(0,1fr)]`,
-  `flex-1` on the value, `border-t` + `first:border-0`, panel as a
+  `min-w-0 break-words` on the value span — **not** `flex-1`, which the
+  code documents rejecting — `border-t` + `first:border-0`, panel as a
   sibling of the button row) and not just the impression. If a redesign
   reaches the same look another way, update the scenario — do not
   delete the assertion.
