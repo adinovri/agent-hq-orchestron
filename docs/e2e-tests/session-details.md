@@ -300,7 +300,8 @@ a value came from.
   wrong; they are simply not interchangeable, so reconciling them is not
   a bug hunt worth starting. **Gate budgets on `/api/metrics`.**
   *Both ranges in this bullet, and their direction, are superseded — see
-  the post-batch-5 measurement two bullets down.*
+  the post-batch-7 entry two bullets down, which retracts the idea of a
+  stable direction altogether.*
 - **Both ranges above were measured against a broken endpoint.** Prior to
   the batch-5 fix, `/api/metrics` under-priced by 5-18.75x when the model
   changed mid-session, and double-counted headless assistant messages by
@@ -314,21 +315,46 @@ a value came from.
   measure the record against a figure that was itself wrong, and should
   be re-measured before either range is quoted again. The advice to gate
   budgets on `/api/metrics` holds from `bea9327` forward, not before it.
-- **Update 2026-09-11, post-batch-5 — the endpoint is the authority, and
-  the gap runs the other way.** After the NF9 dedup and NF10 per-event
-  pricing fixes, `/api/metrics` is authoritative for the token-based cost
-  Orchestron actually controls. The session record's `costUsd` is the
-  harness's `total_cost_usd` per `-p` envelope, which includes cache
-  reads, tool costs and other overhead the Orchestron price table does
-  not model. Re-measured against the fixed endpoint, the record sits
-  **+58–67% above** it: the record **over**-counts, the endpoint does not
-  under-count — the opposite of the sign recorded before the fix. This
-  is revision four of this note and the one to quote: `8169523`
-  (batch-3) stated the two figures are not interchangeable, `3414608`
-  (batch-4) dropped the "widens with turn count" claim, `7fdf409`
-  (batch-5) flagged that the ranges were measured against a broken
-  endpoint, and this entry supplies the corrected direction and
-  magnitude. **Use `/api/metrics` for budget gating.**
+- **Update 2026-09-11, post-batch-7 — the gap has no stable sign; stop
+  quoting a range.** Every earlier revision of this note, this one's
+  predecessor included, stated a *direction*: first that the record ran
+  under the endpoint, then — after the batch-5 pricing fixes — that it
+  ran **+58–67% above** it. The post-batch-7 sweep measured four
+  sessions and **none** landed in that band; the observed gap ran
+  **−50.9% to +46.2%**, and on one session the sign was inverted. Both
+  prior claims of a consistent under-count or over-count were wrong.
+
+  The driver is **cache-creation tokens × the model's cache-creation
+  rate**, not turn count and not the harness. On `b234f475` the very
+  first assistant row carried `cacheCreation: 17007` on `claude-opus-5`;
+  at the table's `$18.75/Mtok` that single row is **$0.3192 — 76% of the
+  whole session's endpoint figure**, which is why the endpoint charged
+  roughly twice what the harness reported. The three Haiku sessions in
+  the same sweep wrote 0–3563 cache tokens at `$1.00/Mtok`, so their
+  overhead term stayed negligible and the record ran above the endpoint
+  instead. Different session, different first-turn cache write,
+  different direction.
+
+  **Do not treat the two figures as convertible in either direction.**
+  Use **`/api/metrics`** for the tokens Orchestron prices
+  deterministically — it is internally consistent to 8 decimal places
+  (NF9/NF10) and it is the figure Orchestron controls, so it stays the
+  one to gate budgets on. Use the **record** for harness billing, which
+  includes cache creation and other overhead the price table does not
+  model. Both are correct measurements of different things. An operator
+  who reads `/api/metrics` as a floor will under-budget by up to 2x on
+  Opus-heavy work; one who reads it as a ceiling will over-budget on
+  Haiku.
+
+  This is revision five. `8169523` (batch-3) established that the two
+  figures are not interchangeable — the only claim that has survived
+  every re-measurement; `3414608` (batch-4) dropped "widens with turn
+  count"; `7fdf409` (batch-5) flagged that the earlier ranges were
+  measured against a broken endpoint; `6b7b4ee` (batch-7) asserted the
+  +58–67% band this entry retracts. **Quote the mechanism, not a
+  number.** One open question the sweeps cannot settle: whether
+  `pricing-table.ts`'s Opus `cacheCreationPer1M: 18.75` is right. It is
+  the dominant term above and needs a real invoice, not a test run.
 - **Codex sessions have no cost.** Orchestron's pricing table carries
   Claude tier rates and no codex entries, because ChatGPT
   Plus/Pro/Enterprise is flat-rate bundled. Treat codex sessions as
