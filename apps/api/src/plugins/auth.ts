@@ -3,7 +3,25 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import fp from 'fastify-plugin'
 import type { Config } from '@agent-hq-orchestron/shared'
 
-const AUTH_WHITELIST = new Set(['/api/health', '/api/readiness', '/api/reset', '/api/version'])
+/**
+ * Paths the bearer check never sees.
+ *
+ * `/pair` is here for a reason that is not obvious: `/api/reset` clears
+ * the client's token and then sends the browser to `/pair`, which — the
+ * page being served by the API — resolves against the *API* origin. The
+ * API has no `/pair`, and this preHandler runs before Fastify's
+ * not-found handling, so the browser landed on `{"error":"Unauthorized"}`
+ * having just discarded the token it would have needed (B6-F5). Letting
+ * it through means the 404 handler answers instead, with a page that
+ * says where pairing actually lives.
+ */
+export const AUTH_WHITELIST = new Set([
+  '/api/health',
+  '/api/readiness',
+  '/api/reset',
+  '/api/version',
+  '/pair',
+])
 
 /** Short-lived one-use tickets for SSE/WS query-string auth. The
  *  underlying `?token=<remoteToken>` mode is still accepted for

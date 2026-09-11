@@ -162,6 +162,13 @@ fastify.addContentTypeParser(
 
 // Reset endpoint: served by API (bypass Web service worker) — clears client-side state.
 // Also whitelisted from auth in plugins/auth.ts because Bearer token isn't required to nuke SW.
+//
+// It deliberately does NOT redirect when it finishes. `/pair` on this
+// origin is the API, not the web app, so the old `window.location.href =
+// '/pair'` dropped the browser on an Unauthorized JSON body immediately
+// after wiping the token that would have satisfied it (B6-F5). The API
+// cannot know the web UI's origin — nothing in the config records it —
+// so it names the destination instead of guessing a port.
 fastify.get('/api/reset', async (_req, reply) => {
   reply.type('text/html')
   return `<!doctype html>
@@ -199,13 +206,40 @@ fastify.get('/api/reset', async (_req, reply) => {
       } catch(e) { /* ignore */ }
     }
     push('');
-    push('Done. Redirecting to /pair in 3s...');
-    setTimeout(() => { window.location.href = '/pair'; }, 3000);
+    push('Done. Client state cleared.');
+    push('');
+    push('This page is served by the API, which has no UI. Open the Orchestron');
+    push('web UI and visit /pair to re-pair, or run: orchestron qr');
   } catch (err) {
     push('ERROR: ' + err.message);
   }
 })();
 </script>
+</body>
+</html>`
+})
+
+// `/pair` belongs to the web app. It is registered here — auth-whitelisted,
+// answering 404 — purely so the answer is an explanation rather than
+// `{"error":"Unauthorized"}` for anyone who reaches it on the API origin:
+// a bookmark, a cached copy of the pre-batch-7 reset page, or a hand-typed
+// URL. 404 is the honest code; this server really does not have the page.
+fastify.get('/pair', async (_req, reply) => {
+  reply.code(404).type('text/html')
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Not the pairing page</title>
+<style>body{font-family:monospace;background:#000;color:#fff;padding:20px;white-space:pre-wrap;font-size:14px;line-height:1.6}h1{font-size:20px;margin-bottom:16px}code{color:#7dd3fc}</style>
+</head>
+<body>
+<h1>404 — pairing lives on the web UI</h1>
+This is the Orchestron API. It serves no pages except <code>/api/reset</code>.
+
+To pair a device, open the Orchestron <b>web UI</b> and visit <code>/pair</code>,
+or run <code>orchestron qr</code> on the host to print a pairing QR code.
 </body>
 </html>`
 })

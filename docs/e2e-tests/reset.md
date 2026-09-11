@@ -154,8 +154,8 @@ on that assumption would report a false pass when sessions survived.
 
 ### RESET-03 — `/api/reset`, the service-worker-proof one
 
-**Covers**: the API-served twin, its anonymous access, and the redirect
-at the end of it — which lands on a path the API does not serve.
+**Covers**: the API-served twin, its anonymous access, and how it ends
+— which changed in batch-7: it no longer redirects anywhere.
 
 **Steps**
 
@@ -168,9 +168,16 @@ at the end of it — which lands on a path the API does not serve.
 
 2. In the scratch profile, pair it, then open `$ORCH/api/reset` —
    note the **API** port, not the web port.
-3. Read the log.
-4. Let the 3 s redirect fire and read the resulting page.
-5. Check whether the web origin's state was affected:
+3. Read the log, including the closing lines.
+4. Wait 5 s and confirm the URL has **not** changed.
+5. Ask the API for the path the page used to send you to:
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' "$ORCH/pair"              # no header
+   curl -s "$ORCH/pair" | head -8
+   ```
+
+6. Check whether the web origin's state was affected:
 
    ```js
    // in a tab on the WEB origin
@@ -188,25 +195,30 @@ at the end of it — which lands on a path the API does not serve.
   (`✓ Cleared storage`, `✓ Deleted IDB: <name>`).
 - **It clears the API origin, not the web origin.** Storage, caches and
   service workers are per-origin, so running it on `:8091` leaves the
-  web origin's token in place — step 5 still returns the token. This is
+  web origin's token in place — step 6 still returns the token. This is
   the scenario's real point: `/api/reset` un-wedges a worker registered
   on the API origin, and is **not** a substitute for `/reset` when the
   web origin is the broken one. Reach for it when `/reset` itself will
   not load.
-- **The final redirect lands on `401 Unauthorized`, not on the pairing
-  screen — and not on a 404 either.** The page sets
-  `window.location.href = '/pair'`, resolved against the **API**
-  origin. The API serves no `/pair` route, but the auth plugin's
-  `preHandler` runs first on every URL outside the whitelist, so the
-  browser ends on `{"error":"Unauthorized"}` from `http://<api
-  host>:<api port>/pair` — and it has just cleared the token it would
-  have needed. Assert the **401**; guessing 404 is the natural mistake
-  and it is wrong. The wipe itself completed; only the last hop is
-  broken, and it is one absolute URL away from correct. Record it as a
-  real defect; do not fix it in a sweep.
+- **No redirect.** The log ends with `Done. Client state cleared.`,
+  then two lines naming where pairing actually lives (the web UI's
+  `/pair`, or `orchestron qr`). The URL after 5 s is still
+  `$ORCH/api/reset`. *Before batch-7 the page ran
+  `window.location.href = '/pair'`, which resolved against the **API**
+  origin and dropped the browser on `{"error":"Unauthorized"}` —
+  having just cleared the token that would have satisfied it (B6-F5).
+  The API has no way to know the web UI's origin; nothing in the
+  config records it. So it names the destination instead of guessing a
+  port.* A redirect reappearing here is a regression.
+- **`$ORCH/pair` answers `404`, anonymously, with an HTML explanation.**
+  Not `401`: `/pair` is in the auth whitelist for exactly this reason,
+  so the not-found handler answers instead of the bearer check. The
+  body names the web UI and `orchestron qr`. This route exists only to
+  turn a dead end into a signpost — a bookmark, or a cached copy of the
+  pre-batch-7 page, still lands here.
 
-**📷 Screenshot**: `reset-03-api.png` — the log, plus the page the
-redirect lands on.
+**📷 Screenshot**: `reset-03-api.png` — the completed log including the
+two closing instruction lines.
 
 **Cleanup**: re-pair the profile on the web origin.
 
