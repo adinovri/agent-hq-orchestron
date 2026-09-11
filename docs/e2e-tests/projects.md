@@ -118,7 +118,8 @@ up as a cost surprise rather than as an error.
    curl -s -H "Authorization: Bearer $TOKEN" "$ORCH/api/projects/<id>" | python3 -m json.tool
    ```
 
-7. Set both defaults back to `— Harness default` and save again.
+7. Set both defaults back to `— Harness default` and save again, then
+   reopen the dialog **and** re-read the record over the API.
 8. Open the **Spawn** dialog against `e2e-scratch` and read what it
    inherits.
 
@@ -138,9 +139,22 @@ up as a cost surprise rather than as an error.
   **and** the selected harness.
 - The API record holds `defaultModel`, `defaultEffort: "medium"` and
   `defaultUseTmux: false`.
-- Step 7 **removes** the fields rather than writing empty strings —
-  re-read and confirm they are absent, and the chips are gone from the
-  card.
+- **Step 7 does not clear them. A project default, once set, cannot be
+  unset from this UI** — expect this to fail, and record it. The dialog
+  spreads the two fields in only when truthy
+  (`...(form.defaultModel ? { defaultModel } : {})`), so choosing
+  `— Harness default` **omits the key** from the PATCH body; and
+  `ProjectRegistry.update` merges shallowly
+  (`{ ...existing, ...patch }`), so an omitted key keeps its old value.
+  Re-read the record and confirm both fields, and the two card chips,
+  are still there. The same applies to `agentConfig` (see `PROJ-05`).
+  `defaultUseTmux` is the exception: the dialog **always** sends it,
+  precisely because `false` is a meaningful value, and it does change.
+  Consequence worth stating in a report: a project pinned to an
+  expensive model can never be un-pinned from the dashboard, so every
+  later spawn keeps inheriting it. A `null`-accepting PATCH, or an
+  always-send spread, would fix it — that is a product decision, not a
+  sweep's.
 - Step 8: the spawn dialog shows the project's values as the inherited
   defaults, tagged as coming from the project. The mechanics of that
   tag belong to [`metadata-edit.md`](metadata-edit.md); here just
@@ -148,7 +162,11 @@ up as a cost surprise rather than as an error.
 
 **📷 Screenshot**: `proj-02-chips.png` — the card with both chips.
 
-**Cleanup**: leave `e2e-scratch` with no defaults set.
+**Cleanup**: `e2e-scratch` cannot be returned to "no defaults" through
+the UI. Delete and re-register it, or `PATCH` the record directly —
+note that an explicit `""` is **rejected with 400** by
+`RegisterProjectBodySchema`, so clearing over the API means writing the
+record without the keys.
 
 ---
 
@@ -312,7 +330,19 @@ produces a session running as the wrong identity.
   (an index-based remove is easy to get wrong).
 - Extra args is a **comma-separated** string.
 - All of it round-trips: reopening shows the same values, and the API
-  record holds them under `agentConfig`.
+  record holds them under `agentConfig` — but **not under the names the
+  form uses**. The config-dir input is stored as an *env var*:
+  `agentConfig.env.CLAUDE_CONFIG_DIR` (or `.CODEX_HOME`), and the extra
+  pairs merge into that same `agentConfig.env` map. Extra args are
+  `agentConfig.extraArgs`, an array split on commas. `AgentConfigSchema`
+  accepts only `adapter`, `model`, `env`, `extraArgs` and `gitHost`, so
+  a PATCH naming `claudeConfigDir` or `extraEnv` is **silently
+  dropped** — it returns 200 with those keys absent. Assert the stored
+  shape, not the form's field names.
+- Clearing every Advanced field has the same defect as `PROJ-02` step
+  7: with nothing to send, `agentConfig` is omitted from the body and
+  the old value survives the merge. An env var set once on a project
+  stays on it.
 - Step 9: the session runs with the overridden config dir. Assert via
   the session's own detail panel or its process environment, whichever
   [`session-details.md`](session-details.md) already covers — do not

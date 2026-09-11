@@ -245,6 +245,14 @@ first.
   syntax highlighting, no virtualisation, no reconnect. Each of those
   would make the pane less useful for the job it exists for. If one is
   added anyway, it belongs in `session-details.md`, on the real pane.
+- **Two traps for an automated runner.** First, `waitUntil:
+  'networkidle'` **never fires** on this page — the `EventSource` is an
+  open request for as long as the tab lives, so the navigation times
+  out after 30 s. Use `domcontentloaded` and then wait. Second, do not
+  read the strip out of `document.body.textContent`: it concatenates
+  with no separator, so `lines=18` followed by a row beginning
+  `02:13:44` reads back as `lines=1802`. Scope the selector to the
+  strip element, and count rows with their own selector.
 - **Cost.** Every scenario here rides on a session another file already
   created. Nothing in this file needs to spawn anything; `DIAG-04` is
   the only one that spends a turn, and one slow prompt on `e2e-haiku`

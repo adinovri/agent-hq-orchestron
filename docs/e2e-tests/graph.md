@@ -148,17 +148,27 @@ only one of them.
   `No delegation graph — select a session root via ?root=<uuid>`,
   centred, and the input is **empty**. No React Flow chrome — no
   controls, no minimap, no dot grid — because the whole component
-  early-returns before rendering the canvas.
-- With an unknown root: the API answers **404**, `delegation` stays
-  undefined, and the page falls back to the **same** empty-state text.
-  So a typo and no input at all look identical; the 404 is only visible
-  in the network tab. Record that as the known shape, not as a bug.
-- With a malformed root: same empty state; no crash, no error overlay.
+  early-returns before rendering the canvas. **This is the only case
+  that reaches the empty state.**
+- With an unknown root: the API answers **404** and `delegation` stays
+  undefined, but the page renders **one node anyway** — labelled with
+  the first 8 characters of the uuid you supplied and carrying **no
+  status line**, with the full React Flow chrome around it. The root is
+  added to the node set unconditionally, so `rawNodes` is never empty
+  while a root is present and the empty-state branch is unreachable.
+  Assert the node, not the empty state.
+- With a malformed root: the same single node, labelled with the first
+  8 characters of whatever you typed (`not-a-uu` for `not-a-uuid`). No
+  crash, no error overlay, no validation.
+- **That node is clickable.** It navigates to `/session/<the string
+  from the URL>` — a session that does not exist. So a typo in the
+  query string produces a graph of one phantom node that leads
+  somewhere broken. Record it; the guard would be to drop a root the
+  sessions list does not know, and that is a product decision.
 - With a real but **childless** session as root: **one** node renders —
-  the root, with its white ring — and **no** edges. The root is added to
-  the node set explicitly, so it draws even when the edge list is empty.
-  This is the case that distinguishes "nothing to draw" from "a tree of
-  one".
+  the root, with its white ring, **and its status line** — and no
+  edges. Reading the status line is what distinguishes this from the
+  unknown-root case above; the node count is identical.
 - `Loading…` appears in the toolbar while the delegation query is in
   flight, and clears afterwards.
 
@@ -168,8 +178,8 @@ only one of them.
 > different root means editing the URL. Assert that behaviour; do not
 > assert that typing works when the page was opened with `?root=`.
 
-**📷 Screenshot**: `graph-03-empty.png` — the empty state with the
-instruction text.
+**📷 Screenshot**: `graph-03-empty.png` — two frames: the no-root empty
+state, and the single phantom node an unknown root produces.
 
 **Cleanup**: none.
 

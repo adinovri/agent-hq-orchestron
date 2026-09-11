@@ -73,10 +73,12 @@ behaviour means a mis-typed URL is unrecoverable.
 - **No confirmation of any kind.** No dialog, no button, no "are you
   sure". The page reads `Resetting...` and work has already begun by
   the time it paints — the wipe runs in an effect on mount.
-- The page is bare black-on-white monospace with the heading
-  `Orchestron Reset`. It is inline-styled and **theme-independent** on
-  purpose: it has to render when the app's CSS is part of what is
-  broken.
+- The page body is bare white-on-black monospace with the heading
+  `Orchestron Reset`, inline-styled and **theme-independent** on
+  purpose. But it is a normal route inside the root layout, so **the
+  global nav bar still renders above it** — the version chip and the
+  six nav links are in frame. Only `/api/reset` (`RESET-03`) is truly
+  standalone, which is part of why it exists.
 - The log lists, in order, one line per thing actually done:
   - `✓ Unregistered SW: <scope>` per worker, or `- No SW registered`
   - `✓ Deleted cache: <key>` per cache, or `- No caches`
@@ -191,13 +193,17 @@ at the end of it — which lands on a path the API does not serve.
   on the API origin, and is **not** a substitute for `/reset` when the
   web origin is the broken one. Reach for it when `/reset` itself will
   not load.
-- **The final redirect 404s.** The page sets
+- **The final redirect lands on `401 Unauthorized`, not on the pairing
+  screen — and not on a 404 either.** The page sets
   `window.location.href = '/pair'`, resolved against the **API**
-  origin — and the API serves no `/pair` route and has no not-found
-  handler pointing at the web app. So a successful `/api/reset` ends on
-  an API 404 rather than on the pairing screen. The wipe itself
-  completed; only the last hop is wrong. Record it as a real defect
-  (one absolute URL away from correct) and do not fix it in a sweep.
+  origin. The API serves no `/pair` route, but the auth plugin's
+  `preHandler` runs first on every URL outside the whitelist, so the
+  browser ends on `{"error":"Unauthorized"}` from `http://<api
+  host>:<api port>/pair` — and it has just cleared the token it would
+  have needed. Assert the **401**; guessing 404 is the natural mistake
+  and it is wrong. The wipe itself completed; only the last hop is
+  broken, and it is one absolute URL away from correct. Record it as a
+  real defect; do not fix it in a sweep.
 
 **📷 Screenshot**: `reset-03-api.png` — the log, plus the page the
 redirect lands on.
