@@ -64,6 +64,13 @@ Read [`00-setup.md`](00-setup.md) first. The rest are independent.
 | [`mcp-spawn.md`](mcp-spawn.md) | `spawn_session` from a running agent, mode inheritance, delegation graph, guardrails |
 | [`session-details.md`](session-details.md) | Collapsed details panel — four groups, skip rules, copy buttons |
 | [`dashboard-ui.md`](dashboard-ui.md) | Cards, ordering, filter bar, project grouping, delegation chips, status pills |
+| [`projects.md`](projects.md) | Project registry — register, edit defaults, delete, filters, per-harness config |
+| [`metrics.md`](metrics.md) | Cost page — tiles, dedup, per-event pricing, empty states, the five `groupBy` axes |
+| [`graph.md`](graph.md) | Delegation graph — nodes, edges, click-through, empty roots, narrow viewport, live theme |
+| [`settings.md`](settings.md) | Settings — theme, server info, the two health endpoints, log level, adapter matrix |
+| [`pairing.md`](pairing.md) | `/pair` — token sink, no-token state, unverified tokens, PWA install prompt |
+| [`reset.md`](reset.md) | `/reset` and `/api/reset` — client-only wipe, blast radius, the two origins |
+| [`diagnostics.md`](diagnostics.md) | `/session-diag/<uuid>` — the minimal SSE transcript dump |
 
 ---
 
@@ -107,7 +114,7 @@ which case USAGE.md is stale.
 
 ## Smoke set
 
-The short pre-deploy sweep — 11 scenarios, roughly 20 minutes by hand.
+The short pre-deploy sweep — 13 scenarios, roughly 25 minutes by hand.
 
 | Id | Scenario |
 |---|---|
@@ -122,8 +129,10 @@ The short pre-deploy sweep — 11 scenarios, roughly 20 minutes by hand.
 | `SCHED-09` | Run now navigates to the session it spawned |
 | `DASH-01` | Dashboard lists sessions newest-activity first |
 | `DETAIL-01` | Details panel shows four groups |
+| `PROJ-01` | Register a project through the form |
+| `METRICS-01` | Summary tiles and the range they describe |
 
-All eleven run with `enableHeadlessMode` **on** — its default — so the
+All thirteen run with `enableHeadlessMode` **on** — its default — so the
 sweep needs no config change and no API restart.
 
 **The flag-off pair, run separately.** `FLAG-02` (every *Use tmux*
@@ -135,6 +144,22 @@ here. Run them as their own short sweep when a release touches the
 masking path, following [`feature-flag.md`](feature-flag.md) from its
 preconditions through `FLAG-08` — which restores the switch. Do not
 interleave them with the main sweep.
+
+**The five client-side `[smoke]` scenarios, also outside the table.**
+Each area added in batch 6 carries one `[smoke]` scenario, but only
+`PROJ-01` and `METRICS-01` earned a place in the pre-deploy table — the
+other five are cheap, client-side and not on the path a deploy breaks:
+
+| Id | Scenario | Why not in the table |
+|---|---|---|
+| `GRAPH-01` | Parent and children render with status colours | needs an `MCP-02` tree already in place |
+| `SET-01` | Theme select, and where it persists | browser-local; no server state |
+| `DIAG-01` | The diag pane opens the stream and renders raw events | developer tool, unlinked route |
+| `PAIR-01` | A pairing link stores the token and lands on the dashboard | needs a clean browser profile |
+| `RESET-01` | `/reset` wipes client state on load | **destroys the runner's own token** |
+
+Run all seven after a change to the pages they cover. `RESET-01` wants a
+scratch browser profile — see [`reset.md`](reset.md) preconditions.
 
 ---
 
