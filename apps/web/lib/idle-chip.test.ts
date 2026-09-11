@@ -7,8 +7,11 @@ import {
   formatIdleTooltip,
   isNearSleep,
   idleChipState,
+  tickIntervalMs,
   DEFAULT_IDLE_TIMEOUT_MS,
   WARN_LEAD_MS,
+  MIN_TICK_MS,
+  MAX_TICK_MS,
 } from './idle-chip'
 
 describe('formatIdleTimeout', () => {
@@ -123,7 +126,24 @@ describe('the chips actually consume the server value', () => {
     it(`${file} reads idleTimeoutMs from the health endpoint`, () => {
       const src = read(file)
       expect(src).toContain('useIdleTimeoutMs()')
-      expect(src).toContain('idleChipState(session.idleSince, idleTimeoutMs)')
+      expect(src).toContain('useIdleChip(')
+    })
+
+    it(`${file} does not compute the chip during render (NF16)`, () => {
+      // The frozen chip was exactly this call inline in JSX: `Date.now()` read
+      // once, at the render that mounted it, with nothing to re-render it
+      // afterwards. The hook is the only sanctioned caller now.
+      const src = read(file)
+      expect(src).not.toContain('idleChipState(')
+      expect(src).toContain("from '@/lib/use-idle-chip'")
+    })
+
+    it(`${file} leaves the ticker unarmed outside the idle states`, () => {
+      // Passing `null` rather than guarding the hook call keeps it
+      // unconditional (rules of hooks) AND stops a running session from
+      // holding a live interval for a chip it never shows.
+      const src = read(file)
+      expect(src).toMatch(/useIdleChip\(\s*\n?\s*session\.status === 'idle' \|\| session\.status === 'needs_input'\s*\? session\.idleSince\s*: null,/)
     })
 
     it(`${file} hardcodes no sleep threshold`, () => {
@@ -135,4 +155,67 @@ describe('the chips actually consume the server value', () => {
       expect(code).not.toMatch(/idleMin\s*>=\s*10/)
     })
   }
+})
+
+describe('tickIntervalMs', () => {
+  it('gives the 60s E2E instance second resolution — the amber window is 20s wide', () => {
+    expect(tickIntervalMs(60_000)).toBe(MIN_TICK_MS)
+  })
+
+  it('does not re-render a 15-minute instance 900 times', () => {
+    expect(tickIntervalMs(DEFAULT_IDLE_TIMEOUT_MS)).toBe(MAX_TICK_MS)
+  })
+
+  it('keeps the counter within MAX_TICK_MS of the truth however long the threshold', () => {
+    expect(tickIntervalMs(24 * 60 * 60_000)).toBe(MAX_TICK_MS)
+  })
+
+  it('never spins faster than MIN_TICK_MS on a pathologically small timeout', () => {
+    expect(tickIntervalMs(1)).toBe(MIN_TICK_MS)
+    expect(tickIntervalMs(5_000)).toBe(MIN_TICK_MS)
+  })
+
+  it('still ticks when auto-sleep is disabled — `idle Nm` keeps counting', () => {
+    expect(tickIntervalMs(0)).toBe(MAX_TICK_MS)
+    expect(tickIntervalMs(NaN)).toBe(MAX_TICK_MS)
+  })
+})
+
+describe('the chip as a clock advances it (NF16)', () => {
+  // No DOM, so the hook itself cannot be mounted here. What is testable — and
+  // what actually broke — is that advancing `now` at the interval the hook
+  // uses walks the chip through grey → amber and ages the counter. Before the
+  // fix `now` never advanced at all, so this sequence never happened in a
+  // browser however correct the arithmetic was.
+  const since = new Date('2026-09-11T04:00:00Z')
+  const tick = (timeout: number) => {
+    const step = tickIntervalMs(timeout)
+    const states: { t: number; idleMin: number; nearSleep: boolean }[] = []
+    for (let t = 0; t <= timeout; t += step) {
+      const { idleMin, nearSleep } = idleChipState(since, timeout, since.getTime() + t)
+      states.push({ t, idleMin, nearSleep })
+    }
+    return states
+  }
+
+  it('turns amber exactly once on the 60s instance, 40s in', () => {
+    const states = tick(60_000)
+    const flips = states.filter((s, i) => i > 0 && s.nearSleep !== states[i - 1]!.nearSleep)
+    expect(flips).toHaveLength(1)
+    expect(flips[0]!.t).toBe(40_000)
+    expect(states[0]!.nearSleep).toBe(false)
+    expect(states[states.length - 1]!.nearSleep).toBe(true)
+  })
+
+  it('turns amber exactly once on the 15-minute default, 10 minutes in', () => {
+    const states = tick(DEFAULT_IDLE_TIMEOUT_MS)
+    const flips = states.filter((s, i) => i > 0 && s.nearSleep !== states[i - 1]!.nearSleep)
+    expect(flips).toHaveLength(1)
+    expect(flips[0]!.t).toBe(10 * 60_000)
+  })
+
+  it('ages the counter through every whole minute rather than freezing at 0', () => {
+    const seen = [...new Set(tick(DEFAULT_IDLE_TIMEOUT_MS).map((s) => s.idleMin))]
+    expect(seen).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+  })
 })

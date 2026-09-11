@@ -10,7 +10,7 @@ import { useState } from 'react'
 import { implicitDefaultModel, implicitDefaultEffort } from '@/lib/models'
 import { apiFetch } from '@/lib/fetcher'
 import { useHeadlessBadgeVisible, useIdleTimeoutMs } from '@/lib/server-config'
-import { idleChipState } from '@/lib/idle-chip'
+import { useIdleChip } from '@/lib/use-idle-chip'
 import { buildSessionDetailSections } from '@/lib/session-details'
 
 interface Props {
@@ -156,6 +156,12 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
   // checkbox is where the target mode is picked.
   const showHeadlessBadge = useHeadlessBadgeVisible(session.useTmux, session.status)
   const idleTimeoutMs = useIdleTimeoutMs()
+  // Ticks on its own clock — see useIdleChip. `null` when the session is in
+  // no state the chip belongs on, which also leaves the interval unarmed.
+  const idleChip = useIdleChip(
+    session.status === 'idle' || session.status === 'needs_input' ? session.idleSince : null,
+    idleTimeoutMs,
+  )
   const canReopen = isTerminal && hasTranscript
   const canClone = isTerminal && hasTranscript
   // Respawn always available on terminal — doesn't need the old JSONL.
@@ -245,25 +251,22 @@ export function SessionHeader({ session, descendantCount, parentPrompt, readOnly
                   <Pencil className="w-3 h-3" />
                 </button>
               )}
-              {session.idleSince && (session.status === 'idle' || session.status === 'needs_input') && (() => {
+              {idleChip && (
                 // Amber lead and tooltip both derive from the server's real
                 // `idleTimeoutMs`. The old rule warned at a flat 10 minutes,
                 // which on a 60s instance meant nine minutes after the session
                 // had already slept — so it never fired at all (NF14).
-                const { idleMin, nearSleep, title } = idleChipState(session.idleSince, idleTimeoutMs)
-                return (
-                  <span
-                    className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
-                      nearSleep
-                        ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300'
-                        : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
-                    }`}
-                    title={title}
-                  >
-                    idle {idleMin}m
-                  </span>
-                )
-              })()}
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${
+                    idleChip.nearSleep
+                      ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300'
+                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400'
+                  }`}
+                  title={idleChip.title}
+                >
+                  idle {idleChip.idleMin}m
+                </span>
+              )}
               {descendantCount != null && descendantCount > 0 && (
                 <span
                   className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"

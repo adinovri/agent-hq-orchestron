@@ -82,3 +82,33 @@ export function idleChipState(
     title: formatIdleTooltip(since, idleTimeoutMs),
   }
 }
+
+/**
+ * How often a chip showing this threshold has to re-render to stay honest.
+ *
+ * The chip used to be computed once, during the render that first showed it,
+ * and then never again: react-query's structural sharing hands back the *same*
+ * `session` object when a poll finds nothing changed, so `refetchInterval`
+ * re-fetched but re-rendered nothing. A page left open showed `idle 0m` and a
+ * grey chip indefinitely, and the amber warning — whose arithmetic is correct
+ * and unit-pinned above — never actually appeared on screen (NF16).
+ *
+ * So the chip needs a clock of its own. One tick per second on a 15-minute
+ * instance is 900 pointless renders per chip; one tick per minute on the 60s
+ * E2E instance would miss the amber window entirely. Scaling with the
+ * threshold gives both ends what they need: 1s at 60s, 15s at 15 min.
+ *
+ * The bounds are the interesting part, not the divisor — `MIN_TICK_MS` stops a
+ * pathologically small timeout from spinning the render loop, `MAX_TICK_MS`
+ * keeps the `idle Nm` counter within 15s of the truth however long the
+ * threshold is.
+ */
+export const MIN_TICK_MS = 1_000
+export const MAX_TICK_MS = 15_000
+
+export function tickIntervalMs(idleTimeoutMs: number): number {
+  // Auto-sleep off: nothing to count down to, but `idle Nm` still ages, and a
+  // minute-resolution counter is served fine by the slowest tick.
+  if (!Number.isFinite(idleTimeoutMs) || idleTimeoutMs <= 0) return MAX_TICK_MS
+  return Math.min(MAX_TICK_MS, Math.max(MIN_TICK_MS, Math.round(idleTimeoutMs / 60)))
+}
