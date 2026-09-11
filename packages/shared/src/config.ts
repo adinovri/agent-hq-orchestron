@@ -248,6 +248,114 @@ function readConfigFile(configPath: string): unknown {
   }
 }
 
+/**
+ * The pre-`remoteToken` spelling of the bearer key in `config.json`.
+ *
+ * `orchestron token rotate` used to write `token`; the schema has always
+ * read `remoteToken`. The result was a rotate that printed a fresh token,
+ * reported success, and left the old bearer working — see B6-F1. The CLI
+ * now writes `remoteToken`, and these two helpers carry the configs that
+ * the broken version already wrote.
+ */
+export const LEGACY_TOKEN_KEY = 'token'
+
+/**
+ * Fold a legacy `token` key into `remoteToken` for this process.
+ *
+ * Read-only and side-effect free apart from the warning: it does not
+ * touch the file, so it still works when the config lives on a read-only
+ * mount or when the process cannot write as the owning user. The
+ * persistent half is `migrateLegacyTokenKey`.
+ *
+ * `remoteToken` always wins when both keys are present — the key the API
+ * has been reading all along is the one that is actually authenticating
+ * clients right now, so adopting `token` instead would lock them out.
+ */
+export function applyLegacyTokenKey(
+  raw: Record<string, unknown>,
+  warn: (msg: string) => void = console.warn,
+): Record<string, unknown> {
+  const legacy = raw[LEGACY_TOKEN_KEY]
+  if (typeof legacy !== 'string' || legacy.length === 0) return raw
+  if (typeof raw.remoteToken === 'string' && raw.remoteToken.length > 0) {
+    warn(
+      `[orchestron] config has both "remoteToken" and the legacy "token" key — ` +
+        `using "remoteToken" and ignoring "token". Delete the "token" key.`,
+    )
+    return raw
+  }
+  warn(
+    `[orchestron] config key "token" is the legacy spelling of "remoteToken" — ` +
+      `adopting it for this run. Run \`orchestron token rotate\` (or rename the key) ` +
+      `to stop seeing this.`,
+  )
+  const out: Record<string, unknown> = { ...raw }
+  out.remoteToken = legacy
+  delete out[LEGACY_TOKEN_KEY]
+  return out
+}
+
+/**
+ * Rewrite a `config.json` that still uses the legacy `token` key, once.
+ *
+ * Call before `loadConfig` at boot. Idempotent: a config with no `token`
+ * key, or one that already has a `remoteToken`, is left untouched (the
+ * both-keys case is left to `applyLegacyTokenKey`, which prefers
+ * `remoteToken` — rewriting there could silently swap the live bearer).
+ *
+ * A failed write is not fatal. `applyLegacyTokenKey` inside `loadConfig`
+ * means the running process authenticates correctly either way; all that
+ * is lost is the one-time cleanup.
+ */
+export function migrateLegacyTokenKey(
+  opts: { configPath?: string; env?: NodeJS.ProcessEnv; warn?: (msg: string) => void } = {},
+): { migrated: boolean; configPath: string; reason?: string } {
+  const env = opts.env ?? process.env
+  const warn = opts.warn ?? console.warn
+  const configPath = resolveConfigPath(env, opts.configPath)
+
+  if (!fs.existsSync(configPath)) return { migrated: false, configPath, reason: 'no config file' }
+
+  let raw: Record<string, unknown>
+  try {
+    raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as Record<string, unknown>
+  } catch {
+    return { migrated: false, configPath, reason: 'unparseable config' }
+  }
+  if (!raw || typeof raw !== 'object') return { migrated: false, configPath, reason: 'not an object' }
+
+  const legacy = raw[LEGACY_TOKEN_KEY]
+  if (typeof legacy !== 'string' || legacy.length === 0) {
+    return { migrated: false, configPath, reason: 'no legacy token key' }
+  }
+  if (typeof raw.remoteToken === 'string' && raw.remoteToken.length > 0) {
+    return { migrated: false, configPath, reason: 'remoteToken already set' }
+  }
+
+  const next: Record<string, unknown> = { ...raw, remoteToken: legacy }
+  delete next[LEGACY_TOKEN_KEY]
+  try {
+    fs.writeFileSync(configPath, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 })
+    // `mode` only applies when writeFileSync creates the file, and this
+    // one already exists. Tighten it explicitly: we are rewriting a file
+    // whose whole content is a plaintext bearer, and readConfigFile warns
+    // about exactly this on every subsequent boot.
+    if (process.platform !== 'win32') {
+      try { fs.chmodSync(configPath, 0o600) } catch { /* best effort */ }
+    }
+  } catch (err) {
+    warn(
+      `[orchestron] could not rewrite ${configPath} to migrate "token" -> "remoteToken": ` +
+        `${(err as Error).message}. The value is still honoured for this run.`,
+    )
+    return { migrated: false, configPath, reason: 'write failed' }
+  }
+  warn(
+    `[orchestron] migrated legacy config key "token" -> "remoteToken" in ${configPath}.`,
+  )
+  return { migrated: true, configPath }
+}
+
 function envOverrides(env: NodeJS.ProcessEnv): Partial<Config> {
   const out: Partial<Config> = {}
   if (env.ORCHESTRON_BIND_HOST) out.bindHost = env.ORCHESTRON_BIND_HOST
@@ -274,7 +382,11 @@ export function loadConfig(opts: {
   const env = opts.env ?? process.env
   const configPath = resolveConfigPath(env, opts.configPath)
 
-  const fileRaw = readConfigFile(configPath) as Record<string, unknown>
+  // Legacy `token` key -> `remoteToken`, in memory. Boot also rewrites the
+  // file via `migrateLegacyTokenKey`, but this arm is what makes a config
+  // the rewrite could not touch (read-only mount, wrong owner) still
+  // authenticate — and what covers every non-server consumer of loadConfig.
+  const fileRaw = applyLegacyTokenKey(readConfigFile(configPath) as Record<string, unknown>)
   const envRaw = envOverrides(env)
 
   const merged: Record<string, unknown> = {

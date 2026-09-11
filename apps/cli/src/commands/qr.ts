@@ -1,19 +1,26 @@
 import type { Command } from 'commander'
 import { readFileSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
-import { homedir } from 'node:os'
 import pc from 'picocolors'
 import qrcode from 'qrcode-terminal'
+import { resolveConfigPath, LEGACY_TOKEN_KEY } from '@agent-hq-orchestron/shared'
 import { resolveHost } from '../helpers/resolve-host.js'
 
 function loadToken(): string | undefined {
   const envToken = process.env['ORCHESTRON_REMOTE_TOKEN']
   if (envToken) return envToken
-  const cfgPath = join(homedir(), '.orchestron', 'config.json')
+  // `remoteToken` is the key the API reads. This command used to look up
+  // `token` only, so on a correctly provisioned instance the documented
+  // way to pair a phone could not find the token sitting in the very file
+  // it was reading (B6-F1). Legacy `token` stays as a fallback for a
+  // config the boot migration has not rewritten yet.
+  const cfgPath = resolveConfigPath()
   if (existsSync(cfgPath)) {
     try {
       const cfg = JSON.parse(readFileSync(cfgPath, 'utf8')) as Record<string, unknown>
-      if (typeof cfg['token'] === 'string') return cfg['token']
+      if (typeof cfg['remoteToken'] === 'string' && cfg['remoteToken']) return cfg['remoteToken']
+      if (typeof cfg[LEGACY_TOKEN_KEY] === 'string' && cfg[LEGACY_TOKEN_KEY]) {
+        return cfg[LEGACY_TOKEN_KEY] as string
+      }
     } catch {
       // ignore
     }
@@ -32,7 +39,7 @@ export function registerQr(program: Command): void {
       if (!token) {
         process.stderr.write(
           pc.red(
-            'Error: no token found. Set ORCHESTRON_REMOTE_TOKEN, pass --token, or run `orchestron token generate`.\n',
+            'Error: no token found. Set ORCHESTRON_REMOTE_TOKEN, pass --token, or run `orchestron token rotate` (which writes remoteToken into the config file — `token generate` only prints one).\n',
           ),
         )
         process.exit(1)

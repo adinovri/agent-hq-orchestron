@@ -8,6 +8,7 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   loadConfig,
+  migrateLegacyTokenKey,
   assertSafeBind,
   BootGuardError,
   type Config,
@@ -39,6 +40,12 @@ const execFileAsync = promisify(execFile)
 
 let config: Config
 try {
+  // One-shot cleanup of the pre-B6-F1 config key. A `config.json` written
+  // by the old `orchestron token rotate` has `token` where the schema
+  // reads `remoteToken`; rewrite it before the load so the file on disk
+  // and the key the API authenticates against stop disagreeing. Failure
+  // is non-fatal — loadConfig folds the legacy key in memory regardless.
+  migrateLegacyTokenKey()
   config = loadConfig()
   assertSafeBind(config)
 } catch (err) {
