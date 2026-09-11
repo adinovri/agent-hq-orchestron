@@ -1,15 +1,18 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Fastify from 'fastify'
+import os from 'node:os'
 import type { FastifyInstance } from 'fastify'
 import authPlugin from '../src/plugins/auth.js'
-import type { Config } from '@agent-hq-orchestron/shared'
+import { readinessPlugin } from '../src/routes/readiness.js'
+import { AdapterRegistry } from '../src/adapters/registry.js'
+import type { AgentAdapter, Config } from '@agent-hq-orchestron/shared'
 
 function buildApp(remoteToken?: string): FastifyInstance {
   const fastify = Fastify({ logger: false })
   const config = {
     bindHost: '127.0.0.1',
     port: 8080,
-    dataDir: '/tmp/test',
+    dataDir: os.tmpdir(),
     maxConcurrent: 4,
     remoteToken,
     adapters: { claude: true, codex: false, opencode: false },
@@ -19,7 +22,13 @@ function buildApp(remoteToken?: string): FastifyInstance {
   fastify.register(authPlugin, { config })
 
   fastify.get('/api/health', async () => ({ ok: true }))
-  fastify.get('/api/readiness', async () => ({ ready: true }))
+  // The *real* readiness plugin, not a stub. This fixture used to register
+  // `fastify.get('/api/readiness', ...)` itself, so the whitelist test passed
+  // green for months against a route the server never had (NF13). Mount what
+  // server.ts mounts, and the test fails if the route disappears again.
+  const registry = new AdapterRegistry()
+  registry.register('claude', {} as AgentAdapter)
+  fastify.register(readinessPlugin(config, registry))
   fastify.get('/api/protected', async () => ({ secret: true }))
 
   return fastify

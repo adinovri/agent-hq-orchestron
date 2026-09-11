@@ -1281,7 +1281,7 @@ Local-first, file-based. Bukan Grafana/Prometheus stack. Detail metrics design: 
 | Endpoint | Purpose | Auth |
 | --- | --- | --- |
 | `GET /api/health` | Liveness — uptime, node version | Public (whitelisted) |
-| `GET /api/readiness` | Readiness — file-store writable, tmux avail | Public |
+| `GET /api/readiness` | Readiness — config loaded, data dir writable, >=1 adapter registered. `200 {status:'ready',uptime,checks}` / `503 {status:'not_ready',...}`. Deliberately does **not** gate on tmux: a headless-only instance is ready without it | Public |
 | `GET /api/stats` | Runtime — active session count, pool utilization, disk free | Bearer required |
 | `GET /api/metrics` | Aggregate rollup (FR-18) | Bearer required |
 

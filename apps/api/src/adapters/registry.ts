@@ -11,6 +11,12 @@ export class AdapterRegistry {
     return this.adapters.get(name)
   }
 
+  /** Registered adapter names. `/api/readiness` asks for this: a process
+   *  with an empty registry is up but cannot spawn anything. */
+  names(): string[] {
+    return [...this.adapters.keys()]
+  }
+
   getOrThrow(name: string): AgentAdapter {
     const adapter = this.adapters.get(name)
     if (!adapter) {

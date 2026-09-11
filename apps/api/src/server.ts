@@ -35,6 +35,7 @@ import { Scheduler } from './domain/scheduler.js'
 import { schedulesPlugin } from './routes/schedules.js'
 import { NotesStore } from './domain/notes-store.js'
 import { notesPlugin } from './routes/notes.js'
+import { readinessPlugin } from './routes/readiness.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -283,6 +284,12 @@ fastify.get('/api/health/detail', async () => {
     // left to present, so showing a disabled control would just be noise.
     enableHeadlessMode: config.enableHeadlessMode,
     headlessStructuredOutput: config.headlessStructuredOutput,
+    // Auto-sleep threshold, so the idle chip can state the threshold actually
+    // in force instead of the 15-minute default it used to hardcode (NF14).
+    // An instance that tuned this — the E2E one runs 60s — was telling every
+    // viewer the wrong number, and the amber "about to sleep" warning never
+    // fired at all below a 10-minute timeout.
+    idleTimeoutMs: config.idleTimeoutMs,
   }
 })
 
@@ -306,6 +313,9 @@ fastify.get('/api/version', async () => {
   return { buildId, serverStartedAt: new Date(process.uptime() * -1000 + Date.now()).toISOString() }
 })
 
+// Readiness before the rest: it is in AUTH_WHITELIST and the only route a
+// load balancer polls, so it must exist for real and not only in a fixture.
+await fastify.register(readinessPlugin(config, registry))
 await fastify.register(projectsPlugin(projectRegistry))
 await fastify.register(sessionsPlugin(sessionManager, hookRunner, templateResolver, delegationTracker, projectRegistry, { enableHeadlessMode: config.enableHeadlessMode }))
 await fastify.register(delegationPlugin(delegationTracker, sessionManager))
