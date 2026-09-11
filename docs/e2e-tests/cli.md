@@ -116,11 +116,18 @@ built against.
 - Step 3 is the only part of this scenario that tests truncation, and it
   only does so if `wc -c` clears **65536** — a pipe buffers 64 KiB for
   free, so any smaller document arrives whole whether the flush is
-  handled or not. On an env without enough sessions to clear it, seed
-  more or use `metrics --group-by session`; do **not** substitute a
-  small document. `doctor --json` is ~1 KB (NEW-4) and passes this step
+  handled or not. `doctor --json` is ~1 KB (NEW-4) and passes this step
   no matter what the code does — a sweep that cites it has measured
   nothing.
+- **Nothing on a normal instance clears 64 KiB.** Measured on prod at
+  `58c531b`: `session list --json` 25467 B, `metrics --group-by session`
+  3015 B, `metrics --group-by day` 1115 B. So this step is *vacuous by
+  default* and the only way to make it real is to seed sessions until
+  `wc -c` clears 65536 — do not substitute a smaller document and do not
+  record a pass without the byte count. If the env cannot be seeded, say
+  the step was not exercised; the standing evidence is then the unit
+  test in `apps/cli/tests/live-api.test.ts`, which seeds 160 sessions
+  (~91 KB) and was confirmed to fail against the unpatched entry point.
 - `head -c 1000` must exit **0** with an empty stderr (NEW-1). A reader
   that stops reading is not an error, and an unhandled `EPIPE` turns it
   into a stack trace and a non-zero status for a pipeline the operator
