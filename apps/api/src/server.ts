@@ -321,7 +321,7 @@ await fastify.register(sessionsPlugin(sessionManager, hookRunner, templateResolv
 await fastify.register(delegationPlugin(delegationTracker, sessionManager))
 await fastify.register(streamPlugin(sessionManager, config.dataDir))
 await fastify.register(metricsPlugin(metricsCollector))
-await fastify.register(schedulesPlugin(scheduler, { enableHeadlessMode: config.enableHeadlessMode }))
+await fastify.register(schedulesPlugin(scheduler, projectRegistry, { enableHeadlessMode: config.enableHeadlessMode }))
 const notesStore = new NotesStore(config.dataDir)
 await fastify.register(notesPlugin(notesStore))
 

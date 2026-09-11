@@ -12,6 +12,7 @@ import {
   type EffortLevel,
 } from '@agent-hq-orchestron/shared'
 import { Scheduler, ScheduleNotFoundError, type ScheduleEntry } from '../domain/scheduler.js'
+import { ProjectRegistry, ProjectNotFoundError } from '../domain/project-registry.js'
 
 /** Standard cron: `minute hour day-of-month month day-of-week`, and nothing
  *  else. */
@@ -156,9 +157,35 @@ function resolveOverrides(
 
 export function schedulesPlugin(
   scheduler: Scheduler,
+  projects: ProjectRegistry,
   serverConfig: { enableHeadlessMode?: boolean } = {},
 ) {
   const headlessEnabled = serverConfig.enableHeadlessMode ?? DEFAULT_ENABLE_HEADLESS_MODE
+
+  /**
+   * Does this `projectId` name a project that exists? (NEW-3)
+   *
+   * It used to go unasked. `POST /api/schedules` took any non-empty string —
+   * a typo, a stale id, a freshly minted uuid naming nothing — and answered
+   * **201**, writing a schedule that cron would dutifully wake for and that
+   * could never run. The failure surfaced nowhere near the request that caused
+   * it: the caller was told it worked, and the truth only arrived at the first
+   * fire, in a log the caller was not reading.
+   *
+   * 404 rather than 400: the request is well-formed, the thing it names is
+   * missing, and the message names it — the same shape and wording
+   * `/api/sessions/adopt/validate` already uses for this exact mistake.
+   */
+  async function missingProject(projectId: string): Promise<string | null> {
+    try {
+      await projects.get(projectId)
+      return null
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) return `Project not found: ${projectId}`
+      throw err
+    }
+  }
+
   return fp(async (app: FastifyInstance) => {
     app.get('/api/schedules', async () => {
       const entries = await scheduler.list()
@@ -182,6 +209,9 @@ export function schedulesPlugin(
       if (!body.data.template && !body.data.prompt) {
         return reply.code(422).send({ error: 'prompt or template required' })
       }
+
+      const absent = await missingProject(body.data.projectId)
+      if (absent) return reply.code(404).send({ error: absent })
 
       const overrides = resolveOverrides(body.data, headlessEnabled)
       if (overrides.coerced) {
@@ -225,7 +255,15 @@ export function schedulesPlugin(
       const patch: Partial<ScheduleEntry> = {}
       const data = body.data
       if (data.cron !== undefined) patch.cron = data.cron
-      if (data.projectId !== undefined) patch.projectId = data.projectId
+      if (data.projectId !== undefined) {
+        // Same guard as create. NEW-3 was filed against POST, but a PATCH that
+        // repoints a working schedule at a project that does not exist breaks
+        // it in exactly the same way and just as silently — fixing only the
+        // half that was measured would leave the hole open under a second verb.
+        const absent = await missingProject(data.projectId)
+        if (absent) return reply.code(404).send({ error: absent })
+        patch.projectId = data.projectId
+      }
       if (data.template !== undefined) patch.template = data.template
       if (data.prompt !== undefined) patch.prompt = data.prompt
       if (data.vars !== undefined) patch.vars = data.vars

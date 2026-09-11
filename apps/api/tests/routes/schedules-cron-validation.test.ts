@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import YAML from 'yaml'
 import { schedulesPlugin, isValidCron } from '../../src/routes/schedules.js'
+import { ProjectRegistry } from '../../src/domain/project-registry.js'
 import { Scheduler, type ScheduleEntry } from '../../src/domain/scheduler.js'
 
 /**
@@ -21,6 +22,30 @@ let app: ReturnType<typeof Fastify>
 
 const VALID = '0 9 * * 1'
 const PROJECT = '11111111-1111-4111-8111-111111111111'
+
+/** The routes now refuse a `projectId` that names nothing (NEW-3), so the
+ *  fixture project has to exist on disk. Written straight into the registry's
+ *  directory rather than through `create()`, which insists on a real writable
+ *  workspace path these tests have no use for. */
+function seedProject(dataDir: string, id: string): ProjectRegistry {
+  const dir = path.join(dataDir, 'projects')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(
+    path.join(dir, `${id}.json`),
+    JSON.stringify({
+      id,
+      name: 'fixture',
+      path: dataDir,
+      agentType: 'claude',
+      group: null,
+      tags: [],
+      createdAt: new Date().toISOString(),
+      config: {},
+    }),
+  )
+  return new ProjectRegistry(dataDir)
+}
+
 
 /** Expressions cron-parser accepts but a schedule must not carry. */
 const REJECTED: Array<[string, string]> = [
@@ -41,7 +66,7 @@ async function boot() {
     { parseAs: 'string' },
     (_req, body, done) => done(null, body),
   )
-  await app.register(schedulesPlugin(scheduler, { enableHeadlessMode: true }))
+  await app.register(schedulesPlugin(scheduler, seedProject(tmpDir, PROJECT), { enableHeadlessMode: true }))
   await app.ready()
 }
 

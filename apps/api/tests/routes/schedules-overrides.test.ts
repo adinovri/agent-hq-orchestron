@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import YAML from 'yaml'
 import { schedulesPlugin } from '../../src/routes/schedules.js'
+import { ProjectRegistry } from '../../src/domain/project-registry.js'
 import { Scheduler, type ScheduleEntry } from '../../src/domain/scheduler.js'
 
 let tmpDir: string
@@ -14,6 +15,30 @@ let fetchSpy: ReturnType<typeof vi.fn>
 
 const CRON = '0 9 * * 1'
 const PROJECT = '11111111-1111-4111-8111-111111111111'
+
+/** The routes now refuse a `projectId` that names nothing (NEW-3), so the
+ *  fixture project has to exist on disk. Written straight into the registry's
+ *  directory rather than through `create()`, which insists on a real writable
+ *  workspace path these tests have no use for. */
+function seedProject(dataDir: string, id: string): ProjectRegistry {
+  const dir = path.join(dataDir, 'projects')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(
+    path.join(dir, `${id}.json`),
+    JSON.stringify({
+      id,
+      name: 'fixture',
+      path: dataDir,
+      agentType: 'claude',
+      group: null,
+      tags: [],
+      createdAt: new Date().toISOString(),
+      config: {},
+    }),
+  )
+  return new ProjectRegistry(dataDir)
+}
+
 
 /** Build the plugin against a fresh Scheduler. `headless` mirrors the global
  *  kill switch — the whole point of most of these cases. */
@@ -27,7 +52,7 @@ async function boot(headless: boolean) {
     { parseAs: 'string' },
     (_req, body, done) => done(null, body),
   )
-  await app.register(schedulesPlugin(scheduler, { enableHeadlessMode: headless }))
+  await app.register(schedulesPlugin(scheduler, seedProject(tmpDir, PROJECT), { enableHeadlessMode: headless }))
   await app.ready()
 }
 
