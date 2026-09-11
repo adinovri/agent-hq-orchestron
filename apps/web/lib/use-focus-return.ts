@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { scheduleFocusReturn } from './focus-return'
-import type { DocumentLike } from './focus-return'
+import { createFocusReturnLifecycle, scheduleFocusReturn } from './focus-return'
+import type { DocumentLike, FocusReturnLifecycle } from './focus-return'
 import { createFocusOriginTracker } from './focus-origin'
 import type { FocusOriginHost, FocusOriginTracker } from './focus-origin'
 
@@ -19,8 +19,20 @@ function focusOriginTracker(): FocusOriginTracker {
   return tracker
 }
 
+/** Begin one return against the live document. */
+function startFocusReturn(): () => void {
+  return scheduleFocusReturn(
+    focusOriginTracker().current(),
+    document as unknown as DocumentLike,
+    (fn, ms) => {
+      const id = window.setTimeout(fn, ms)
+      return () => window.clearTimeout(id)
+    },
+  )
+}
+
 /**
- * Give one dialog somewhere to put focus when it closes (NF28).
+ * Give one dialog somewhere to put focus when it closes (NF28, NF29).
  *
  * Call it with the same `open` the dialog renders from, next to
  * `useDialogDismiss` in a hand-rolled dialog or next to `createOpenChangeGuard`
@@ -30,36 +42,35 @@ function focusOriginTracker(): FocusOriginTracker {
  * already.
  *
  * What it guarantees is narrow and worth stating exactly: **after this dialog
- * closes, focus is not left on `<body>`.** It does not take focus management
- * away from Base UI and it does not run at all if something already put focus
- * somewhere real — so on the paths that were never broken (Escape, Cancel,
- * Tab) it is a property read and nothing more.
+ * closes, focus is not left on `<body>`** — including when closing it was the
+ * prelude to navigating away from the page it lived on. It does not take focus
+ * management away from Base UI and it does not run at all if something already
+ * put focus somewhere real — so on the paths that were never broken (Escape,
+ * Cancel, Tab) it is a property read and nothing more.
+ *
+ * The hook is only the adapter. Which close starts a return, and what may call
+ * one off, is `createFocusReturnLifecycle` — where it can be tested without a
+ * renderer, and where the reason unmount does not cancel is written down.
  */
 export function useFocusReturn(open: boolean): void {
-  /** Whether this dialog has actually been on screen. Without it every
-   *  always-mounted dialog would audit on page load — and the session page
-   *  mounts four of them closed, all of which would race to pull focus onto
-   *  `<main>` before the operator had touched anything. */
-  const wasShownRef = useRef(false)
+  const lifecycleRef = useRef<FocusReturnLifecycle | null>(null)
 
+  // Declared before the `open` effect so that its cleanup runs first on
+  // unmount: `dispose` reads the origin tracker, and `release` is what empties
+  // it when the last dialog lets go.
   useEffect(() => {
     if (typeof document === 'undefined') return
-    return focusOriginTracker().retain()
+    const release = focusOriginTracker().retain()
+    return () => {
+      lifecycleRef.current?.dispose()
+      release()
+    }
   }, [])
 
   useEffect(() => {
-    if (open) {
-      wasShownRef.current = true
-      return
-    }
-    if (!wasShownRef.current) return
-    wasShownRef.current = false
     if (typeof document === 'undefined') return
-
-    const origin = focusOriginTracker().current()
-    return scheduleFocusReturn(origin, document as unknown as DocumentLike, (fn, ms) => {
-      const id = window.setTimeout(fn, ms)
-      return () => window.clearTimeout(id)
-    })
+    // No cleanup, deliberately — see `createFocusReturnLifecycle` (NF29).
+    lifecycleRef.current ??= createFocusReturnLifecycle(startFocusReturn)
+    lifecycleRef.current.sync(open)
   }, [open])
 }

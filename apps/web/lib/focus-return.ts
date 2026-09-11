@@ -209,3 +209,101 @@ export function scheduleFocusReturn(
     for (const cancel of cancels) cancel()
   }
 }
+
+/**
+ * The bookkeeping around `scheduleFocusReturn`: when a close actually starts a
+ * return, and what is allowed to call one off (NF29).
+ *
+ * The passes above are scheduled from a `useEffect` that watches `open`, and
+ * the first cut of that effect returned the cancel as its cleanup. That reads
+ * correctly — "this dialog's close is no longer the current state of affairs,
+ * drop its scheduled work" — and it is wrong for the one shape that needed the
+ * return most.
+ *
+ * A React effect cleanup fires for two quite different reasons and cannot tell
+ * them apart from the inside: the effect is re-running with new deps, or the
+ * component is going away. Three dialogs close and navigate in the same
+ * callback:
+ *
+ *     setDeleteOpen(false)          // Delete Record
+ *     router.push('/dashboard')
+ *
+ * So `open` flips false, the effect re-runs and schedules both passes — and
+ * then the route transition lands, the page that owns the dialog unmounts, the
+ * cleanup runs, and both passes are cancelled some milliseconds before the
+ * first of them was due. Focus stays on `<body>`, which is where step 2 of the
+ * story at the top of this file left it. Instrumenting `setTimeout` and
+ * `clearTimeout` across the ten dialogs showed exactly that split: one pass
+ * cleared on Spawn, Delete Record and Fork, none cleared on the dialogs whose
+ * success stays on the page, and only the latter ever recovered.
+ *
+ * The `<main>` fallback was not broken — it never got a turn.
+ *
+ * The fix is to stop treating unmount as a reason to cancel, because it is
+ * not one. A scheduled return is invalidated by exactly one event: **the same
+ * dialog opening again** before the passes land, which is the case the cancel
+ * was written for ("does not yank focus out of its own reopened self"). A
+ * dialog that has gone away cannot reopen, has no focus of its own to protect,
+ * and is precisely the case where the operator is left with nothing.
+ *
+ * So the cancel moves from the cleanup to the reopen, and unmount gets the
+ * opposite treatment: if the dialog is torn down while still on screen — a
+ * navigation that never bothered to close it — that is a close that never got
+ * announced, and it schedules a return rather than cancelling one.
+ *
+ * The passes outliving their component is the point, and it is bounded: the
+ * last of them is due 250ms later, both are no-ops unless focus is adrift, and
+ * both resolve their target against the live document rather than anything
+ * captured from the page that is gone. `<main>` lives in `app/layout.tsx` and
+ * survives the route change, so by the time the second pass runs it is the new
+ * route's main content that focus lands in — the honest answer for an action
+ * whose whole purpose was to take the operator somewhere else.
+ */
+export interface FocusReturnLifecycle {
+  /** Called with the dialog's `open` every time it changes, and once on mount. */
+  sync(open: boolean): void
+  /** Called once, when the dialog is unmounted. Never cancels. */
+  dispose(): void
+}
+
+/**
+ * @param startReturn Begins one return and hands back its cancel — in the app,
+ *   `scheduleFocusReturn` bound to the live document. Injected so the whole
+ *   lifecycle is reachable from a `node` vitest with a fake clock.
+ */
+export function createFocusReturnLifecycle(startReturn: () => () => void): FocusReturnLifecycle {
+  /** Has this dialog actually been on screen? Without it every always-mounted
+   *  dialog would return focus on page load — and the session page mounts four
+   *  of them closed, all of which would race to pull focus onto `<main>`
+   *  before the operator had touched anything. */
+  let wasShown = false
+  let cancelPending: (() => void) | null = null
+
+  /** One close, however it was signalled. */
+  const closed = (): void => {
+    wasShown = false
+    cancelPending = startReturn()
+  }
+
+  return {
+    sync(open: boolean): void {
+      if (open) {
+        // The only event that invalidates a return in flight. Calling a cancel
+        // whose passes have already run is a no-op, so there is no need to
+        // track whether this one is still live.
+        cancelPending?.()
+        cancelPending = null
+        wasShown = true
+        return
+      }
+      if (!wasShown) return
+      closed()
+    },
+    dispose(): void {
+      // Deliberately no `cancelPending?.()`: a return already scheduled by a
+      // close is exactly what NF29 was cancelling, and it has to survive this.
+      if (!wasShown) return
+      closed()
+    },
+  }
+}
