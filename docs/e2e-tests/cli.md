@@ -518,21 +518,40 @@ override fields.
 
 ---
 
-## Known gaps
+## Resolved gaps
 
-Recorded during the CLI parity batch, not defects in these scenarios:
+Recorded during the CLI parity batch and closed in the follow-up. The
+rule applied to all three: the API is the contract, and the CLI stops
+offering surface the API does not have.
 
-- **`--group` on session commands does not exist.** Sessions have no
-  group field — `SessionMetadata` carries none, and the dashboard's
-  "group by project" control is a client-side view toggle over
-  `projectId`. Grouping lives on the **project** (`project add/edit
-  --group`). A session-level group would be an API and schema change.
-- **`session mark-success` is an alias of `session archive`.** There is
-  one endpoint; `POST /api/sessions/:uuid/archive` transitions through
-  `completing` to `succeeded`, which is the state the web UI's
-  mark-done button produces. Both spellings resolve there.
-- **The `effort` enum differs by endpoint.** Spawn accepts all six
-  (`low|medium|high|xhigh|max|ultra`); `adopt` rejects `xhigh` and
-  `max`; the revival and metadata routes reject `ultra`. The CLI passes
-  the value through, so the 400 comes from the server. Worth
-  reconciling in the API, not in the CLI.
+- **`--group` on session commands does not exist — and stays that way.**
+  `SessionMetadata` carries no group field and `SpawnSessionBodySchema`
+  does not accept one, so zod would have stripped it and the flag would
+  have silently done nothing. The dashboard's "group by project" control
+  is a client-side view toggle over `projectId`. Grouping lives on the
+  **project** (`project add/edit/list --group`). A session-level group
+  would be an API and schema change, not a CLI one.
+- **`session mark-success` is gone.** `POST /api/sessions/:uuid/archive`
+  takes no body: no `success` flag, no second endpoint. It transitions
+  through `completing` to `succeeded`, which is the state the web UI's
+  mark-done button produces. One endpoint, one verb — `session archive`.
+- **The `effort` enum differs by endpoint, and the CLI now says so.**
+  Spawn accepts all six (`low|medium|high|xhigh|max|ultra`); `adopt`
+  rejects `xhigh` and `max`; the revival and metadata routes reject
+  `ultra`. The CLI validates against the target route's list *before*
+  sending, so an unaccepted level costs no request and reports which
+  levels that command takes, instead of a flattened zod dump that reads
+  like a typo. See §10.2 of `docs/USAGE.md` for the table. Reconciling
+  the enums server-side would let the table collapse to one list; until
+  then the CLI mirrors what is there.
+
+## Regression coverage
+
+`apps/cli/tests/live-api.test.ts` runs the binary against the API's own
+route plugins on a real socket — not the hand-written stub `wire.test.ts`
+uses. That stub is why `session list` and `project list` shipped broken:
+both routes answer `{ sessions: [...] }` / `{ projects: [...] }`, the CLI
+destructured a bare array, and 42 wire tests stayed green while every
+real invocation died. The live-API file also pushes a >64 KiB document
+through a genuine shell pipe, which is where a lost stdout flush
+(`process.exit` instead of `process.exitCode`) stops being invisible.

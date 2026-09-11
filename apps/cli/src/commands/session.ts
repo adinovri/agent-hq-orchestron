@@ -300,15 +300,17 @@ export function registerSession(program: Command): void {
 
   // ── lifecycle ───────────────────────────────────────────────────────────
 
-  // Archive IS the "mark done" action — the API transitions the record
-  // through completing to `succeeded`, which is the terminal state the web
-  // UI's "Mark success" button produces. There is no second endpoint; the
-  // alias exists so both names a caller might reach for resolve here rather
-  // than one of them silently not existing.
+  // Archive IS the "mark done" action — `POST /api/sessions/:uuid/archive`
+  // transitions the record through completing to `succeeded`, which is the
+  // terminal state the web UI's "Mark success" button produces.
+  //
+  // The route takes no body at all: there is no `success` flag and no second
+  // endpoint, so a `mark-success` verb would be a name the API does not have,
+  // implying a distinction it cannot make. It shipped briefly as an alias and
+  // is gone again — one endpoint, one verb.
   withCommonOptions(
     session
       .command('archive <id>')
-      .alias('mark-success')
       .description('Soft-close a session: kill its tmux and mark it succeeded'),
   ).action(
     action(async (id: string, opts: CommonOpts) => {

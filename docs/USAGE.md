@@ -1612,7 +1612,7 @@ orchestron session respawn "$ID" --tmux
 
 # Edit + close
 orchestron session metadata "$ID" --model claude-opus-5 --effort high
-orchestron session archive "$ID"                      # alias: mark-success
+orchestron session archive "$ID"                      # the "mark success" action
 orchestron session kill "$ID"
 orchestron session rm "$ID"                           # delete the record
 
@@ -1643,13 +1643,41 @@ The bundle format follows the session's harness and transcript — raw
 a codex TUI-only session — so `--format` only fails the command when
 what arrived is not what the next step was written for.
 
-`session archive` and `session mark-success` are the same endpoint:
-`POST /api/sessions/:uuid/archive` transitions the record through
-`completing` to `succeeded`.
+`session archive` **is** the "mark success" action. It posts to
+`POST /api/sessions/:uuid/archive`, which transitions the record through
+`completing` to `succeeded` — the same terminal state the dashboard's
+"Mark success" button produces. The route accepts no body: there is no
+`success` flag and no second endpoint, so there is no `mark-success`
+verb either. It shipped briefly as an alias and was removed, because a
+second name implied a distinction the API cannot make.
 
-There is **no** session-level `--group`. Groups live on projects
-(`project add --group`, `project edit --group`); the dashboard's
+There is **no** session-level `--group`. `SessionMetadata` has no such
+field and `SpawnSessionBodySchema` does not accept one, so a
+`--group` on `session spawn` would have been stripped on the wire and
+done nothing. Groups live on projects (`project add --group`,
+`project edit --group`, `project list --group`); the dashboard's
 "group by project" control is a client-side view over `projectId`.
+
+##### Effort is not one enum
+
+`--effort` is validated **before** the request goes out, against the
+enum the target route actually accepts. There is no single list:
+
+| Command | Accepts |
+|---|---|
+| `session spawn` | `low` `medium` `high` `xhigh` `max` `ultra` |
+| `session reopen` / `respawn` / `fork` | …no `ultra` |
+| `session adopt` | …no `xhigh`, no `max` |
+| `session metadata` | …no `ultra` (plus `""` to clear) |
+| `schedule create` / `edit` | all six (plus `--clear-effort`) |
+| `project add` / `edit` (`--default-effort`) | all six |
+
+A level the route does not take is refused locally with the accepted
+list, and **no request is sent** — previously it came back as a
+flattened zod dump that read like a typo rather than a per-route
+difference. The lists are transcriptions of the API's zod enums and are
+asserted against the live routes in `apps/cli/tests/live-api.test.ts`;
+reconciling the enums server-side would let this table collapse.
 
 #### 10.3 Schedules
 
