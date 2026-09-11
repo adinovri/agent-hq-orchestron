@@ -18,13 +18,37 @@
 /**
  * Does a piece of assistant prose solicit the user?
  *
- * Cheap heuristic: ends with `?`, or contains a phrase people actually use
+ * Cheap heuristic: contains a `?`, or contains a phrase people actually use
  * when handing a decision back. It is deliberately not a parser — the cost of
  * a miss is a session that says `idle` instead of `needs_input`, and `idle`
  * accepts input too, so a false negative loses a badge rather than a turn.
+ *
+ * **Why a bare `?` and not an end-of-string anchor (NF19).** The first pattern
+ * used to be `/\?\s*$/`, a `?` anchored to the end of the *whole string*. A
+ * model that asks inside a numbered list and closes with a polite non-question
+ * sentence therefore read as "asked nothing". Measured over 6 runs of the
+ * official inquiry prompt, **3 genuine inquiries were discarded** and the one
+ * that survived did so by coincidence — its prose happened to contain the
+ * words *"would you like"*, while its sibling asked the same two questions in
+ * the same shape and was thrown away. Outcome decided by incidental diction is
+ * not a heuristic. A multiline anchor does **not** fix it: those question lines
+ * end in `)`, not `?`.
+ *
+ * The end-anchored pattern is kept below it — redundant for matching, but it
+ * is the shape the phrase list is documented against, and removing it would
+ * make this list read as though trailing `?` were never the point.
+ *
+ * **What this widening costs.** On the tmux path (`session-manager.ts`) this
+ * predicate reads the last assistant message directly, so a *rhetorical*
+ * question inside a finished summary ("Why did it fail? Stale config. Fixed.")
+ * now lands `needs_input` instead of `idle` — and `needs_input` is exempt from
+ * the idle sweeper, so such a session will not age out on its own. That is the
+ * accepted trade: a false keep costs a badge and a sweep exemption, a false
+ * discard costs the operator the question entirely. Pinned by test below.
  */
 export const QUESTION_PHRASES = [
-  /\?\s*$/,                         // ends with ?
+  /\?/,                            // a question mark anywhere — NF19
+  /\?\s*$/,                         // ends with ? (subsumed by the above)
   /would you like/i,
   /do you want/i,
   /should i /i,
