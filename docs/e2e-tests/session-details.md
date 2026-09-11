@@ -299,6 +299,8 @@ a value came from.
   range, not as something that grows with the session. Neither figure is
   wrong; they are simply not interchangeable, so reconciling them is not
   a bug hunt worth starting. **Gate budgets on `/api/metrics`.**
+  *Both ranges in this bullet, and their direction, are superseded — see
+  the post-batch-5 measurement two bullets down.*
 - **Both ranges above were measured against a broken endpoint.** Prior to
   the batch-5 fix, `/api/metrics` under-priced by 5-18.75x when the model
   changed mid-session, and double-counted headless assistant messages by
@@ -312,6 +314,21 @@ a value came from.
   measure the record against a figure that was itself wrong, and should
   be re-measured before either range is quoted again. The advice to gate
   budgets on `/api/metrics` holds from `bea9327` forward, not before it.
+- **Update 2026-09-11, post-batch-5 — the endpoint is the authority, and
+  the gap runs the other way.** After the NF9 dedup and NF10 per-event
+  pricing fixes, `/api/metrics` is authoritative for the token-based cost
+  Orchestron actually controls. The session record's `costUsd` is the
+  harness's `total_cost_usd` per `-p` envelope, which includes cache
+  reads, tool costs and other overhead the Orchestron price table does
+  not model. Re-measured against the fixed endpoint, the record sits
+  **+58–67% above** it: the record **over**-counts, the endpoint does not
+  under-count — the opposite of the sign recorded before the fix. This
+  is revision four of this note and the one to quote: `8169523`
+  (batch-3) stated the two figures are not interchangeable, `3414608`
+  (batch-4) dropped the "widens with turn count" claim, `7fdf409`
+  (batch-5) flagged that the ranges were measured against a broken
+  endpoint, and this entry supplies the corrected direction and
+  magnitude. **Use `/api/metrics` for budget gating.**
 - **Codex sessions have no cost.** Orchestron's pricing table carries
   Claude tier rates and no codex entries, because ChatGPT
   Plus/Pro/Enterprise is flat-rate bundled. Treat codex sessions as
