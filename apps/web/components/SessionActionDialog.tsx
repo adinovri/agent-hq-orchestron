@@ -7,6 +7,7 @@ import { modelsFor, effortsFor } from '@/lib/models'
 import { useHeadlessEnabled } from '@/lib/server-config'
 import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
 import type { SessionActionKind } from '@/lib/session-action-dialog'
+import { DialogError } from '@/components/ui/dialog-error'
 
 const KEEP: { value: ''; label: string } = { value: '', label: '— Default / keep' }
 
@@ -29,6 +30,10 @@ interface Props {
   onClose: () => void
   onConfirm: (opts: { model?: string; effort?: EffortLevel; prompt?: string; useTmux?: boolean }) => void
   pending?: boolean
+  /** Why the last attempt failed. `settleSessionAction` already kept the
+   *  dialog open on failure with the form intact; this is the half that was
+   *  missing — saying what went wrong (NF27). */
+  error?: string | null
 }
 
 interface ActionMeta {
@@ -74,7 +79,7 @@ const ACTION_META: Record<SessionActionKind, ActionMeta> = {
 
 export function SessionActionDialog({
   open, kind, agentType, currentModel, currentEffort, defaultModel, defaultEffort, currentUseTmux,
-  onClose, onConfirm, pending,
+  onClose, onConfirm, pending, error,
 }: Props) {
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
@@ -201,6 +206,8 @@ export function SessionActionDialog({
             </div>
           )}
         </div>
+
+        <DialogError message={error} />
 
         <div className="px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onClose} disabled={pending}>Cancel</Button>

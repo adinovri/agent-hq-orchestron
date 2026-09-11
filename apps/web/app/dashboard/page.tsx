@@ -13,6 +13,8 @@ import { ImportSessionDialog } from '@/components/ImportSessionDialog'
 import { SpawnActionsMenu } from '@/components/SpawnActionsMenu'
 import { SessionListSkeleton } from '@/components/Skeleton'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
+import { noticeMutationError } from '@/lib/notice'
+import { throwIfNotOk, mutationErrorMessage } from '@/lib/api-error'
 import type { SessionMetadata, ProjectMetadata } from '@agent-hq-orchestron/shared'
 import { Plus, Rocket, Inbox, Rows3, FolderTree } from 'lucide-react'
 import { useEffect } from 'react'
@@ -83,10 +85,14 @@ export default function DashboardPage() {
     },
   })
 
+  // Same NF27 shape as the session page's kill, minus a dialog: the row's
+  // Kill fires directly, so a 500 used to clear the spinner and leave the
+  // session exactly where it was with nothing said. There is no form to hold
+  // open here, so the reason goes to a toast.
   const killMutation = useMutation({
-    mutationFn: (id: string) =>
-      apiFetch(`/api/sessions/${id}`, { method: 'DELETE' }),
+    mutationFn: async (id: string) => { await throwIfNotOk(await apiFetch(`/api/sessions/${id}`, { method: 'DELETE' })) },
     onMutate: (id) => setKillingIds((s) => new Set(s).add(id)),
+    onError: (err) => noticeMutationError('Kill', mutationErrorMessage(err)),
     onSettled: (_, __, id) => {
       setKillingIds((s) => { const n = new Set(s); n.delete(id); return n })
       qc.invalidateQueries({ queryKey: ['sessions'] })

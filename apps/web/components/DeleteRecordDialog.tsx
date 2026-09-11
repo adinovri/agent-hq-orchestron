@@ -1,9 +1,11 @@
 'use client'
 
-import { X, Trash2, AlertTriangle, Loader2 } from 'lucide-react'
+import { Trash2, AlertTriangle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { SessionMetadata } from '@agent-hq-orchestron/shared'
 import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
+import { DialogCloseButton } from '@/components/ui/dialog-close-button'
+import { DialogError } from '@/components/ui/dialog-error'
 
 interface Props {
   open: boolean
@@ -12,9 +14,11 @@ interface Props {
   onClose: () => void
   onConfirm: () => void
   deleting: boolean
+  /** Why the last delete failed. Kept on screen with the dialog (NF27). */
+  error?: string | null
 }
 
-export function DeleteRecordDialog({ open, session, workspacePath, onClose, onConfirm, deleting }: Props) {
+export function DeleteRecordDialog({ open, session, workspacePath, onClose, onConfirm, deleting, error }: Props) {
   // Not while the delete is running — Cancel is disabled then too, and the
   // backdrop and the × are held to the same answer (NF25).
   const dismiss = useDialogDismiss(open && !deleting, onClose)
@@ -40,14 +44,7 @@ export function DeleteRecordDialog({ open, session, workspacePath, onClose, onCo
             <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
             <h2 className="text-base font-semibold">Delete orchestron record</h2>
           </div>
-          <button
-            onClick={dismiss.onCloseButtonClick}
-            disabled={deleting}
-            aria-label="Close"
-            className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <DialogCloseButton guard={dismiss.closeButton} onClick={dismiss.onCloseButtonClick} />
         </div>
 
         <div className="px-4 py-3 space-y-3 text-sm">
@@ -87,6 +84,8 @@ export function DeleteRecordDialog({ open, session, workspacePath, onClose, onCo
             workspace <code className="font-mono">{workspacePath ?? session.projectId}</code>.
           </p>
         </div>
+
+        <DialogError message={error} />
 
         <div className="px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onClose} disabled={deleting}>

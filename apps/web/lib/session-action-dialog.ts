@@ -57,11 +57,13 @@ export function confirmSessionAction(
  *
  * A failed action leaves it open, which is what the siblings do: the form
  * still holds what was typed, so the operator can retry without rebuilding it.
- * Note the gap this inherits rather than introduces — none of the mutations on
- * this page has an `onError`, so a failure leaves the dialog open with the
- * button back to `Reopen` and nothing said about why. Uniform across all four
- * dialogs, and out of scope here; surfacing mutation errors in the web UI is
- * its own piece of work.
+ *
+ * That "nothing said about why" this used to note as an inherited gap is
+ * closed (NF27): each of the three mutations now has an `onError` that puts
+ * the API's own message in the dialog's `error` prop, next to the button the
+ * operator is about to press again. Calling this with `'error'` stays part of
+ * that path — it is how the caller says "settled, do not close" in the same
+ * breath as setting the message, rather than by omitting a branch.
  */
 export function settleSessionAction(
   outcome: 'success' | 'error',

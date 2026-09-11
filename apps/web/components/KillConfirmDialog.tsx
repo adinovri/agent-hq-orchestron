@@ -9,6 +9,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { createOpenChangeGuard } from '@/lib/dialog-dismiss'
+import { DialogError } from '@/components/ui/dialog-error'
 
 interface Props {
   open: boolean
@@ -16,16 +17,19 @@ interface Props {
   onConfirm: () => void
   descendantCount: number
   killing: boolean
+  /** Why the last attempt failed, if it did. The dialog stays open on
+   *  failure so the operator can retry; this is what tells them to (NF27). */
+  error?: string | null
 }
 
-export function KillConfirmDialog({ open, onClose, onConfirm, descendantCount, killing }: Props) {
+export function KillConfirmDialog({ open, onClose, onConfirm, descendantCount, killing, error }: Props) {
   // Base UI routes Escape, the backdrop and its own × through one
   // `onOpenChange`. Guarding it there is how this dialog says the same "not
   // mid-kill" that its disabled Cancel already says; the dialog is controlled,
   // so a refused change leaves `open` true and the dialog on screen (NF25).
   return (
     <Dialog open={open} onOpenChange={createOpenChangeGuard(!killing, onClose)}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-sm" closeDisabled={killing}>
         <DialogHeader>
           <DialogTitle>Kill session?</DialogTitle>
         </DialogHeader>
@@ -35,6 +39,7 @@ export function KillConfirmDialog({ open, onClose, onConfirm, descendantCount, k
             <> It has <strong>{descendantCount}</strong> descendant session{descendantCount !== 1 ? 's' : ''} that will also be killed.</>
           )}
         </p>
+        <DialogError message={error} />
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={killing}>Cancel</Button>
           <Button

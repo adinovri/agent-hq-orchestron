@@ -23,31 +23,56 @@ export function NoticeToast() {
   )
 }
 
+/**
+ * Per-tone presentation. A table rather than the pair of ternaries this used
+ * to be: those read the tone five times to answer one question, and a third
+ * tone (NF27's failures) would have made it eight.
+ *
+ * 'error' is assertive rather than polite — a screen reader should not sit on
+ * "Kill failed" until the user happens to move focus.
+ */
+const TONES: Record<Notice['tone'], {
+  shell: string; icon: string; body: string; sub: string
+  Glyph: typeof Info; live: 'polite' | 'assertive'
+}> = {
+  info: {
+    shell: 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800',
+    icon: 'text-blue-600 dark:text-blue-400',
+    body: 'text-zinc-800 dark:text-zinc-100',
+    sub: 'text-zinc-500 dark:text-zinc-400',
+    Glyph: Info,
+    live: 'polite',
+  },
+  warn: {
+    shell: 'bg-amber-50 dark:bg-amber-950 border-amber-300 dark:border-amber-800',
+    icon: 'text-amber-600 dark:text-amber-400',
+    body: 'text-amber-900 dark:text-amber-100',
+    sub: 'text-amber-700 dark:text-amber-300',
+    Glyph: AlertCircle,
+    live: 'polite',
+  },
+  error: {
+    shell: 'bg-red-50 dark:bg-red-950 border-red-300 dark:border-red-800',
+    icon: 'text-red-600 dark:text-red-400',
+    body: 'text-red-900 dark:text-red-100',
+    sub: 'text-red-700 dark:text-red-300',
+    Glyph: AlertCircle,
+    live: 'assertive',
+  },
+}
+
 function Row({ notice }: { notice: Notice }) {
   useEffect(() => {
     const t = setTimeout(() => dismissNotice(notice.id), NOTICE_TTL_MS)
     return () => clearTimeout(t)
   }, [notice.id])
 
-  const warn = notice.tone === 'warn'
-  const shell = warn
-    ? 'bg-amber-50 dark:bg-amber-950 border-amber-300 dark:border-amber-800'
-    : 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800'
-  const icon = warn
-    ? 'text-amber-600 dark:text-amber-400'
-    : 'text-blue-600 dark:text-blue-400'
-  const body = warn
-    ? 'text-amber-900 dark:text-amber-100'
-    : 'text-zinc-800 dark:text-zinc-100'
-  const sub = warn
-    ? 'text-amber-700 dark:text-amber-300'
-    : 'text-zinc-500 dark:text-zinc-400'
-  const Glyph = warn ? AlertCircle : Info
+  const { shell, icon, body, sub, Glyph, live } = TONES[notice.tone]
 
   return (
     <div
       role="status"
-      aria-live="polite"
+      aria-live={live}
       className={`border rounded-lg shadow-lg p-3 flex items-start gap-2 ${shell}`}
     >
       <Glyph className={`w-4 h-4 mt-0.5 shrink-0 ${icon}`} />

@@ -19,9 +19,12 @@ export interface Notice {
   text: string
   /** Optional second line, smaller — a hint or a pointer at config. */
   detail?: string
-  /** 'info' reads neutral, 'warn' amber. Coercions are warnings: nothing
-   *  failed, but the user got something other than what they configured. */
-  tone: 'info' | 'warn'
+  /** 'info' reads neutral, 'warn' amber, 'error' red. Coercions are
+   *  warnings: nothing failed, but the user got something other than what
+   *  they configured. 'error' is for a request that did not happen at all —
+   *  an action with no dialog to keep open has nowhere else to say so
+   *  (NF27). */
+  tone: 'info' | 'warn' | 'error'
 }
 
 /** How long a notice stays up before it retires itself. Long enough to read
@@ -122,4 +125,20 @@ export function noticeIfCoerced(body: unknown): void {
     detail: HEADLESS_COERCED_DETAIL,
     tone: 'warn',
   })
+}
+
+/**
+ * Report a mutation that failed, for an action with no dialog of its own.
+ *
+ * Archive (the header's ✓, "mark as succeeded") and the dashboard's per-row
+ * Kill both fire straight from a button. There is no form left on screen to
+ * hold an inline error, so before NF27 a 500 from either was completely
+ * invisible: the spinner stopped, the row did not change, and nothing said
+ * why. The toast is the smallest surface that can carry the reason.
+ *
+ * Dialog-bearing mutations do not use this — they keep the dialog open and
+ * put the same message inside it, next to the retry button.
+ */
+export function noticeMutationError(action: string, detail: string): number {
+  return pushNotice(`${action} failed.`, { detail, tone: 'error' })
 }

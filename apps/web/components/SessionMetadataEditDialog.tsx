@@ -6,6 +6,7 @@ import type { AgentType, EffortLevel, SessionStatus } from '@agent-hq-orchestron
 import { modelsFor, effortsFor } from '@/lib/models'
 import { useHeadlessEnabled } from '@/lib/server-config'
 import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
+import { DialogError } from '@/components/ui/dialog-error'
 
 const RESET: { value: ''; label: string } = { value: '', label: '— Reset to project default' }
 
@@ -29,6 +30,9 @@ interface Props {
   defaultModel?: string           // project default (shown as fallback hint)
   defaultEffort?: string
   pending?: boolean
+  /** Why the last save failed. Same contract as the lifecycle dialogs: the
+   *  dialog stays open with the form intact, and this says why (NF27). */
+  error?: string | null
   onClose: () => void
   onConfirm: (opts: { model?: string; effort?: EffortLevel | ''; useTmux?: boolean }) => void
 }
@@ -39,7 +43,7 @@ interface Props {
  *  when session state has no live tmux (terminal or sleeping). */
 export function SessionMetadataEditDialog({
   open, agentType, status, currentModel, currentEffort, currentUseTmux, defaultModel, defaultEffort,
-  pending, onClose, onConfirm,
+  pending, error, onClose, onConfirm,
 }: Props) {
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
@@ -168,6 +172,8 @@ export function SessionMetadataEditDialog({
             </div>
           )}
         </div>
+
+        <DialogError message={error} />
 
         <div className="px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onClose} disabled={pending}>Cancel</Button>

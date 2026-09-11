@@ -14,7 +14,8 @@ import { InquiryCard } from '@/components/InquiryCard'
 import { DeleteRecordDialog } from '@/components/DeleteRecordDialog'
 import { SessionMetadataEditDialog } from '@/components/SessionMetadataEditDialog'
 import { fetchJson, apiFetch } from '@/lib/fetcher'
-import { noticeIfCoerced } from '@/lib/notice'
+import { noticeIfCoerced, noticeMutationError } from '@/lib/notice'
+import { throwIfNotOk, mutationErrorMessage } from '@/lib/api-error'
 import { confirmSessionAction, settleSessionAction } from '@/lib/session-action-dialog'
 import {
   resolveInquiryCard,
@@ -40,6 +41,12 @@ export default function SessionDetailPage({ params }: PageProps) {
   const [deletingRecord, setDeletingRecord] = useState(false)
   const [editMetaOpen, setEditMetaOpen] = useState(false)
   const [answeredInquiry, setAnsweredInquiry] = useState<AnsweredInquiry | null>(null)
+  // Per-dialog last-failure text. Cleared in `onMutate` so a retry does not
+  // start with the previous attempt's message still under the button (NF27).
+  const [killError, setKillError] = useState<string | null>(null)
+  const [deleteRecordError, setDeleteRecordError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [editMetaError, setEditMetaError] = useState<string | null>(null)
 
   const { data: session, isLoading } = useQuery<SessionMetadata>({
     queryKey: ['session', uuid],
@@ -100,20 +107,32 @@ export default function SessionDetailPage({ params }: PageProps) {
     return () => clearTimeout(timer)
   }, [answeredInquiry, pendingInquiry])
 
+  // NF27. This used to be the most misleading mutation on the page: no
+  // `res.ok` check, so react-query treated a 500 as a fulfilled promise, and
+  // `setKillOpen(false)` sat in `onSettled`, which runs on both outcomes. A
+  // failed kill therefore closed the dialog exactly like a successful one and
+  // left the session running, with the only trace in the network tab. Closing
+  // is `onSuccess`'s job; `onSettled` keeps only what is true either way.
   const killMutation = useMutation({
-    mutationFn: () => apiFetch(`/api/sessions/${uuid}`, { method: 'DELETE' }),
-    onMutate: () => setKilling(true),
+    mutationFn: async () => { await throwIfNotOk(await apiFetch(`/api/sessions/${uuid}`, { method: 'DELETE' })) },
+    onMutate: () => { setKilling(true); setKillError(null) },
+    onSuccess: () => setKillOpen(false),
+    onError: (err) => setKillError(mutationErrorMessage(err)),
     onSettled: () => {
       setKilling(false)
-      setKillOpen(false)
       qc.invalidateQueries({ queryKey: ['session', uuid] })
       qc.invalidateQueries({ queryKey: ['sessions'] })
     },
   })
 
+  // Fires straight from the header's ✓ — there is no dialog to keep open, so
+  // a failure says so in a toast. Before NF27 it had no `res.ok` check either:
+  // a 409 ("Cannot archive a running session") stopped the spinner, changed
+  // nothing, and explained nothing.
   const archiveMutation = useMutation({
-    mutationFn: () => apiFetch(`/api/sessions/${uuid}/archive`, { method: 'POST' }),
+    mutationFn: async () => { await throwIfNotOk(await apiFetch(`/api/sessions/${uuid}/archive`, { method: 'POST' })) },
     onMutate: () => setArchiving(true),
+    onError: (err) => noticeMutationError('Mark as succeeded', mutationErrorMessage(err)),
     onSettled: () => {
       setArchiving(false)
       qc.invalidateQueries({ queryKey: ['session', uuid] })
@@ -123,11 +142,11 @@ export default function SessionDetailPage({ params }: PageProps) {
 
   const deleteRecordMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiFetch(`/api/sessions/${uuid}/record`, { method: 'DELETE' })
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      const res = await throwIfNotOk(await apiFetch(`/api/sessions/${uuid}/record`, { method: 'DELETE' }))
       return res.json()
     },
-    onMutate: () => setDeletingRecord(true),
+    onMutate: () => { setDeletingRecord(true); setDeleteRecordError(null) },
+    onError: (err) => setDeleteRecordError(mutationErrorMessage(err)),
     onSuccess: () => {
       setDeleteOpen(false)
       qc.invalidateQueries({ queryKey: ['sessions'] })
@@ -140,15 +159,18 @@ export default function SessionDetailPage({ params }: PageProps) {
 
   const reopenMutation = useMutation({
     mutationFn: async (opts: { model?: string; effort?: EffortLevel; useTmux?: boolean } = {}) => {
-      const res = await apiFetch(`/api/sessions/${uuid}/reopen`, {
+      const res = await throwIfNotOk(await apiFetch(`/api/sessions/${uuid}/reopen`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(opts),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      }))
       return res.json() as Promise<SessionMetadata>
     },
-    onMutate: () => setReopening(true),
+    onMutate: () => { setReopening(true); setActionError(null) },
+    onError: (err) => {
+      setActionError(mutationErrorMessage(err))
+      settleSessionAction('error', () => setActionDialog(null))
+    },
     // Reopening a headless session while the switch is off brings it back in
     // tmux — worth saying, since the dialog did not offer the choice.
     onSuccess: (data) => {
@@ -164,15 +186,18 @@ export default function SessionDetailPage({ params }: PageProps) {
 
   const cloneMutation = useMutation({
     mutationFn: async (opts: { prompt?: string; model?: string; effort?: EffortLevel; useTmux?: boolean } = {}) => {
-      const res = await apiFetch(`/api/sessions/${uuid}/clone`, {
+      const res = await throwIfNotOk(await apiFetch(`/api/sessions/${uuid}/clone`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(opts),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      }))
       return res.json() as Promise<SessionMetadata>
     },
-    onMutate: () => setCloning(true),
+    onMutate: () => { setCloning(true); setActionError(null) },
+    onError: (err) => {
+      setActionError(mutationErrorMessage(err))
+      settleSessionAction('error', () => setActionDialog(null))
+    },
     onSuccess: (data) => {
       noticeIfCoerced(data)
       settleSessionAction('success', () => setActionDialog(null))
@@ -185,14 +210,15 @@ export default function SessionDetailPage({ params }: PageProps) {
 
   const editMetadataMutation = useMutation({
     mutationFn: async (opts: { model?: string; effort?: EffortLevel | ''; useTmux?: boolean }) => {
-      const res = await apiFetch(`/api/sessions/${uuid}`, {
+      const res = await throwIfNotOk(await apiFetch(`/api/sessions/${uuid}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(opts),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      }))
       return res.json() as Promise<SessionMetadata>
     },
+    onMutate: () => setEditMetaError(null),
+    onError: (err) => setEditMetaError(mutationErrorMessage(err)),
     onSuccess: (data) => {
       // Saved as tmux when the global headless switch is off — say so
       // rather than letting the record silently disagree with the request.
@@ -206,15 +232,18 @@ export default function SessionDetailPage({ params }: PageProps) {
   const [respawning, setRespawning] = useState(false)
   const respawnMutation = useMutation({
     mutationFn: async (opts: { model?: string; effort?: EffortLevel; useTmux?: boolean } = {}) => {
-      const res = await apiFetch(`/api/sessions/${uuid}/respawn`, {
+      const res = await throwIfNotOk(await apiFetch(`/api/sessions/${uuid}/respawn`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(opts),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)
+      }))
       return res.json() as Promise<SessionMetadata>
     },
-    onMutate: () => setRespawning(true),
+    onMutate: () => { setRespawning(true); setActionError(null) },
+    onError: (err) => {
+      setActionError(mutationErrorMessage(err))
+      settleSessionAction('error', () => setActionDialog(null))
+    },
     onSuccess: (data) => {
       // Respawn is the lifecycle action that migrates a headless record to
       // tmux while the switch is off, so it is the one most likely to
@@ -271,15 +300,15 @@ export default function SessionDetailPage({ params }: PageProps) {
         descendantCount={descendantCount}
         parentPrompt={parentPrompt || undefined}
         readOnly={readOnly}
-        onKill={() => setKillOpen(true)}
+        onKill={() => { setKillError(null); setKillOpen(true) }}
         onArchive={() => {
           if (confirm('Mark this session as succeeded? Tmux will be terminated and the transcript will remain read-only for review.')) {
             archiveMutation.mutate()
           }
         }}
-        onReopen={() => setActionDialog('reopen')}
-        onClone={() => setActionDialog('fork')}
-        onRespawn={() => setActionDialog('respawn')}
+        onReopen={() => { setActionError(null); setActionDialog('reopen') }}
+        onClone={() => { setActionError(null); setActionDialog('fork') }}
+        onRespawn={() => { setActionError(null); setActionDialog('respawn') }}
         killing={killing}
         archiving={archiving}
         reopening={reopening}
@@ -289,9 +318,9 @@ export default function SessionDetailPage({ params }: PageProps) {
         projectPath={projectPath}
         projectDefaultModel={currentProject?.defaultModel}
         projectDefaultEffort={currentProject?.defaultEffort}
-        onDeleteRecord={() => setDeleteOpen(true)}
+        onDeleteRecord={() => { setDeleteRecordError(null); setDeleteOpen(true) }}
         deletingRecord={deletingRecord}
-        onEditMetadata={() => setEditMetaOpen(true)}
+        onEditMetadata={() => { setEditMetaError(null); setEditMetaOpen(true) }}
       />
 
       {session.pendingPrompt && !readOnly && (
@@ -319,19 +348,21 @@ export default function SessionDetailPage({ params }: PageProps) {
 
       <KillConfirmDialog
         open={killOpen}
-        onClose={() => setKillOpen(false)}
+        onClose={() => { setKillOpen(false); setKillError(null) }}
         onConfirm={() => killMutation.mutate()}
         descendantCount={descendantCount}
         killing={killing}
+        error={killError}
       />
 
       <DeleteRecordDialog
         open={deleteOpen}
         session={session}
         workspacePath={projectPath}
-        onClose={() => setDeleteOpen(false)}
+        onClose={() => { setDeleteOpen(false); setDeleteRecordError(null) }}
         onConfirm={() => deleteRecordMutation.mutate()}
         deleting={deletingRecord}
+        error={deleteRecordError}
       />
 
       <SessionMetadataEditDialog
@@ -344,7 +375,8 @@ export default function SessionDetailPage({ params }: PageProps) {
         defaultModel={currentProject?.defaultModel}
         defaultEffort={currentProject?.defaultEffort}
         pending={editMetadataMutation.isPending}
-        onClose={() => setEditMetaOpen(false)}
+        error={editMetaError}
+        onClose={() => { setEditMetaOpen(false); setEditMetaError(null) }}
         onConfirm={(opts) => editMetadataMutation.mutate(opts)}
       />
 
@@ -358,7 +390,8 @@ export default function SessionDetailPage({ params }: PageProps) {
         defaultEffort={currentProject?.defaultEffort}
         currentUseTmux={session.useTmux}
         pending={reopening || cloning || respawning}
-        onClose={() => setActionDialog(null)}
+        error={actionError}
+        onClose={() => { setActionDialog(null); setActionError(null) }}
         // NF24: this used to close the dialog first and mutate second, so
         // `pending` never reached a mounted dialog. Closing now belongs to
         // each mutation's onSuccess, via settleSessionAction.
