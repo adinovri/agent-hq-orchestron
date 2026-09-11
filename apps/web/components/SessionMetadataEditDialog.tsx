@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import type { AgentType, EffortLevel, SessionStatus } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
 import { useHeadlessEnabled } from '@/lib/server-config'
+import { useDialogEscape } from '@/lib/use-dialog-escape'
 
 const RESET: { value: ''; label: string } = { value: '', label: '— Reset to project default' }
 
@@ -56,6 +57,10 @@ export function SessionMetadataEditDialog({
       setUseTmux(currentUseTmux ?? true)
     }
   }, [open, currentModel, currentEffort, currentUseTmux])
+
+  // `!pending` mirrors the Cancel button, which this dialog already
+  // disables mid-save. Escape must not be a second way past that.
+  useDialogEscape(open && !pending, onClose)
 
   if (!open) return null
 

@@ -3,6 +3,7 @@
 import { X, Trash2, AlertTriangle, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { SessionMetadata } from '@agent-hq-orchestron/shared'
+import { useDialogEscape } from '@/lib/use-dialog-escape'
 
 interface Props {
   open: boolean
@@ -14,6 +15,9 @@ interface Props {
 }
 
 export function DeleteRecordDialog({ open, session, workspacePath, onClose, onConfirm, deleting }: Props) {
+  // Not while the delete is running — Cancel is disabled then too.
+  useDialogEscape(open && !deleting, onClose)
+
   if (!open) return null
 
   const jsonlPath = session.jsonlPath || '(no transcript path recorded)'

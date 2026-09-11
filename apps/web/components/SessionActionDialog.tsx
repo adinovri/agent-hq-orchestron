@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import type { AgentType, EffortLevel } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
 import { useHeadlessEnabled } from '@/lib/server-config'
+import { useDialogEscape } from '@/lib/use-dialog-escape'
 
 const KEEP: { value: ''; label: string } = { value: '', label: '— Default / keep' }
 
@@ -91,6 +92,9 @@ export function SessionActionDialog({
       setUseTmux(sessionUseTmux)
     }
   }, [open, currentModel, currentEffort, sessionUseTmux])
+
+  // Same as Cancel, which is disabled while the action is in flight.
+  useDialogEscape(open && !pending, onClose)
 
   if (!open) return null
 

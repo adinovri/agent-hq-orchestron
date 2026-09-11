@@ -11,6 +11,7 @@ import { noticeIfCoerced } from '@/lib/notice'
 import { ProjectInfoPanel } from '@/components/ProjectInfoPanel'
 import { projectFieldDefaults, defaultRowLabel } from '@/lib/project-info'
 import { buildSchedulePayload, type ScheduleProjectOption } from '@/lib/schedule-fields'
+import { useDialogEscape } from '@/lib/use-dialog-escape'
 
 interface Props {
   open: boolean
@@ -181,12 +182,7 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
     return () => { document.body.style.overflow = '' }
   }, [open])
 
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  useDialogEscape(open, onClose)
 
   async function handleSave() {
     if (!projectId) { setError('Select a project'); return }

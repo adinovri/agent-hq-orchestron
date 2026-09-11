@@ -9,6 +9,7 @@ import { useHeadlessEnabled } from '@/lib/server-config'
 import { noticeIfCoerced } from '@/lib/notice'
 import { ProjectInfoPanel } from '@/components/ProjectInfoPanel'
 import { projectFieldDefaults, defaultRowLabel, type ProjectFormOption } from '@/lib/project-info'
+import { useDialogEscape } from '@/lib/use-dialog-escape'
 
 interface AttachedFile {
   id: string
@@ -136,13 +137,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
     }
   }, [open])
 
-  // Close on Escape
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  useDialogEscape(open, onClose)
 
   async function handleSpawn() {
     if (!projectId) { setError('Select a project'); return }

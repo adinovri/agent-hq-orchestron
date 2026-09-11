@@ -7,6 +7,7 @@ import { apiFetch } from '@/lib/fetcher'
 import { Button } from '@/components/ui/button'
 import { useHeadlessEnabled } from '@/lib/server-config'
 import { noticeIfCoerced } from '@/lib/notice'
+import { useDialogEscape } from '@/lib/use-dialog-escape'
 import { X, Loader2, CheckCircle2, AlertTriangle, Import } from 'lucide-react'
 
 interface ProjectSummary {
@@ -127,6 +128,8 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
       router.push(`/session/${session.id}`)
     },
   })
+
+  useDialogEscape(open, onClose)
 
   if (!open) return null
 
