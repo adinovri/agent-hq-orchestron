@@ -6,8 +6,10 @@ const STATUS_COLOR: Record<string, string> = {
   spawning: 'yellow',
   waiting: 'yellow',
   running: 'green',
-  completing: 'cyan',
-  completed: 'blue',
+  needs_input: 'magenta',
+  idle: 'white',
+  sleeping: 'gray',
+  succeeded: 'blue',
   failed: 'red',
   killed: 'gray',
 }
