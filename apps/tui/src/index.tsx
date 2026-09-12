@@ -10,6 +10,7 @@ import { SpawnScreen } from './screens/SpawnScreen.js'
 import { SchedulesScreen } from './screens/SchedulesScreen.js'
 import { ProjectsScreen } from './screens/ProjectsScreen.js'
 import { SettingsScreen } from './screens/SettingsScreen.js'
+import { MetricsScreen } from './screens/MetricsScreen.js'
 import { useApi } from './hooks/useApi.js'
 import type { ApiConfig } from './hooks/useApi.js'
 
@@ -27,7 +28,7 @@ const TOKEN = values.token as string | undefined
 
 const config: ApiConfig = { baseUrl: BASE_URL, token: TOKEN }
 
-type Screen = 'dashboard' | 'detail' | 'spawn' | 'schedules' | 'projects' | 'settings'
+type Screen = 'dashboard' | 'detail' | 'spawn' | 'schedules' | 'projects' | 'settings' | 'metrics'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('dashboard')
@@ -77,12 +78,13 @@ function App() {
   // Global keybinds for top-level screen switching (only when not in command mode or a sub-screen)
   useInput(
     useCallback(
-      (input, key) => {
+      (input) => {
         if (commandMode) return
         if (screen !== 'dashboard') return
         if (input === 'S') setScreen('schedules')
         else if (input === 'P') setScreen('projects')
         else if (input === ',') setScreen('settings')
+        else if (input === 'm') setScreen('metrics')
       },
       [commandMode, screen],
     ),
@@ -101,6 +103,10 @@ function App() {
           if (cmd === 'quit' || cmd === 'q') process.exit(0)
           else if (cmd === 'dashboard') setScreen('dashboard')
           else if (cmd === 'spawn') setScreen('spawn')
+          else if (cmd === 'metrics') setScreen('metrics')
+          else if (cmd === 'schedules') setScreen('schedules')
+          else if (cmd === 'projects') setScreen('projects')
+          else if (cmd === 'settings') setScreen('settings')
           setCommandMode(false)
           setCmdInput('')
         } else if (key.backspace || key.delete) {
@@ -159,6 +165,10 @@ function App() {
 
       {screen === 'settings' && (
         <SettingsScreen onBack={onBackToDashboard} />
+      )}
+
+      {screen === 'metrics' && (
+        <MetricsScreen config={config} onBack={onBackToDashboard} />
       )}
 
       {commandMode && (
