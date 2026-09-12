@@ -230,7 +230,14 @@ nothing and a wake that costs no spawn — is
   checkbox — see [`metadata-edit.md`](metadata-edit.md) `META-08`.)
 - On send: status goes `spawning` → `running` within a few seconds
   without any manual reopen, and the session id is unchanged.
-- The reply shows the earlier conversation is still in context.
+- The reply shows the earlier conversation is still in context. Score
+  that on the **transcript**, not on the session record's
+  `finalResponse` — with structured output on that field is the model's
+  *summary*, and the probe needs both the resume-nudge skip and a
+  `maxSeq` baseline read before the send. The trap and the two guards
+  are written out in [`headless-flow.md`](headless-flow.md)
+  `HEADLESS-01` § *How to assert*; the rule as code is
+  `scripts/e2e-probe/recall.mjs`.
 - While `idle` and approaching the threshold, the header carries an
   `idle Nm` chip; it turns amber at 10 minutes against the 15-minute
   default.

@@ -580,3 +580,63 @@ All three pin a count of the elements they scan. A scanner that quietly stops
 matching passes vacuously, which is worse than no scanner — so when a
 count assertion fails, the fix is to re-read the scanner, not to bump the
 number.
+
+---
+
+## 12. Probes: what must not live in `scratchpad/`
+
+A sweep's probes go in `scratchpad/e2e-runs/<date>-<batch>/probes/` and
+are gitignored, which is right — they are pointed at one run's fixture
+ids and one run's bearer. The rules they follow are not: post-batch-20
+filed **two** findings that were each a rule learned the hard way inside
+a throwaway file, fixed there, and therefore available to be got wrong
+again by the next sweep, which re-derives its probes from scratch.
+
+So the rules live in [`scripts/e2e-probe/`](../../scripts/e2e-probe), with
+unit tests under `npm test`. A probe imports them by relative path:
+
+```js
+import { assertRecall, maxSeq } from '../../../../scripts/e2e-probe/recall.mjs'
+import { loadEnvFile, describeEnvFile } from '../../../../scripts/e2e-probe/env-file.mjs'
+```
+
+### The env fixture is an argument, and it is read
+
+Matrix probes take the fixture positionally, after their own arguments —
+`node nf26.mjs KillConfirmDialog ./env-kill.json`. `nf30.mjs` accepted
+that argument and read `./env.json` regardless (NF40), so the standing
+remedy for the known Kill flake — re-mint into `env-kill.json`, re-run —
+measured the *stale* session and failed identically to the flake it was
+meant to rule out. Three 30 s timeout runs, and nearly a false
+regression filed against NF30.
+
+```js
+const { file, env } = loadEnvFile(process.argv, { positionals: 1 })
+console.log(describeEnvFile(file))   // say which document this run measured
+```
+
+`resolveEnvFile` throws on a missing fixture and on an argument the probe
+does not read. A probe that accepts an argument it ignores is worse than
+one that rejects it: rejecting fails in a second.
+
+### Recall is asserted on the transcript, never on `finalResponse`
+
+With structured output on — the default — the session record's
+`finalResponse` is the model's *summary*, not its prose
+(`session-manager.ts`; `headless-flow.md` HEADLESS-06). Scoring it
+passes only when the summary happens to quote the planted word, which is
+a probe that flaps for reasons unrelated to the code under test (NF39).
+
+Score `GET /api/sessions/:uuid/transcript`, and let `assertRecall` pick
+the entry — two guards decide which one, and a probe that keeps only one
+of them still passes vacuously:
+
+1. skip the resume pair Claude Code injects between headless turns
+   (`Continue from where you left off.` / `No response requested.`,
+   `seq 5/6`), or the newest assistant entry is the nudge reply;
+2. capture `maxSeq` **before** the send and require the answer strictly
+   past it and past the turn's user entry, or turn 1's own answer scores
+   as turn 2's.
+
+Full write-up: [`headless-flow.md`](headless-flow.md) `HEADLESS-01`
+§ *How to assert*. Worked example: `scripts/e2e-probe/recall-probe.mjs`.

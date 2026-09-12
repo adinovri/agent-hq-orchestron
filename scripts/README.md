@@ -9,6 +9,7 @@ root.
 | [`dev.sh`](dev.sh) | Runs the API and web in dev mode side by side. |
 | [`e2e-env.sh`](e2e-env.sh) | Brings up the isolated Orchestron the E2E scenarios run against. |
 | [`e2e-scenario.sh`](e2e-scenario.sh) | Prints one scenario from `docs/e2e-tests/` next to this run's env values. |
+| [`e2e-probe/`](e2e-probe) | The rules a sweep probe has to follow, kept out of the `scratchpad/` probes that `.gitignore` swallows. |
 | [`systemd/`](systemd) | Unit templates for the E2E instance. `e2e-env.sh up` installs them. |
 
 > `.gitignore` ignores `scripts/*.md` — those are session-scoped
@@ -138,3 +139,29 @@ prints the two together.
 Running scenarios is Phase 3 (an LLM driving playwright). The reason to
 have this now is that the id index and section parsing it will need
 already exist and get exercised by hand.
+
+---
+
+## e2e-probe/
+
+A sweep's probes live in `scratchpad/e2e-runs/<date>-<batch>/probes/` and are
+gitignored, which is right — they are pointed at one run's fixtures. What is
+not right is the *rules* living there too: post-batch-20 filed NF39 and NF40,
+both of which were a rule learned the hard way inside a throwaway file, and so
+available to be got wrong again on the next sweep.
+
+```js
+import { assertRecall, maxSeq } from '<run>/../../scripts/e2e-probe/recall.mjs'
+import { loadEnvFile } from '<run>/../../scripts/e2e-probe/env-file.mjs'
+```
+
+- `recall.mjs` — recall is asserted on the **transcript**, never on
+  `finalResponse` (that field is the structured-output summary), and the entry
+  that counts is picked past the resume-nudge pair and past a baseline read
+  *before* the turn was sent.
+- `env-file.mjs` — the fixture argument is honoured, a missing fixture throws,
+  and an argument the probe does not read throws instead of being ignored.
+- `recall-probe.mjs` — a runnable example holding both.
+
+`npm test` runs their unit tests (`npm run test:probe`, `node --test`, no
+network). See [`e2e-probe/README.md`](e2e-probe/README.md).

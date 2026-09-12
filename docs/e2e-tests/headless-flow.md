@@ -78,6 +78,41 @@ run `pgrep -af 'claude -p'` during each turn and between them.
 **📷 Screenshot**: `headless-01-two-turns.png` — the transcript showing
 both exchanges, with the header in `idle`.
 
+**How to assert "the reply is `47`"** — this is the part that has been
+got wrong twice, in opposite directions, and both times the *product*
+was fine.
+
+`finalResponse` is **not the model's words.** With
+`headlessStructuredOutput` on — the default this file runs under —
+`session-manager.ts` assigns `patched.finalResponse = doc.summary`, so
+the record carries the model's one-line summary *of* its answer.
+Post-batch-20 it read `"Responded with the requested word."` while the
+transcript's `seq 8` read `ready`. Scoring the record therefore passes
+only when the self-summary happens to quote the word — the
+post-batch-19 PASS on this assertion was luck, not evidence. Read
+`GET /api/sessions/:uuid/transcript` and score the assistant entry.
+Prose lands in `finalResponse` **only** with the flag off, which is
+`HEADLESS-06` and nothing else.
+
+Picking the right entry needs two guards, and neither is optional:
+
+1. **Not "the last assistant entry."** The resume pair above
+   (`Continue from where you left off.` / `No response requested.`) is
+   a real pair of rollout entries — `seq 5/6` in a two-turn session —
+   and a probe that takes the newest assistant entry scores the nudge
+   reply as the answer.
+2. **Not "any assistant entry past turn 1."** Read the transcript
+   before the turn-2 *user* entry is persisted and **turn 1's** answer
+   looks like the answer, so the assertion passes **vacuously** on the
+   word turn 1 planted. Observed as a PASS reading
+   `answerSeq=1 afterUserSeq=0 text="apricot"`.
+
+Capture `maxSeq` **before** sending, then require an assistant entry
+strictly after the latest non-nudge user entry, itself strictly after
+that baseline. `scripts/e2e-probe/recall.mjs` is that rule as code —
+`assertRecall` prints every seq it decided on, plus the summary it
+deliberately did not score. The same applies verbatim to `LIFE-06`.
+
 **Cleanup**: Archive, Delete record.
 
 ---
@@ -245,7 +280,11 @@ curl -s -H "Authorization: Bearer $TOKEN" "$ORCH/api/sessions/<uuid>" \
   schema off there is no way for the agent to raise a question.
 - No inquiry card renders.
 - `finalResponse` holds the model's **prose**, not a one-line summary of
-  it.
+  it. This is the *only* configuration in which that is true: with the
+  flag back on, `finalResponse` is `doc.summary`
+  (`session-manager.ts`), which is why every recall assertion in this
+  file scores the transcript instead. See `HEADLESS-01` § *How to
+  assert*.
 - The transcript is unaffected either way.
 
 **Cleanup**: Archive, Delete record. **Restore
