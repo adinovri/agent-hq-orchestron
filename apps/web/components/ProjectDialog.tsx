@@ -16,6 +16,7 @@ import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
 import { buildProjectBody } from '@/lib/project-body'
 import { useHeadlessEnabled } from '@/lib/server-config'
+import { DialogError } from '@/components/ui/dialog-error'
 
 interface Props {
   open: boolean
@@ -389,7 +390,7 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
             </div>
           )}
 
-          {error && <p className="text-sm text-red-500">{error}</p>}
+          <DialogError message={error} className="mx-0 mb-0" />
         </div>
 
         <DialogFooter>

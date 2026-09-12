@@ -11,7 +11,8 @@
     "dev": "concurrently \"npm run dev --workspace=@agent-hq-orchestron/api\" \"npm run dev --workspace=@agent-hq-orchestron/web\"",
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test:scripts && npm run test --workspaces --if-present",
+    "test:scripts": "bash scripts/e2e-env.test.sh",
     "test:e2e": "VITE_CONFIG_NATIVE_IGNORE_WARNING=true npx vitest run --config test/e2e/vitest.config.ts",
     "init": "bash scripts/init.sh"
   },

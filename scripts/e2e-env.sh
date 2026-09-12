@@ -414,6 +414,95 @@ install_units() {
 api_built() { [ -f "$E2E_REPO/apps/api/dist/server.js" ]; }
 web_built() { [ -f "$E2E_REPO/apps/web/$E2E_DIST_DIR/BUILD_ID" ]; }
 
+# ---------------------------------------------------------------------------
+# bundle freshness (NF31)
+# ---------------------------------------------------------------------------
+#
+# `next start` reads the build once, at boot: BUILD_ID, the route manifests and
+# the chunk map all land in the process. Rebuilding `.next-e2e` underneath a
+# running unit therefore changes nothing about what is served — and every check
+# `up` performed looked at the bundle *on disk*, so a unit that had been up
+# since the previous commit passed all of them and `up` printed `ok web ready`.
+#
+# That is worse than a wasted rebuild. A sweep that measures the previous
+# commit's UI draws confident conclusions about code that is not running, which
+# is the exact failure §10 of 00-setup.md exists to prevent, one layer down. It
+# cost five consecutive sweeps time before it was written up.
+
+# Formats an epoch for a human, falling back to the raw number.
+fmt_epoch() { date -d "@$1" '+%F %T' 2>/dev/null || printf '%s' "$1"; }
+
+# mtime of the built bundle's BUILD_ID, in epoch seconds. `next build`
+# rewrites this file every time, so it dates the build rather than the tree.
+web_build_epoch() {
+  local f="$E2E_REPO/apps/web/$E2E_DIST_DIR/BUILD_ID"
+  [ -f "$f" ] || return 1
+  stat -c %Y "$f" 2>/dev/null
+}
+
+# When the unit's *current* main process started, in epoch seconds. Empty for a
+# unit that has never run, the literal `n/a` for one that is stopped.
+unit_start_epoch() {
+  local ts
+  ts="$(systemctl --user show "$1" -p ExecMainStartTimestamp --value 2>/dev/null)"
+  [ -n "$ts" ] && [ "$ts" != "n/a" ] || return 1
+  date -d "$ts" +%s 2>/dev/null
+}
+
+# True when the bundle on disk was written after the process meant to serve it.
+# Pure, so the shell test can drive both sides without systemd. Anything that is
+# not two integers is "cannot tell", which is deliberately *not* stale: the
+# caller should warn about a reading it does not understand, never restart a
+# unit on the strength of one.
+bundle_is_stale() {
+  local built="${1:-}" start="${2:-}"
+  case "$built" in ''|*[!0-9]*) return 1 ;; esac
+  case "$start" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$built" -gt "$start" ]
+}
+
+# Report — and fix — a web unit serving a bundle older than the one built.
+# Non-zero only when the restart did not help, because a stale bundle that
+# cannot be corrected is a failed `up`: everything measured afterwards would be
+# attributed to the wrong commit.
+ensure_web_serving_current_bundle() {
+  local built start
+  built="$(web_build_epoch)" || {
+    warn "no apps/web/$E2E_DIST_DIR/BUILD_ID to date — bundle freshness unverified"
+    return 0
+  }
+  start="$(unit_start_epoch "$WEB_UNIT")" || {
+    warn "could not read ExecMainStartTimestamp for $WEB_UNIT — bundle freshness unverified"
+    return 0
+  }
+
+  if ! bundle_is_stale "$built" "$start"; then
+    ok "web is serving the bundle on disk (built $(fmt_epoch "$built"), up since $(fmt_epoch "$start"))"
+    return 0
+  fi
+
+  warn "$WEB_UNIT has been up since $(fmt_epoch "$start"), but the bundle was rebuilt at $(fmt_epoch "$built")"
+  warn "next start reads the build at boot — this process is serving the PREVIOUS build"
+  info "Restarting $WEB_UNIT so it picks the new one up"
+  systemctl --user restart "$WEB_UNIT" >/dev/null 2>&1 \
+    || { bad "failed to restart $WEB_UNIT (see: $0 logs web)"; return 1; }
+  wait_ready web "$(web_base)/api/health" || return 1
+
+  start="$(unit_start_epoch "$WEB_UNIT")" || {
+    bad "$WEB_UNIT restarted but its start timestamp is unreadable — cannot confirm the bundle"
+    return 1
+  }
+  if bundle_is_stale "$built" "$start"; then
+    bad "$WEB_UNIT restarted at $(fmt_epoch "$start") and the bundle still reads newer ($(fmt_epoch "$built"))"
+    dim "either something is rebuilding apps/web/$E2E_DIST_DIR underneath the unit,"
+    dim "or $WEB_UNIT is not the process answering on $(web_base)."
+    dim "check: systemctl --user status $WEB_UNIT"
+    dim "       ls -l $E2E_REPO/apps/web/$E2E_DIST_DIR/BUILD_ID"
+    return 1
+  fi
+  ok "web restarted onto the current bundle (built $(fmt_epoch "$built"), up since $(fmt_epoch "$start"))"
+}
+
 cmd_build() {
   require_tools
   info "Building E2E bundles in $E2E_REPO"
@@ -516,6 +605,9 @@ cmd_up() {
   # the E2E API and not the deployed one — the single most likely
   # misconfiguration in the whole setup.
   wait_ready web "$(web_base)/api/health" || exit 1
+  # Ready is not the same as current: NF31. A unit left running from an earlier
+  # commit answers every probe above while serving that commit's UI.
+  ensure_web_serving_current_bundle || exit 1
 
   info "Verifying isolation"
   assert_isolation || exit 1
@@ -719,6 +811,16 @@ cmd_status() {
     fi
   else
     warn "no web build at apps/web/$E2E_DIST_DIR — run: $0 build"
+  fi
+
+  local built_at started_at
+  if built_at="$(web_build_epoch)" && started_at="$(unit_start_epoch "$WEB_UNIT")"; then
+    if bundle_is_stale "$built_at" "$started_at"; then
+      bad "web unit is serving a STALE bundle — up since $(fmt_epoch "$started_at"), bundle built $(fmt_epoch "$built_at")"
+      dim "fix: $0 up   (or: systemctl --user restart $WEB_UNIT)"
+    else
+      ok "web unit is serving the bundle on disk (up since $(fmt_epoch "$started_at"))"
+    fi
   fi
 
   if [ -f "$E2E_DATA_DIR/config.json" ]; then
@@ -954,6 +1056,7 @@ cmd_test_self() {
   check "api accepts the E2E bearer" api_get_quiet /api/health/detail
   check "api storage is the E2E data dir" test_storage_matches
   check "web serves, and its rewrite reaches the E2E api" test_web_rewrite
+  check "web serves the bundle currently on disk" test_web_bundle_current
   check "config.json is mode 600" test_config_perms
 
   log ''
@@ -999,6 +1102,14 @@ cmd_test_self() {
     test -s "$E2E_CLAUDE_CONFIG_DIR/.credentials.json"
 
   self_report
+}
+
+# NF31: up's post-condition, asserted rather than assumed.
+test_web_bundle_current() {
+  local built start
+  built="$(web_build_epoch)" || return 1
+  start="$(unit_start_epoch "$WEB_UNIT")" || return 1
+  not bundle_is_stale "$built" "$start"
 }
 
 test_api_rejects_anon() {
@@ -1157,4 +1268,8 @@ main() {
   esac
 }
 
-main "$@"
+# Sourced by scripts/e2e-env.test.sh, which drives the helpers above directly:
+# define everything, run nothing.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  main "$@"
+fi

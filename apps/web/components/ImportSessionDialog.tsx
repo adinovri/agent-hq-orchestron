@@ -11,6 +11,7 @@ import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
 import { useFocusReturn } from '@/lib/use-focus-return'
 import { DialogCloseButton } from '@/components/ui/dialog-close-button'
 import { Loader2, AlertTriangle, Upload, FileArchive, FileText } from 'lucide-react'
+import { DialogError } from '@/components/ui/dialog-error'
 
 interface ProjectSummary {
   id: string
@@ -295,11 +296,10 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
             </div>
           )}
 
-          {importMutation.error && (
-            <div className="rounded border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 px-3 py-2 text-xs text-red-700 dark:text-red-300">
-              {(importMutation.error as Error).message}
-            </div>
-          )}
+          <DialogError
+            message={importMutation.error ? (importMutation.error as Error).message : null}
+            className="mx-0 mb-0"
+          />
         </div>
 
         <div className="px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 flex justify-end gap-2">

@@ -13,6 +13,7 @@ import { createOpenChangeGuard } from '@/lib/dialog-dismiss'
 import { useFocusReturn } from '@/lib/use-focus-return'
 import { apiFetch } from '@/lib/fetcher'
 import type { ProjectMetadata } from '@agent-hq-orchestron/shared'
+import { DialogError } from '@/components/ui/dialog-error'
 
 interface Props {
   project: ProjectMetadata | null
@@ -75,7 +76,7 @@ export function DeleteProjectDialog({ project, onClose, onDeleted, sessionCount 
               {sessionCount.active > 0 && <> — <strong>{sessionCount.active}</strong> still active</>}.
             </div>
           )}
-          {error && <p className="text-sm text-red-500">{error}</p>}
+          <DialogError message={error} className="mx-0 mb-0" />
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={deleting}>

@@ -407,3 +407,43 @@ One more coordination rule, learned the same way: **do not restart the
 deployed instance during someone else's sweep.** If a deploy cannot wait,
 say so in the sweep's channel first — a restart mid-run invalidates every
 uptime, session-state and rate-limit assertion already taken.
+
+### The bundle the sweep is actually serving
+
+Pinning the commit is half of it. The other half is that the running web
+unit is serving *that* commit. `next start` reads the build once, at
+boot — `BUILD_ID`, the route manifests, the chunk map — so rebuilding
+`apps/web/.next-e2e` underneath a unit that is already up changes
+nothing about what :3011 serves.
+
+This cost five consecutive sweeps time before it was written up (NF31).
+`build` → `up` printed `ok web ready` and `ok web bundle built against
+http://127.0.0.1:8091`, both true, while the browser rendered the
+previous commit's UI — because every check `up` made looked at the
+bundle **on disk**, never at the process.
+
+`up` now checks the pair and repairs it:
+
+```
+==> Starting units
+  ok   web ready (http://127.0.0.1:3011/api/health)
+  warn orchestron-web-e2e.service has been up since 2026-09-11 22:40:17,
+       but the bundle was rebuilt at 2026-09-12 05:52:41
+  warn next start reads the build at boot — this process is serving the
+       PREVIOUS build
+==> Restarting orchestron-web-e2e.service so it picks the new one up
+  ok   web restarted onto the current bundle
+```
+
+If the restart does not resolve it, `up` **fails** rather than warning:
+a bundle that cannot be made current means everything measured after it
+would be attributed to the wrong commit. `status` reports the same
+comparison read-only, and never restarts anything.
+
+So the rebuild-then-restart dance is no longer yours to remember. What
+is still yours: if you restart the web unit by hand mid-sweep, say so in
+the report — the same rule as restarting the deployed instance.
+
+Confirm it from the browser as well, which is the reading that cannot be
+faked by a timestamp: the footer prints the sha of the running build,
+and it should equal the sweep's `BASE_SHA`.

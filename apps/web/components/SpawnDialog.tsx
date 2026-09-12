@@ -12,6 +12,7 @@ import { projectFieldDefaults, defaultRowLabel, type ProjectFormOption } from '@
 import { useDialogDismiss } from '@/lib/use-dialog-dismiss'
 import { useFocusReturn } from '@/lib/use-focus-return'
 import { DialogCloseButton } from '@/components/ui/dialog-close-button'
+import { DialogError } from '@/components/ui/dialog-error'
 
 interface AttachedFile {
   id: string
@@ -439,11 +440,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
             )}
           </div>
 
-          {error && (
-            <div className="text-sm text-red-600 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded p-2">
-              {error}
-            </div>
-          )}
+          <DialogError message={error} className="mx-0 mb-0" />
         </div>
 
         <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-950">
