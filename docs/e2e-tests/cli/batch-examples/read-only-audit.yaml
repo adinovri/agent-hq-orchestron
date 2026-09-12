@@ -1,0 +1,21 @@
+# Read-only audit: list all sessions, projects, and metrics in one shot.
+# Use: orchestron batch read-only-audit.yaml
+steps:
+  - name: list sessions
+    cmd: session
+    args:
+      - list
+      - --json
+
+  - name: list projects
+    cmd: project
+    args:
+      - list
+      - --json
+
+  - name: get metrics (last 7 days)
+    cmd: metrics
+    args:
+      - --from
+      - "2026-09-06"
+      - --json

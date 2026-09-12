@@ -1,0 +1,24 @@
+# Spawn a headless session then watch it until it finishes.
+# The ${step0.sessionUuid} variable captures the spawned session UUID
+# from the first step's JSON output.
+#
+# Use: orchestron batch spawn-and-watch.yaml
+steps:
+  - name: spawn session
+    cmd: session
+    args:
+      - spawn
+      - --project
+      - my-project
+      - --no-tmux
+      - --prompt
+      - "Reply with: HELLO"
+      - --json
+
+  - name: watch session
+    cmd: watch
+    args:
+      - "${step0.sessionUuid}"
+      - --interval
+      - "2000"
+    if_prev_success: true
