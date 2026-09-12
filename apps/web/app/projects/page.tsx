@@ -134,6 +134,7 @@ export default function ProjectsPage() {
 
         {allGroups.length > 0 && (
           <select
+            aria-label="Filter by group"
             value={groupFilter}
             onChange={(e) => setGroupFilter(e.target.value)}
             className="h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm"

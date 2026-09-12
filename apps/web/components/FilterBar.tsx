@@ -75,6 +75,7 @@ export function FilterBar({ filters, projects, allTags, onChange }: Props) {
 
       {/* Project dropdown */}
       <select
+        aria-label="Filter by project"
         value={filters.project}
         onChange={(e) => onChange({ project: e.target.value })}
         className="h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm focus:outline-none"

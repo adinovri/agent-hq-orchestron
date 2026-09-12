@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, DragEvent } from 'react'
+import { useState, useEffect, useRef, useId, DragEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { apiFetch, fetchJson } from '@/lib/fetcher'
 import { X, Paperclip, FileText, Image as ImageIcon, FileCode, File as FileIcon } from 'lucide-react'
@@ -56,6 +56,14 @@ interface Props {
 // once the user picks a project. See lib/models.ts for the curated catalogs.
 
 export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: Props) {
+  /* Ids for the label/control pairs below. Every `<select>` in this app was
+   * labelled only by an adjacent `<label>` with no `for`, so a screen reader
+   * announced an unnamed combobox (NF33, axe `select-name`, critical).
+   * `useId` rather than a literal: this is a component, and a literal id is a
+   * duplicate the moment one is mounted twice — at which point every label
+   * silently points at the first copy's control. It is also what keeps the id
+   * stable across the server render Next does before hydration. */
+  const uid = useId()
   const [projectId, setProjectId] = useState('')
   const currentProject = projects.find((p) => p.id === projectId)
   const selectedAgentType = currentProject?.agentType
@@ -242,7 +250,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
         <div className="px-4 py-4 space-y-4">
           {/* Project */}
           <div>
-            <label className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Project</label>
+            <label htmlFor={`${uid}-project`} className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Project</label>
             {projects.length === 0 ? (
               <p className="text-sm text-zinc-500">
                 No projects registered.{' '}
@@ -252,6 +260,7 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
               </p>
             ) : (
               <select
+                id={`${uid}-project`}
                 value={projectId}
                 onChange={(e) => setProjectId(e.target.value)}
                 className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-400"
@@ -268,8 +277,9 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
           {/* Template (only if any exist) */}
           {templates.length > 0 && (
             <div>
-              <label className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Template (optional)</label>
+              <label htmlFor={`${uid}-template`} className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Template (optional)</label>
               <select
+                id={`${uid}-template`}
                 value={template}
                 onChange={(e) => { setTemplate(e.target.value); setVars({}) }}
                 className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"
@@ -324,8 +334,9 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
           {/* Model + Effort */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Model</label>
+              <label htmlFor={`${uid}-model`} className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Model</label>
               <select
+                id={`${uid}-model`}
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"
@@ -334,8 +345,9 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
               </select>
             </div>
             <div>
-              <label className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Effort</label>
+              <label htmlFor={`${uid}-effort`} className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Effort</label>
               <select
+                id={`${uid}-effort`}
                 value={effort}
                 onChange={(e) => setEffort(e.target.value)}
                 className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"

@@ -65,6 +65,7 @@ export function ThemeSelect() {
     <div className="flex items-center gap-2">
       <Palette className="w-4 h-4 text-zinc-500" />
       <select
+        aria-label="Theme"
         value={theme}
         onChange={(e) => pick(e.target.value as Theme)}
         className="h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"

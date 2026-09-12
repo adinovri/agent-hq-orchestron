@@ -106,3 +106,73 @@ export function mutationErrorMessage(err: unknown): string {
   if (typeof err === 'string' && err.trim()) return truncate(err.trim())
   return 'The request failed.'
 }
+
+/* ------------------------------------------------------------------------ *
+ * That every failure path says which status it was (NF34).
+ * ------------------------------------------------------------------------ */
+
+/**
+ * NF27 gave the app one way to describe a failed request. It did not make that
+ * the only way: most call sites still hand-roll ``HTTP ${res.status}: ${await
+ * res.text()}``, which the batch-17 commit deliberately left alone because
+ * changing the *text* changes what live E2E scenarios assert.
+ *
+ * The cost of that fork showed up as NF34. Import's hand-rolled check was
+ * wrong twice — it omitted the prefix entirely, so a failed import rendered a
+ * bare JSON blob and an operator could not tell a 404 from a 500 without
+ * devtools; and its `throw` sat inside the `try` meant to parse the body, so
+ * its own `catch` swallowed the parsed message and re-threw the raw text. The
+ * JSON branch was unreachable from the day it was written.
+ *
+ * Both are the same root fact: a hand-rolled check is unreviewed code on a
+ * path nobody exercises. This scanner does not force `throwIfNotOk` — the
+ * remaining sites are a deliberate deferral, not a bug — but it does hold the
+ * one property they all share and Import had lost: **if you check `.ok`
+ * yourself, the message you throw names the status.**
+ */
+
+/** `if (!res.ok)`, `if (!upRes.ok && …)` — a hand-rolled status check. */
+const OK_GUARD = /\bif\s*\(\s*!\w+\.ok\b/
+/** The prefix that makes a message legible as an HTTP failure. */
+const NAMES_THE_STATUS = /HTTP \$\{/
+
+export interface UnprefixedErrorThrow {
+  file: string
+  line: number
+  snippet: string
+}
+
+/**
+ * Every `throw` under a hand-rolled `.ok` check whose message omits the status.
+ *
+ * The guarded region is taken by brace depth from the guard line, so a
+ * one-line `if (!res.ok) throw …` and a ten-line block with a nested
+ * `try`/`catch` are both covered — the nesting is exactly what hid NF34's
+ * second half from review.
+ */
+export function findUnprefixedErrorThrows(file: string, source: string): UnprefixedErrorThrow[] {
+  const lines = source.split('\n')
+  const found: UnprefixedErrorThrow[] = []
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!OK_GUARD.test(lines[i])) continue
+
+    // The guard's body: the rest of its line, then to brace balance.
+    let depth = 0
+    let started = false
+    for (let j = i; j < lines.length; j++) {
+      const line = lines[j]
+      for (const ch of line) {
+        if (ch === '{') { depth++; started = true }
+        else if (ch === '}') depth--
+      }
+      if (/\bthrow new Error\(/.test(line) && !NAMES_THE_STATUS.test(line)) {
+        found.push({ file, line: j + 1, snippet: line.trim() })
+      }
+      if (started && depth <= 0) break
+      if (!started && j > i) break // one-liner with no block
+    }
+  }
+
+  return found
+}

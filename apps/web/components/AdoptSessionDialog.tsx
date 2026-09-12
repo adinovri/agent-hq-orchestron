@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useId } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { apiFetch } from '@/lib/fetcher'
@@ -47,6 +47,14 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
   const qc = useQueryClient()
   const eligible = projects.filter((p) => p.agentType === 'claude' || p.agentType === 'codex')
 
+  /* Ids for the label/control pairs below. Every `<select>` in this app was
+   * labelled only by an adjacent `<label>` with no `for`, so a screen reader
+   * announced an unnamed combobox (NF33, axe `select-name`, critical).
+   * `useId` rather than a literal: this is a component, and a literal id is a
+   * duplicate the moment one is mounted twice — at which point every label
+   * silently points at the first copy's control. It is also what keeps the id
+   * stable across the server render Next does before hydration. */
+  const uid = useId()
   const [projectId, setProjectId] = useState<string>('')
   const [uuid, setUuid] = useState<string>('')
   const [validation, setValidation] = useState<ValidateResult | null>(null)
@@ -172,8 +180,9 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
           </p>
 
           <div>
-            <label className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Project</label>
+            <label htmlFor={`${uid}-project`} className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Project</label>
             <select
+              id={`${uid}-project`}
               value={projectId}
               onChange={(e) => { setProjectId(e.target.value); setValidation(null) }}
               disabled={adoptMutation.isPending}

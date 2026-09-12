@@ -7,6 +7,8 @@ import {
   DIALOG_ERROR_ARIA_LIVE,
   DIALOG_ERROR_SLOT,
   findUnannouncedErrorSurfaces,
+  findDialogErrorInsets,
+  findMisinsetDialogErrors,
 } from './dialog-error'
 import { cn } from './utils'
 
@@ -167,5 +169,118 @@ describe('every dialog announces its failures', () => {
       findUnannouncedErrorSurfaces(file, readFileSync(join(COMPONENTS, file), 'utf8')),
     )
     expect(offenders).toEqual([])
+  })
+})
+
+/**
+ * NF32: the other half of the same element. `DialogError`'s default `mx-4` is a
+ * gutter for the shells that have none of their own; render it where the panel
+ * has already inset its content and it lands 32 px in while every sibling sits
+ * at 16. Kill was the one dialog batch-17 had no reason to open, and the one
+ * that got it wrong.
+ */
+describe('dialog error inset', () => {
+  it('reads the chain out to the panel, not just the immediate parent', () => {
+    // Delete Project's shape: the parent is `py-2`, and the 16 px comes from
+    // the `DialogContent` above it. An immediate-parent rule calls this a bug.
+    const sites = findDialogErrorInsets(
+      'X.tsx',
+      [
+        '      <DialogContent className="max-w-sm">',
+        '        <div className="py-2 space-y-3">',
+        '          <DialogError message={error} className="mx-0 mb-0" />',
+        '        </div>',
+        '      </DialogContent>',
+      ].join('\n'),
+    )
+    expect(sites).toHaveLength(1)
+    expect(sites[0].ancestors).toEqual(['div', 'DialogContent'])
+    expect(sites[0].insetByAncestor).toBe(true)
+    expect(sites[0].gutterDropped).toBe(true)
+  })
+
+  it('catches the NF32 shape — a direct child of the padded primitive', () => {
+    const offenders = findMisinsetDialogErrors(
+      'KillConfirmDialog.tsx',
+      [
+        '      <DialogContent className="max-w-sm" closeDisabled={killing}>',
+        '        <p className="text-sm py-2">This will terminate the session.</p>',
+        '        <DialogError message={error} />',
+        '      </DialogContent>',
+      ].join('\n'),
+    )
+    expect(offenders).toHaveLength(1)
+    expect(offenders[0]).toMatchObject({ insetByAncestor: true, gutterDropped: false })
+  })
+
+  it('catches the inverse — a gutter dropped in a shell that has no padding', () => {
+    const offenders = findMisinsetDialogErrors(
+      'X.tsx',
+      [
+        '      <div role="dialog" className="w-full max-w-md bg-white rounded-lg">',
+        '        <DialogError message={error} className="mx-0 mb-0" />',
+        '      </div>',
+      ].join('\n'),
+    )
+    expect(offenders).toHaveLength(1)
+    expect(offenders[0]).toMatchObject({ insetByAncestor: false, gutterDropped: true })
+  })
+
+  it('stops at the panel — a backdrop’s own p-4 is not an inset on the content', () => {
+    const sites = findDialogErrorInsets(
+      'X.tsx',
+      [
+        '    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">',
+        '      <div role="dialog" className="w-full max-w-lg bg-white rounded-lg">',
+        '        <DialogError message={error} />',
+        '      </div>',
+        '    </div>',
+      ].join('\n'),
+    )
+    expect(sites[0].ancestors).toEqual(['div'])
+    expect(sites[0].insetByAncestor).toBe(false)
+  })
+
+  it('resolves a message rendered from inside a ternary branch', () => {
+    const sites = findDialogErrorInsets(
+      'X.tsx',
+      [
+        '        <div className="px-4 py-4 space-y-4">',
+        '          {validation && (',
+        '            validation.ok ? (',
+        '              <div className="text-xs">ok</div>',
+        '            ) : (',
+        '              <DialogError',
+        '                message={validation.error}',
+        '                className="mx-0 mb-0"',
+        '              />',
+        '            )',
+        '          )}',
+        '        </div>',
+      ].join('\n'),
+    )
+    expect(sites).toHaveLength(1)
+    expect(sites[0].insetByAncestor).toBe(true)
+    expect(sites[0].gutterDropped).toBe(true)
+  })
+
+  it('every DialogError in the tree matches the padding it sits in', () => {
+    const offenders = DIALOG_FILES.flatMap((file) =>
+      findMisinsetDialogErrors(file, readFileSync(join(COMPONENTS, file), 'utf8')),
+    )
+    expect(offenders).toEqual([])
+  })
+
+  it('finds all eleven call sites — the scanner is not silently matching none', () => {
+    const sites = DIALOG_FILES.flatMap((file) =>
+      findDialogErrorInsets(file, readFileSync(join(COMPONENTS, file), 'utf8')),
+    )
+    expect(sites).toHaveLength(11)
+    // The three flush shells are the only ones that keep the default gutter.
+    expect(sites.filter((s) => !s.gutterDropped).map((s) => s.file).sort()).toEqual([
+      'DeleteRecordDialog.tsx',
+      'SessionActionDialog.tsx',
+      'SessionMetadataEditDialog.tsx',
+    ])
   })
 })

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useId } from 'react'
 import cronstrue from 'cronstrue'
 import { Button } from '@/components/ui/button'
 import { apiFetch } from '@/lib/fetcher'
@@ -106,6 +106,14 @@ const CRON_PRESETS: Array<{ label: string; cron: string }> = [
 ]
 
 export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: Props) {
+  /* Ids for the label/control pairs below. Every `<select>` in this app was
+   * labelled only by an adjacent `<label>` with no `for`, so a screen reader
+   * announced an unnamed combobox (NF33, axe `select-name`, critical).
+   * `useId` rather than a literal: this is a component, and a literal id is a
+   * duplicate the moment one is mounted twice — at which point every label
+   * silently points at the first copy's control. It is also what keeps the id
+   * stable across the server render Next does before hydration. */
+  const uid = useId()
   const [projectId, setProjectId] = useState(initial?.projectId ?? '')
   const [cron, setCron] = useState(initial?.cron ?? '0 9 * * 1')
   const [prompt, setPrompt] = useState(initial?.prompt ?? '')
@@ -257,7 +265,7 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
 
         <div className="px-4 py-4 space-y-4">
           <div>
-            <label className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Project</label>
+            <label htmlFor={`${uid}-project`} className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Project</label>
             {isEdit ? (
               /* Read-only once the schedule exists. Moving one to another
                  project changes what every field on it means — the model and
@@ -278,6 +286,7 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
               </p>
             ) : (
               <select
+                id={`${uid}-project`}
                 value={projectId}
                 onChange={(e) => setProjectId(e.target.value)}
                 className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"
@@ -309,8 +318,9 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Model</label>
+                <label htmlFor={`${uid}-model`} className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Model</label>
                 <select
+                  id={`${uid}-model`}
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                   className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"
@@ -320,8 +330,9 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
                 </select>
               </div>
               <div>
-                <label className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Effort</label>
+                <label htmlFor={`${uid}-effort`} className="text-sm font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Effort</label>
                 <select
+                  id={`${uid}-effort`}
                   value={effort}
                   onChange={(e) => setEffort(e.target.value)}
                   className="w-full h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm text-zinc-900 dark:text-zinc-100"

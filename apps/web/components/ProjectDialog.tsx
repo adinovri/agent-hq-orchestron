@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useId } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -60,6 +60,14 @@ const BLANK: FormState = {
 }
 
 export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
+  /* Ids for the label/control pairs below. Every `<select>` in this app was
+   * labelled only by an adjacent `<label>` with no `for`, so a screen reader
+   * announced an unnamed combobox (NF33, axe `select-name`, critical).
+   * `useId` rather than a literal: this is a component, and a literal id is a
+   * duplicate the moment one is mounted twice — at which point every label
+   * silently points at the first copy's control. It is also what keeps the id
+   * stable across the server render Next does before hydration. */
+  const uid = useId()
   const [form, setForm] = useState<FormState>(BLANK)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -195,10 +203,11 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
           </div>
 
           <div>
-            <label className="text-sm font-medium block mb-1">
+            <label htmlFor={`${uid}-agent-type`} className="text-sm font-medium block mb-1">
               Agent Type <span className="text-red-500">*</span>
             </label>
             <select
+              id={`${uid}-agent-type`}
               value={form.agentType}
               onChange={(e) => set('agentType', e.target.value as FormState['agentType'])}
               className={inputCls}
@@ -211,8 +220,9 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-sm font-medium block mb-1">Default Model</label>
+              <label htmlFor={`${uid}-default-model`} className="text-sm font-medium block mb-1">Default Model</label>
               <select
+                id={`${uid}-default-model`}
                 value={form.defaultModel}
                 onChange={(e) => set('defaultModel', e.target.value)}
                 className={inputCls}
@@ -224,8 +234,9 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
               </select>
             </div>
             <div>
-              <label className="text-sm font-medium block mb-1">Default Effort</label>
+              <label htmlFor={`${uid}-default-effort`} className="text-sm font-medium block mb-1">Default Effort</label>
               <select
+                id={`${uid}-default-effort`}
                 value={form.defaultEffort}
                 onChange={(e) => set('defaultEffort', e.target.value)}
                 className={inputCls}

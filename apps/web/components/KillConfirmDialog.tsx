@@ -46,7 +46,16 @@ export function KillConfirmDialog({ open, onClose, onConfirm, descendantCount, k
             <> It has <strong>{descendantCount}</strong> descendant session{descendantCount !== 1 ? 's' : ''} that will also be killed.</>
           )}
         </p>
-        <DialogError message={error} />
+        {/*
+          * `mx-0 mb-0` because this dialog's body is `DialogContent`'s own
+          * `p-4`, not a padded wrapper inside it. `DialogError` defaults to
+          * `mx-4 mb-3` for the hand-rolled shells, which have no padding of
+          * their own; a direct child of `DialogContent` adds that gutter on
+          * top of the padding and lands 32 px in while every sibling sits at
+          * 16 px (NF32). Same override, same reason, as the two other
+          * dialogs built on the primitive — Delete Project and Project.
+          */}
+        <DialogError message={error} className="mx-0 mb-0" />
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={killing}>Cancel</Button>
           <Button

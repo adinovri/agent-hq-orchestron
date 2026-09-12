@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useId } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { apiFetch } from '@/lib/fetcher'
@@ -12,6 +12,7 @@ import { useFocusReturn } from '@/lib/use-focus-return'
 import { DialogCloseButton } from '@/components/ui/dialog-close-button'
 import { Loader2, AlertTriangle, Upload, FileArchive, FileText } from 'lucide-react'
 import { DialogError } from '@/components/ui/dialog-error'
+import { throwIfNotOk } from '@/lib/api-error'
 
 interface ProjectSummary {
   id: string
@@ -46,6 +47,14 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
   const qc = useQueryClient()
   const eligible = projects.filter((p) => p.agentType === 'claude' || p.agentType === 'codex')
 
+  /* Ids for the label/control pairs below. Every `<select>` in this app was
+   * labelled only by an adjacent `<label>` with no `for`, so a screen reader
+   * announced an unnamed combobox (NF33, axe `select-name`, critical).
+   * `useId` rather than a literal: this is a component, and a literal id is a
+   * duplicate the moment one is mounted twice — at which point every label
+   * silently points at the first copy's control. It is also what keeps the id
+   * stable across the server render Next does before hydration. */
+  const uid = useId()
   const [projectId, setProjectId] = useState<string>('')
   const [file, setFile] = useState<File | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -109,16 +118,15 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
       if (headlessEnabled && useTmuxOverride !== null) {
         fd.append('useTmux', String(useTmuxOverride))
       }
-      const res = await apiFetch(`/api/sessions/import`, { method: 'POST', body: fd })
-      if (!res.ok) {
-        const text = await res.text()
-        try {
-          const j = JSON.parse(text) as { error?: string }
-          throw new Error(j.error ?? text)
-        } catch {
-          throw new Error(text || `HTTP ${res.status}`)
-        }
-      }
+      // `throwIfNotOk`, not a hand-rolled check (NF34). The one this replaced
+      // was wrong twice over: it dropped the `HTTP nnn:` prefix every other
+      // dialog carries, so a failed import rendered a bare JSON blob with no
+      // way to tell a 404 from a 500 — and its `throw` sat *inside* the `try`
+      // that was meant to parse the body, so its own `catch` swallowed the
+      // parsed message and re-threw the raw text. The JSON branch never ran.
+      const res = await throwIfNotOk(
+        await apiFetch(`/api/sessions/import`, { method: 'POST', body: fd }),
+      )
       const imported = await res.json() as ImportResult
       noticeIfCoerced(imported)
       return imported
@@ -173,8 +181,9 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
           </p>
 
           <div>
-            <label className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Destination project</label>
+            <label htmlFor={`${uid}-project`} className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">Destination project</label>
             <select
+              id={`${uid}-project`}
               value={projectId}
               onChange={(e) => setProjectId(e.target.value)}
               disabled={importMutation.isPending}
@@ -209,10 +218,11 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
           })()}
 
           <div>
-            <label className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">
+            <label htmlFor={`${uid}-file`} className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">
               Bundle file
             </label>
             <input
+              id={`${uid}-file`}
               ref={inputRef}
               type="file"
               accept=".jsonl,.tar.gz,.tgz,application/x-ndjson,application/gzip"

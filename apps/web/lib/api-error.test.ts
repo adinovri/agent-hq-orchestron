@@ -1,9 +1,12 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   extractApiErrorDetail,
   describeApiError,
   throwIfNotOk,
   mutationErrorMessage,
+  findUnprefixedErrorThrows,
 } from './api-error'
 
 /**
@@ -119,5 +122,103 @@ describe('mutationErrorMessage', () => {
     expect(mutationErrorMessage(new Error('   '))).toBe('The request failed.')
     expect(mutationErrorMessage(undefined)).toBe('The request failed.')
     expect(mutationErrorMessage(null)).toBe('The request failed.')
+  })
+})
+
+/**
+ * NF34: Import's hand-rolled `.ok` check omitted the `HTTP nnn:` prefix that
+ * the other six raw renderers keep, so a failed import showed a bare JSON blob
+ * with no way to tell a 404 from a 500. Its `throw` also sat inside the `try`
+ * meant to parse the body, so its own `catch` swallowed the parsed message —
+ * the JSON branch was unreachable from the day it was written.
+ */
+describe('Import renders a failure the same shape as the other dialogs', () => {
+  const importDialog = readFileSync(
+    join(__dirname, '..', 'components', 'ImportSessionDialog.tsx'),
+    'utf8',
+  )
+
+  it('goes through throwIfNotOk rather than its own check', () => {
+    expect(importDialog).toContain("import { throwIfNotOk } from '@/lib/api-error'")
+    expect(importDialog).toContain('await throwIfNotOk(')
+    expect(importDialog).not.toMatch(/if \(!res\.ok\)/)
+  })
+
+  it('prefixes the status on a 500 with a Fastify envelope', async () => {
+    const res = new Response(
+      JSON.stringify({ statusCode: 500, error: 'Internal Server Error', message: 'boom' }),
+      { status: 500 },
+    )
+    await expect(throwIfNotOk(res)).rejects.toThrow('HTTP 500: boom')
+  })
+
+  it('prefixes the status on a 404 refusal', async () => {
+    const res = new Response(JSON.stringify({ error: 'Project not found: abc' }), { status: 404 })
+    await expect(throwIfNotOk(res)).rejects.toThrow('HTTP 404: Project not found: abc')
+  })
+
+  it('prefixes the status on a 400 with no body at all', async () => {
+    await expect(throwIfNotOk(new Response('', { status: 400 }))).rejects.toThrow('HTTP 400')
+  })
+})
+
+describe('findUnprefixedErrorThrows', () => {
+  it('catches the exact code NF34 was filed against', () => {
+    const found = findUnprefixedErrorThrows(
+      'ImportSessionDialog.tsx',
+      [
+        '      if (!res.ok) {',
+        '        const text = await res.text()',
+        '        try {',
+        '          const j = JSON.parse(text) as { error?: string }',
+        '          throw new Error(j.error ?? text)',
+        '        } catch {',
+        '          throw new Error(text || `HTTP ${res.status}`)',
+        '        }',
+        '      }',
+      ].join('\n'),
+    )
+    expect(found).toHaveLength(1)
+    expect(found[0].snippet).toBe('throw new Error(j.error ?? text)')
+  })
+
+  it('accepts a one-line guard that names the status', () => {
+    expect(
+      findUnprefixedErrorThrows(
+        'X.tsx',
+        ['if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`)'].join('\n'),
+      ),
+    ).toEqual([])
+  })
+
+  it('catches a one-line guard that does not', () => {
+    expect(
+      findUnprefixedErrorThrows('X.tsx', 'if (!res.ok) throw new Error(await res.text())'),
+    ).toHaveLength(1)
+  })
+
+  it('ignores throws outside a status guard', () => {
+    expect(
+      findUnprefixedErrorThrows(
+        'X.tsx',
+        "if (!file || !projectId) throw new Error('missing input')",
+      ),
+    ).toEqual([])
+  })
+
+  it('leaves no unprefixed throw anywhere the app checks a status itself', () => {
+    const web = join(__dirname, '..')
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+        if (e.name === 'node_modules' || e.name.startsWith('.')) return []
+        const p = join(dir, e.name)
+        if (e.isDirectory()) return walk(p)
+        return /\.tsx?$/.test(e.name) && !e.name.includes('.test.') ? [p] : []
+      })
+
+    const offenders = walk(web).flatMap((f) =>
+      findUnprefixedErrorThrows(f.slice(web.length + 1), readFileSync(f, 'utf8')),
+    )
+    expect(offenders).toEqual([])
   })
 })

@@ -76,3 +76,131 @@ export function findUnannouncedErrorSurfaces(
 
   return found
 }
+
+/* ------------------------------------------------------------------------ *
+ * Where the box sits, as opposed to whether it speaks (NF32).
+ * ------------------------------------------------------------------------ */
+
+/**
+ * `DialogError`'s default `mx-4 mb-3` is a gutter for the shells that have no
+ * padding of their own — the hand-rolled panels, where the message sits flush
+ * between a padded body and a padded footer. Render it somewhere the panel has
+ * *already* inset its content and that gutter stacks on top: 32 px in, while
+ * every sibling sits at 16.
+ *
+ * That is NF32, and it is the mirror image of what NF30 fixed. The seven
+ * dialogs batch-17 converted all pass `mx-0 mb-0` for exactly this reason;
+ * Kill, the one dialog the batch had no reason to open, did not — its
+ * `DialogError` is a direct child of `DialogContent`, which is `p-4`.
+ *
+ * The rule is not about the immediate parent — Delete Project's is `py-2`,
+ * with the 16 px coming from the `DialogContent` above it. It is about the
+ * whole chain: **drop the gutter if and only if some ancestor between the
+ * message and the dialog panel already insets it horizontally.** Nothing in
+ * the type system can say that, so this scanner does — the same tripwire shape
+ * as `findUnannouncedErrorSurfaces`, applied to the other half of the element.
+ */
+
+/** Tags whose padding lives in the component rather than at the call site. */
+const SELF_PADDED_TAGS = new Set(['DialogContent'])
+/** A horizontal padding utility — `p-4`, `px-3`, `pl-2`, `px-[2px]`. */
+const PADS_HORIZONTALLY = /\bp[xl]?-(?:\d|\[)/
+/** The opt-out of the default gutter. */
+const GUTTER_DROPPED = /\bmx-0\b/
+/**
+ * Where the walk stops. Above the panel is the backdrop, whose own `p-4` is
+ * the gap between the dialog and the viewport, not an inset on its content.
+ */
+const PANEL_TAGS = new Set(['DialogContent'])
+const PANEL_ATTR = /role="dialog"/
+
+export interface DialogErrorInset {
+  file: string
+  line: number
+  /** The chain from the message out to the dialog panel, innermost first. */
+  ancestors: string[]
+  /** Does anything in that chain already inset the message horizontally? */
+  insetByAncestor: boolean
+  /** Does the call site drop `DialogError`'s own gutter? */
+  gutterDropped: boolean
+}
+
+/** An element's full opening tag, which may span several lines. */
+function openingTagFrom(lines: string[], start: number): string {
+  let open = ''
+  for (let j = start; j < lines.length; j++) {
+    open += lines[j]
+    if (/>\s*$/.test(lines[j])) break
+  }
+  return open
+}
+
+/**
+ * The chain of enclosing elements, innermost first, up to and including the
+ * dialog panel.
+ *
+ * Indentation is the nesting signal: these files are uniformly formatted, and
+ * an AST walk would be a parser's worth of machinery to answer one question.
+ * Lines that open no element — `) : (`, `{cond && (`, a closing tag — are
+ * stepped over rather than treated as ancestors, which is what makes a message
+ * inside a ternary branch resolve to the element that branch renders into.
+ */
+function ancestorChain(lines: string[], from: number, indent: number): { tag: string; open: string }[] {
+  const chain: { tag: string; open: string }[] = []
+  let ceiling = indent
+
+  for (let i = from - 1; i >= 0; i--) {
+    const line = lines[i]
+    if (!line.trim()) continue
+    const lineIndent = line.length - line.trimStart().length
+    if (lineIndent >= ceiling) continue
+
+    const opens = /^<([A-Za-z][\w.]*)/.exec(line.trim())
+    if (!opens) continue
+
+    const open = openingTagFrom(lines, i)
+    chain.push({ tag: opens[1], open })
+    ceiling = lineIndent
+
+    if (PANEL_TAGS.has(opens[1]) || PANEL_ATTR.test(open)) break
+  }
+
+  return chain
+}
+
+/** Every `<DialogError` call site, with the two facts that have to agree. */
+export function findDialogErrorInsets(file: string, source: string): DialogErrorInset[] {
+  const lines = source.split('\n')
+  const sites: DialogErrorInset[] = []
+
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^<DialogError\b/.test(lines[i].trim())) continue
+
+    // The call itself may be one line or four.
+    let call = ''
+    for (let j = i; j < lines.length; j++) {
+      call += lines[j]
+      if (/\/>\s*$/.test(lines[j])) break
+    }
+
+    const indent = lines[i].length - lines[i].trimStart().length
+    const chain = ancestorChain(lines, i, indent)
+
+    sites.push({
+      file,
+      line: i + 1,
+      ancestors: chain.map((a) => a.tag),
+      insetByAncestor: chain.some(
+        (a) => SELF_PADDED_TAGS.has(a.tag) || PADS_HORIZONTALLY.test(a.open),
+      ),
+      gutterDropped: GUTTER_DROPPED.test(call),
+    })
+  }
+
+  return sites
+}
+
+/** The sites whose gutter does not match the inset they already sit in. */
+export function findMisinsetDialogErrors(file: string, source: string): DialogErrorInset[] {
+  return findDialogErrorInsets(file, source).filter((s) => s.insetByAncestor !== s.gutterDropped)
+}

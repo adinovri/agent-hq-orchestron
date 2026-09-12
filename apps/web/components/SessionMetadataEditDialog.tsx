@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useId } from 'react'
 import { Button } from '@/components/ui/button'
 import type { AgentType, EffortLevel, SessionStatus } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
@@ -46,6 +46,14 @@ export function SessionMetadataEditDialog({
   open, agentType, status, currentModel, currentEffort, currentUseTmux, defaultModel, defaultEffort,
   pending, error, onClose, onConfirm,
 }: Props) {
+  /* Ids for the label/control pairs below. Every `<select>` in this app was
+   * labelled only by an adjacent `<label>` with no `for`, so a screen reader
+   * announced an unnamed combobox (NF33, axe `select-name`, critical).
+   * `useId` rather than a literal: this is a component, and a literal id is a
+   * duplicate the moment one is mounted twice — at which point every label
+   * silently points at the first copy's control. It is also what keeps the id
+   * stable across the server render Next does before hydration. */
+  const uid = useId()
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState('')
   const [useTmux, setUseTmux] = useState(true)
@@ -111,17 +119,20 @@ export function SessionMetadataEditDialog({
 
         <div className="px-4 py-3 space-y-3">
           <div>
-            <label className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">
+            <label htmlFor={`${uid}-model`} className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">
               Model {!currentModel && defaultModel && (
                 <span className="text-zinc-400 font-normal">(inherits project: {defaultModel})</span>
               )}
             </label>
+            {/* One id on both branches: only one of them is ever mounted, so
+              * the label lands on whichever control the harness earned. */}
             {hasCuratedModels ? (
-              <select className={inputCls} value={model} onChange={(e) => setModel(e.target.value)} disabled={pending}>
+              <select id={`${uid}-model`} className={inputCls} value={model} onChange={(e) => setModel(e.target.value)} disabled={pending}>
                 {models.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
               </select>
             ) : (
               <input
+                id={`${uid}-model`}
                 type="text"
                 className={inputCls}
                 value={model}
@@ -133,12 +144,12 @@ export function SessionMetadataEditDialog({
           </div>
 
           <div>
-            <label className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">
+            <label htmlFor={`${uid}-effort`} className="text-xs font-medium block mb-1 text-zinc-700 dark:text-zinc-300">
               Effort {!currentEffort && defaultEffort && (
                 <span className="text-zinc-400 font-normal">(inherits project: {defaultEffort})</span>
               )}
             </label>
-            <select className={inputCls} value={effort} onChange={(e) => setEffort(e.target.value)} disabled={pending}>
+            <select id={`${uid}-effort`} className={inputCls} value={effort} onChange={(e) => setEffort(e.target.value)} disabled={pending}>
               {efforts.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
             </select>
           </div>
