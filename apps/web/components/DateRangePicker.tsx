@@ -36,6 +36,7 @@ export function DateRangePicker({ from, to, onChange }: Props) {
       ))}
       <input
         type="date"
+        aria-label="From date"
         value={from}
         onChange={(e) => onChange(e.target.value, to)}
         className="h-8 px-2 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm"
@@ -43,6 +44,7 @@ export function DateRangePicker({ from, to, onChange }: Props) {
       <span className="text-zinc-400">–</span>
       <input
         type="date"
+        aria-label="To date"
         value={to}
         onChange={(e) => onChange(from, e.target.value)}
         className="h-8 px-2 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm"

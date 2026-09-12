@@ -108,6 +108,7 @@ export function FilterBar({ filters, projects, allTags, onChange }: Props) {
       {/* Date range */}
       <input
         type="date"
+        aria-label="From date"
         value={filters.from}
         onChange={(e) => onChange({ from: e.target.value })}
         className="h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm focus:outline-none"
@@ -115,6 +116,7 @@ export function FilterBar({ filters, projects, allTags, onChange }: Props) {
       <span className="text-zinc-400 text-sm self-center">–</span>
       <input
         type="date"
+        aria-label="To date"
         value={filters.to}
         onChange={(e) => onChange({ to: e.target.value })}
         className="h-9 px-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-sm focus:outline-none"

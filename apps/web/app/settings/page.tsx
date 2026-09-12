@@ -41,7 +41,12 @@ function CopyableCommand({ command }: { command: string }) {
   }
   return (
     <div className="relative group">
-      <pre className="text-xs font-mono bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 px-3 py-2 pr-9 rounded overflow-x-auto whitespace-pre">
+      <pre
+        tabIndex={0}
+        role="group"
+        aria-label="Restart command"
+        className="text-xs font-mono bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 px-3 py-2 pr-9 rounded overflow-x-auto whitespace-pre focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+      >
         {command}
       </pre>
       <button

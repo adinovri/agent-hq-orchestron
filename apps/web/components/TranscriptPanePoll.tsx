@@ -178,7 +178,12 @@ function EntryView({ entry, uuid, answered, prev }: { entry: Entry; uuid: string
           <span className="text-zinc-400">({entry.content.length.toLocaleString()} chars)</span>
         </button>
         {expanded && (
-          <pre className="mt-1 text-[11px] bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono text-zinc-700 dark:text-zinc-300 max-h-64 overflow-y-auto">
+          <pre
+            tabIndex={0}
+            role="group"
+            aria-label="Tool result"
+            className="mt-1 text-[11px] bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded p-2 overflow-x-auto whitespace-pre-wrap font-mono text-zinc-700 dark:text-zinc-300 max-h-64 overflow-y-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+          >
             {entry.content}
           </pre>
         )}

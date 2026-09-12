@@ -99,6 +99,39 @@ describe('findUnnamedFormControls', () => {
     ).toHaveLength(1)
   })
 
+  it('flags a bare date input — the NF35 shape', () => {
+    const found = findUnnamedFormControls(
+      'X.tsx',
+      [
+        '<input',
+        '  type="date"',
+        '  value={filters.from}',
+        '  className="h-9 px-2"',
+        '/>',
+      ].join('\n'),
+    )
+    expect(found).toHaveLength(1)
+    expect(found[0]).toMatchObject({ tag: 'input', reason: 'no-id-no-aria' })
+  })
+
+  it('accepts a named date input', () => {
+    expect(
+      findUnnamedFormControls(
+        'X.tsx',
+        ['<input', '  type="date"', '  aria-label="From date"', '  value={from}', '/>'].join('\n'),
+      ),
+    ).toEqual([])
+  })
+
+  it('does not let a placeholder name a date input — browsers ignore it there', () => {
+    expect(
+      findUnnamedFormControls(
+        'X.tsx',
+        ['<input', '  type="date"', '  placeholder="yyyy-mm-dd"', '/>'].join('\n'),
+      ),
+    ).toHaveLength(1)
+  })
+
   it('leaves text inputs alone — axe accepts their placeholder as a name', () => {
     expect(
       findUnnamedFormControls(
@@ -122,6 +155,14 @@ describe('every reachable select and file input has an accessible name', () => {
       0,
     )
     expect(selects).toBe(19)
+  })
+
+  it('scans the four date inputs NF35 was about', () => {
+    const dates = files.reduce(
+      (n, f) => n + (readFileSync(f, 'utf8').match(/type="date"/g)?.length ?? 0),
+      0,
+    )
+    expect(dates).toBe(4)
   })
 
   it('reports none unnamed', () => {

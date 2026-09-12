@@ -9,19 +9,34 @@
  * "combobox, e2e-claude" and nothing about what is being chosen. NF30 made a
  * dialog's *failure* audible; this is the *form* still being partly mute.
  *
- * Scope is deliberately the two control kinds axe actually flagged:
+ * Scope is the control kinds for which a `placeholder` cannot stand in as the
+ * accessible name — which is the property axe is actually measuring, not the
+ * list of nodes it happened to flag on one run:
  *
  *   • **`<select>`** — `placeholder` is not valid on it, so an unassociated
  *     label is the whole accessible name story. Ten dialogs, nineteen nodes.
  *   • **`<input type="file">`** — Import's, the one text-ish control in any
  *     dialog with no placeholder to fall back on (`label`, critical).
+ *   • **`<input type="date">`** — added for NF35. Browsers render their own
+ *     date UI and **ignore `placeholder` entirely** on this type, so axe's
+ *     `non-empty-placeholder` escape is unavailable by construction, exactly
+ *     as it is for the two above. Four nodes: the `/dashboard` filter pair and
+ *     the `/metrics` range pair.
  *
- * Text inputs and textareas are left out on purpose rather than by oversight:
- * axe's `label` rule accepts `non-empty-placeholder`, every one of them has a
- * placeholder, and widening the scanner to them would report failures axe does
- * not — a tripwire that cries wolf gets deleted. Checkboxes are out for the
- * opposite reason: they are wrapped in their `<label>`, which is an implicit
- * association a regex cannot see, so they would be false positives.
+ * NF35 is worth reading as a scoping lesson rather than a miss. The original
+ * scope — "the kinds axe flagged" — was sound reasoning over an incomplete
+ * input: axe had only ever been run inside `[role="dialog"]`, and there is no
+ * date input in any dialog. Page-scope axe found them the moment it was run.
+ * The scope is now stated as the *property* (no placeholder fallback), so the
+ * next control kind with that property is in scope before a sweep finds it.
+ *
+ * Text inputs and textareas are still left out on purpose rather than by
+ * oversight: axe's `label` rule accepts `non-empty-placeholder`, every one of
+ * them has a placeholder, and widening the scanner to them would report
+ * failures axe does not — a tripwire that cries wolf gets deleted. Checkboxes
+ * are out for the opposite reason: they are wrapped in their `<label>`, which
+ * is an implicit association a regex cannot see, so they would be false
+ * positives.
  */
 
 /**
@@ -62,8 +77,12 @@ function openingTag(lines: string[], start: number): string {
   return open
 }
 
+/** The `input` types in scope — those where `placeholder` names nothing. */
+const NAMEABLE_INPUT_TYPES = /type="(file|date)"/
+
 /**
- * Every `<select>` or file input that a screen reader would announce unnamed.
+ * Every `<select>`, file input or date input a screen reader would announce
+ * unnamed.
  *
  * Textual rather than an AST walk, for the same reason as
  * `findUnannouncedErrorSurfaces`: the invariant is "whoever adds the next
@@ -84,7 +103,7 @@ export function findUnnamedFormControls(file: string, source: string): UnnamedCo
 
     const open = openingTag(lines, i)
     const tag = /^<(select|input)\b/.exec(trimmed)![1]
-    if (tag === 'input' && !/type="file"/.test(open)) continue
+    if (tag === 'input' && !NAMEABLE_INPUT_TYPES.test(open)) continue
 
     if (VISUALLY_REMOVED.test(open) && !UNHIDDEN_AT_BREAKPOINT.test(open)) continue
     if (DIRECT_NAME.test(open)) continue

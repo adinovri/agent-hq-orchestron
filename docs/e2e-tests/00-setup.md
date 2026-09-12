@@ -447,3 +447,72 @@ the report — the same rule as restarting the deployed instance.
 Confirm it from the browser as well, which is the reading that cannot be
 faked by a timestamp: the footer prints the sha of the running build,
 and it should equal the sweep's `BASE_SHA`.
+
+## 11. Accessibility: run axe at **both** scopes
+
+Every sweep from the NF30 pass onwards ran axe, and every one of them ran
+it the same way:
+
+```js
+await axe.run(document.querySelector('[role="dialog"]'), {
+  runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] },
+})
+```
+
+That scope was chosen when the findings under test were about dialogs,
+and it was right for them. What nobody noticed is that it also *defines
+what can ever be found*: a control outside a dialog is not merely
+unreported, it is invisible. Four unnamed date inputs (NF35) and a
+scrollable `<pre>` with no keyboard route in (NF36) sat in `main` across
+five sweeps, on two of the most-visited pages in the app, because no run
+ever looked at a page.
+
+So: **a sweep runs axe at page scope on every page it visits, and at
+dialog scope on every dialog it opens.** Not one or the other.
+
+```js
+// page scope — once per route, before opening anything
+await axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] } })
+
+// dialog scope — once per dialog, while it is open
+await axe.run(document.querySelector('[role="dialog"]'), {
+  runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] },
+})
+```
+
+Routes that count as "every page": `/dashboard`, `/metrics`, `/projects`,
+`/schedules`, `/settings`, and a session detail page.
+
+### Do not add the two scopes together
+
+Base UI puts `role="dialog"` on the *same element* that carries
+`data-slot="dialog-content"`. A page-scope run therefore already contains
+every node a dialog-scope run reports, and summing the two counts each
+violation twice. Report them as two readings of overlapping regions, and
+when you quote a single total, quote the page-scope one.
+
+### Read the impact, not just the count
+
+A page-scope baseline is not zero and is not expected to be. `/dashboard`
+carries a standing `color-contrast` population (10 nodes at `29081b5`)
+that is a design decision, not a defect queue. What a sweep watches is
+the **critical** and **serious** rules — `label`, `select-name`,
+`scrollable-region-focusable`, `aria-prohibited-attr` — and whether the
+contrast count *grew*. A count that holds is a pass; a count that grew is
+a finding even when every individual node looks familiar.
+
+### Two source scanners stand in for axe between sweeps
+
+`apps/web` has no DOM in its vitest config, so neither of these runs axe.
+They assert the source-level property axe measures, and they fail in CI
+long before a sweep would catch a regression:
+
+| scanner | rule it stands in for | scope |
+|---|---|---|
+| `lib/form-labels.ts` | `label`, `select-name` | every `<select>`, `input[type=file]`, `input[type=date]` |
+| `lib/scroll-regions.ts` | `scrollable-region-focusable`, `aria-prohibited-attr` | every `<pre>` that can produce a scrollbar |
+
+Both pin a count of the controls they scan. A scanner that quietly stops
+matching passes vacuously, which is worse than no scanner — so when a
+count assertion fails, the fix is to re-read the scanner, not to bump the
+number.
