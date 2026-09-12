@@ -10,6 +10,7 @@ import { registerDoctor } from './commands/doctor.js'
 import { registerMetrics } from './commands/metrics.js'
 import { registerWatch } from './commands/watch.js'
 import { registerBatch } from './commands/batch.js'
+import { registerRepl } from './commands/repl.js'
 
 /**
  * A reader that stops reading is not an error (NEW-1).
@@ -57,6 +58,7 @@ registerDoctor(program)
 registerMetrics(program)
 registerWatch(program)
 registerBatch(program)
+registerRepl(program)
 
 program.parseAsync(process.argv).catch((e: unknown) => {
   process.stderr.write(String(e) + '\n')
