@@ -7,6 +7,9 @@ import { StatusBar } from './components/StatusBar.js'
 import { Dashboard } from './screens/Dashboard.js'
 import { SessionDetail } from './screens/SessionDetail.js'
 import { SpawnScreen } from './screens/SpawnScreen.js'
+import { SchedulesScreen } from './screens/SchedulesScreen.js'
+import { ProjectsScreen } from './screens/ProjectsScreen.js'
+import { SettingsScreen } from './screens/SettingsScreen.js'
 import { useApi } from './hooks/useApi.js'
 import type { ApiConfig } from './hooks/useApi.js'
 
@@ -24,7 +27,7 @@ const TOKEN = values.token as string | undefined
 
 const config: ApiConfig = { baseUrl: BASE_URL, token: TOKEN }
 
-type Screen = 'dashboard' | 'detail' | 'spawn'
+type Screen = 'dashboard' | 'detail' | 'spawn' | 'schedules' | 'projects' | 'settings'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('dashboard')
@@ -66,6 +69,24 @@ function App() {
   const onQuit = useCallback(() => {
     process.exit(0)
   }, [])
+
+  const onBackToDashboard = useCallback(() => {
+    setScreen('dashboard')
+  }, [])
+
+  // Global keybinds for top-level screen switching (only when not in command mode or a sub-screen)
+  useInput(
+    useCallback(
+      (input, key) => {
+        if (commandMode) return
+        if (screen !== 'dashboard') return
+        if (input === 'S') setScreen('schedules')
+        else if (input === 'P') setScreen('projects')
+        else if (input === ',') setScreen('settings')
+      },
+      [commandMode, screen],
+    ),
+  )
 
   // Command palette input handling
   useInput(
@@ -126,6 +147,18 @@ function App() {
 
       {screen === 'spawn' && (
         <SpawnScreen config={config} onDone={onSpawnDone} onStatus={onStatus} />
+      )}
+
+      {screen === 'schedules' && (
+        <SchedulesScreen config={config} onBack={onBackToDashboard} />
+      )}
+
+      {screen === 'projects' && (
+        <ProjectsScreen config={config} onBack={onBackToDashboard} />
+      )}
+
+      {screen === 'settings' && (
+        <SettingsScreen onBack={onBackToDashboard} />
       )}
 
       {commandMode && (

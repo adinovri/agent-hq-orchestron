@@ -13,7 +13,7 @@ export function Header({ baseUrl }: Props) {
       </Text>
       <Text color="gray">  {baseUrl}</Text>
       <Box flexGrow={1} />
-      <Text color="gray">j/k nav  Enter open  n spawn  q quit  / cmd</Text>
+      <Text color="gray">j/k nav  Enter open  n spawn  S sched  P proj  , settings  q quit  / cmd</Text>
     </Box>
   )
 }
