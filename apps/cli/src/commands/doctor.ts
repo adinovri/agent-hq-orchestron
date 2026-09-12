@@ -1,11 +1,13 @@
 import type { Command } from 'commander'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { mkdirSync, writeFileSync, unlinkSync, statfsSync } from 'node:fs'
+import { mkdirSync, writeFileSync, unlinkSync, statfsSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import pc from 'picocolors'
 import Table from 'cli-table3'
+import { resolveConfigPath, LEGACY_TOKEN_KEY } from '@agent-hq-orchestron/shared'
+import { readRawConfig, resolveApiBase } from '../helpers/api.js'
 import type { JsonEnvelope } from '../helpers/output.js'
 
 const execFileAsync = promisify(execFile)
@@ -75,6 +77,78 @@ async function checkFilesystem(): Promise<CheckResult[]> {
   return results
 }
 
+async function checkOrchestraConfig(): Promise<CheckResult[]> {
+  const results: CheckResult[] = []
+  const cfgPath = resolveConfigPath()
+
+  if (!existsSync(cfgPath)) {
+    results.push({
+      name: 'Config file',
+      status: 'warn',
+      hint: `Not found at ${cfgPath} — run \`orchestron serve\` once to create it`,
+      critical: false,
+    })
+    results.push({ name: 'Remote token', status: 'skip', hint: 'No config file', critical: false })
+    return results
+  }
+  results.push({ name: 'Config file', status: 'pass', version: cfgPath, critical: false })
+
+  const cfg = readRawConfig()
+  const hasToken =
+    (typeof cfg['remoteToken'] === 'string' && cfg['remoteToken'].length > 0) ||
+    (typeof cfg[LEGACY_TOKEN_KEY] === 'string' && (cfg[LEGACY_TOKEN_KEY] as string).length > 0)
+  results.push({
+    name: 'Remote token',
+    status: hasToken ? 'pass' : 'warn',
+    hint: hasToken ? undefined : 'Not set — run `orchestron token rotate` to generate one',
+    critical: false,
+  })
+
+  return results
+}
+
+async function checkApiReachable(): Promise<CheckResult> {
+  const base = resolveApiBase()
+  const url = `${base}/api/readiness`
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 3000)
+    let res: Response
+    try {
+      res = await fetch(url, { signal: controller.signal })
+    } finally {
+      clearTimeout(timer)
+    }
+    if (res.ok) {
+      return { name: `API (${base})`, status: 'pass', version: 'ready', critical: false }
+    }
+    if (res.status === 503) {
+      return {
+        name: `API (${base})`,
+        status: 'warn',
+        version: 'not_ready',
+        hint: 'Server is up but not ready — check storage / adapters',
+        critical: false,
+      }
+    }
+    return {
+      name: `API (${base})`,
+      status: 'fail',
+      hint: `HTTP ${res.status} — is \`orchestron serve\` running?`,
+      critical: false,
+    }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    const short = msg.includes('AbortError') || msg.includes('abort') ? 'timed out (3 s)' : msg.slice(0, 80)
+    return {
+      name: `API (${base})`,
+      status: 'fail',
+      hint: `Cannot connect: ${short} — is \`orchestron serve\` running?`,
+      critical: false,
+    }
+  }
+}
+
 function statusIcon(status: CheckResult['status']): string {
   switch (status) {
     case 'pass': return pc.green('✓')
@@ -102,7 +176,9 @@ export function registerDoctor(program: Command): void {
 
       const binaryResults = await Promise.all(checks)
       const fsResults = await checkFilesystem()
-      const allResults = [...binaryResults, ...fsResults]
+      const cfgResults = await checkOrchestraConfig()
+      const apiResult = await checkApiReachable()
+      const allResults = [...binaryResults, ...fsResults, ...cfgResults, apiResult]
 
       const criticalFailures = allResults.filter((r) => r.status === 'fail' && r.critical)
 
