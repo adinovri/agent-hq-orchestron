@@ -8,6 +8,8 @@ import { registerSchedule } from './commands/schedule.js'
 import { registerQr } from './commands/qr.js'
 import { registerDoctor } from './commands/doctor.js'
 import { registerMetrics } from './commands/metrics.js'
+import { registerWatch } from './commands/watch.js'
+import { registerBatch } from './commands/batch.js'
 
 /**
  * A reader that stops reading is not an error (NEW-1).
@@ -53,6 +55,8 @@ registerSchedule(program)
 registerQr(program)
 registerDoctor(program)
 registerMetrics(program)
+registerWatch(program)
+registerBatch(program)
 
 program.parseAsync(process.argv).catch((e: unknown) => {
   process.stderr.write(String(e) + '\n')
