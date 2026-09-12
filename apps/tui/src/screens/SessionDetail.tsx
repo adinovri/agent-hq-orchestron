@@ -14,7 +14,7 @@ interface Props {
 interface TranscriptEntry {
   seq: number
   timestamp: string
-  kind: 'user' | 'assistant' | 'tool_use' | 'tool_result'
+  kind: 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'aside'
   toolName?: string
   content: string
 }
@@ -26,18 +26,18 @@ interface TranscriptResponse {
 
 type ConfirmAction = 'reopen' | 'fork' | 'respawn' | 'archive' | 'kill' | null
 
-const KIND_COLOR: Record<string, string> = {
-  user: 'cyan',
-  assistant: 'green',
-  tool_use: 'yellow',
-  tool_result: 'gray',
+interface RoleStyle {
+  prefix: string
+  color: string
+  dim: boolean
 }
 
-const KIND_LABEL: Record<string, string> = {
-  user: 'user',
-  assistant: 'assistant',
-  tool_use: 'tool',
-  tool_result: 'result',
+const ROLE_STYLE: Record<string, RoleStyle> = {
+  assistant: { prefix: '◆', color: 'cyan', dim: false },
+  user: { prefix: '▸', color: 'white', dim: false },
+  tool_use: { prefix: '⚙', color: 'gray', dim: true },
+  tool_result: { prefix: '↳', color: 'gray', dim: true },
+  aside: { prefix: '⚠', color: 'yellow', dim: false },
 }
 
 export function SessionDetail({ session, config, onBack, onStatus }: Props) {
@@ -149,16 +149,25 @@ export function SessionDetail({ session, config, onBack, onStatus }: Props) {
       )}
 
       <Box flexDirection="column" paddingX={1}>
-        {visible.map((entry) => (
-          <Box key={entry.seq} flexDirection="row" marginBottom={0}>
-            <Text color={KIND_COLOR[entry.kind] ?? 'white'} bold>
-              {(entry.toolName ? `${KIND_LABEL[entry.kind]}:${entry.toolName}` : KIND_LABEL[entry.kind]).slice(0, 20).padEnd(20)}
-            </Text>
-            <Box flexGrow={1}>
-              <Text wrap="wrap">{entry.content.slice(0, 160)}</Text>
+        {visible.map((entry) => {
+          const style = ROLE_STYLE[entry.kind] ?? { prefix: ' ', color: 'white', dim: false }
+          const label =
+            entry.kind === 'tool_use' && entry.toolName
+              ? `${style.prefix} ${entry.toolName.slice(0, 18)}`
+              : style.prefix
+          return (
+            <Box key={entry.seq} flexDirection="row" marginBottom={0}>
+              <Text color={style.color} dimColor={style.dim} bold={!style.dim}>
+                {label.padEnd(entry.kind === 'tool_use' ? 21 : 3)}
+              </Text>
+              <Box flexGrow={1} paddingLeft={entry.kind === 'tool_result' ? 2 : 0}>
+                <Text color={style.color} dimColor={style.dim} wrap="wrap">
+                  {entry.content.slice(0, 160)}
+                </Text>
+              </Box>
             </Box>
-          </Box>
-        ))}
+          )
+        })}
         {entries.length === 0 && !error && (
           <Text color="gray">No transcript yet — session may still be spawning…</Text>
         )}
