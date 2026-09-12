@@ -8,6 +8,7 @@ import {
   ShieldCheck, ShieldOff, Palette,
 } from 'lucide-react'
 import { ThemeSelect } from '@/components/ThemeSwitcher'
+import { commandRegionLabel, commandCopyLabel } from '@/lib/accessible-names'
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -30,7 +31,17 @@ function Section({ title, icon, children }: { title: string; icon: React.ReactNo
   )
 }
 
-function CopyableCommand({ command }: { command: string }) {
+/**
+ * A command the operator is meant to paste elsewhere.
+ *
+ * Both names here are derived from `command` rather than written out, because
+ * this component is rendered three times on this page with three different
+ * commands and a fixed name is only true for one of them — NF37, where the
+ * token-rotation block announced itself as "Restart command". `label` is an
+ * override for a call site with a better name; it is not needed for the
+ * default to be correct. See `lib/accessible-names.ts`.
+ */
+function CopyableCommand({ command, label }: { command: string; label?: string }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
     try {
@@ -44,7 +55,7 @@ function CopyableCommand({ command }: { command: string }) {
       <pre
         tabIndex={0}
         role="group"
-        aria-label="Restart command"
+        aria-label={commandRegionLabel(command, label)}
         className="text-xs font-mono bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 px-3 py-2 pr-9 rounded overflow-x-auto whitespace-pre focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
       >
         {command}
@@ -52,6 +63,7 @@ function CopyableCommand({ command }: { command: string }) {
       <button
         onClick={copy}
         className="absolute top-1.5 right-1.5 p-1 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors"
+        aria-label={commandCopyLabel(command, copied, label)}
         title={copied ? 'Copied' : 'Copy'}
       >
         {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}

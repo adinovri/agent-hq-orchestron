@@ -494,12 +494,65 @@ when you quote a single total, quote the page-scope one.
 ### Read the impact, not just the count
 
 A page-scope baseline is not zero and is not expected to be. `/dashboard`
-carries a standing `color-contrast` population (10 nodes at `29081b5`)
-that is a design decision, not a defect queue. What a sweep watches is
-the **critical** and **serious** rules — `label`, `select-name`,
-`scrollable-region-focusable`, `aria-prohibited-attr` — and whether the
-contrast count *grew*. A count that holds is a pass; a count that grew is
-a finding even when every individual node looks familiar.
+carries a standing `color-contrast` population that is a design decision,
+not a defect queue. What a sweep watches is the **critical** and
+**serious** rules — `label`, `select-name`, `scrollable-region-focusable`,
+`aria-prohibited-attr`. That half works: it is what surfaced NF35 and
+NF36.
+
+### A count that grew is a question, not a finding
+
+This section used to end "a count that grew is a finding even when every
+individual node looks familiar", anchored to a remembered number (10
+nodes at `29081b5`). **Do not do that.** A page-scope count is a function
+of the fixture data as much as of the commit. On one fixed build,
+`/dashboard` reports 13 `color-contrast` nodes with no session cards
+rendered and 23 with fifteen — the nodes are per-card text, so the count
+tracks how busy the dashboard happens to be. The post-batch-19 sweep saw
+10 → 23 and, following the old rule literally, would have filed a
+regression that does not exist (NF38, `d246c95`).
+
+So when a count grows, **hold the data constant and compare against a
+live build of the parent commit** — not against a number from a previous
+sweep:
+
+```bash
+# 1. build the parent in a throwaway worktree
+git worktree add /tmp/ab-parent <parent-sha>
+cd /tmp/ab-parent && cp -al <main>/node_modules ./node_modules   # and per-workspace
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8091 npm run build          # the E2E API, same one
+PORT=3012 npm start -w apps/web                                  # a spare port, not 3011
+
+# 2. re-target the probes at it and run the identical axe
+E2E_WEB_BASE=http://127.0.0.1:3012 node probes/page-axe.mjs
+```
+
+Build from the worktree **root**, not `-w apps/web`: the web build needs
+`packages/shared` compiled first, and the root script is what orders them.
+
+`harness.mjs` honours `E2E_WEB_BASE` (default `http://127.0.0.1:3011`),
+which is what makes this cheap — every probe re-targets from the one
+variable, and no probe needs a parent-specific copy. Both builds must
+talk to the **same API on 8091**, or the data is not held constant and
+the comparison answers nothing.
+
+Then diff per route *and* per dialog:
+
+| route | HEAD | parent | verdict |
+|---|---|---|---|
+| `/dashboard` | 23 | 23 | same — data, not code |
+
+* **Identical per route and per dialog** → not a regression. Record the
+  pair and move on; do not file it, and do not carry the number forward
+  as a new baseline, because it will be wrong again next sweep.
+* **Parent lower** → a real finding. The delta is the code.
+* **Parent higher** → the batch fixed something it did not claim to.
+  Worth a line in the report.
+
+The build plus both runs take about two minutes. That is cheaper than a
+false finding, which costs a round trip to file and — the worse outcome —
+teaches the next sweep to ignore the contrast reading altogether, so that
+a real regression rides in behind the one that cried wolf.
 
 ### Two source scanners stand in for axe between sweeps
 
@@ -511,8 +564,19 @@ long before a sweep would catch a regression:
 |---|---|---|
 | `lib/form-labels.ts` | `label`, `select-name` | every `<select>`, `input[type=file]`, `input[type=date]` |
 | `lib/scroll-regions.ts` | `scrollable-region-focusable`, `aria-prohibited-attr` | every `<pre>` that can produce a scrollbar |
+| `lib/accessible-names.ts` | **none — see below** | every element whose whole content is one caller-supplied expression |
 
-Both pin a count of the controls they scan. A scanner that quietly stops
+The third one is not standing in for axe, because axe has no rule to
+stand in for. Every name check it ships — `button-name`, `label`,
+`aria-allowed-attr` — asks whether a name **exists**; none can ask
+whether it is **true**, since nothing in the DOM records what the element
+was supposed to be called. NF37 was a `<pre>` announcing
+`orchestron token rotate` as "Restart command" on a page axe reported
+clean at both scopes. The scanner asserts the property that removes the
+failure mode: when an element's content is entirely caller-supplied, its
+name has to be built from that content, so the two cannot drift apart.
+
+All three pin a count of the elements they scan. A scanner that quietly stops
 matching passes vacuously, which is worse than no scanner — so when a
 count assertion fails, the fix is to re-read the scanner, not to bump the
 number.
