@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { render, Box, Text, useInput } from 'ink'
 import { parseArgs } from 'node:util'
 import type { SessionMetadata } from '@agent-hq-orchestron/shared'
@@ -7,13 +7,18 @@ import { StatusBar } from './components/StatusBar.js'
 import { Dashboard } from './screens/Dashboard.js'
 import { SessionDetail } from './screens/SessionDetail.js'
 import { SpawnScreen } from './screens/SpawnScreen.js'
+import { AdoptWizard } from './screens/AdoptWizard.js'
+import { ImportWizard } from './screens/ImportWizard.js'
 import { SchedulesScreen } from './screens/SchedulesScreen.js'
+import { ScheduleWizard } from './screens/ScheduleWizard.js'
 import { ProjectsScreen } from './screens/ProjectsScreen.js'
 import { SettingsScreen } from './screens/SettingsScreen.js'
 import { MetricsScreen } from './screens/MetricsScreen.js'
 import { DiagnosticsScreen } from './screens/DiagnosticsScreen.js'
 import { DelegationGraph } from './screens/DelegationGraph.js'
 import { useApi } from './hooks/useApi.js'
+import { useToast } from './hooks/useToast.js'
+import { theme } from './hooks/useTheme.js'
 import type { ApiConfig } from './hooks/useApi.js'
 
 const { values } = parseArgs({
@@ -30,28 +35,66 @@ const TOKEN = values.token as string | undefined
 
 const config: ApiConfig = { baseUrl: BASE_URL, token: TOKEN }
 
-type Screen = 'dashboard' | 'detail' | 'spawn' | 'schedules' | 'projects' | 'settings' | 'metrics' | 'diagnostics' | 'delegation'
+type Screen =
+  | 'dashboard'
+  | 'detail'
+  | 'spawn'
+  | 'adopt'
+  | 'import'
+  | 'schedules'
+  | 'schedule-new'
+  | 'projects'
+  | 'settings'
+  | 'metrics'
+  | 'diagnostics'
+  | 'delegation'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('dashboard')
   const [selectedSession, setSelectedSession] = useState<SessionMetadata | null>(null)
-  const [statusMsg, setStatusMsg] = useState('Ready')
-  const [statusError, setStatusError] = useState(false)
   const [commandMode, setCommandMode] = useState(false)
   const [cmdInput, setCmdInput] = useState('')
 
-  // API returns { sessions: [...] }, not a bare array (see CLI session list for same fix)
-  const { data: sessionsData, error: sessionsError } = useApi<{ sessions: SessionMetadata[] }>(
+  const { latest: toast, push: pushToast } = useToast(5000)
+
+  const onStatus = useCallback(
+    (msg: string, isError = false) => {
+      pushToast(msg, isError ? 'error' : 'success')
+    },
+    [pushToast],
+  )
+
+  // Sessions poll for live-update notifications
+  const { data: sessionsData, error: sessionsError, reconnecting } = useApi<{ sessions: SessionMetadata[] }>(
     '/api/sessions',
     config,
     3000,
   )
   const sessions = sessionsData?.sessions ?? []
 
-  const onStatus = useCallback((msg: string, isError = false) => {
-    setStatusMsg(msg)
-    setStatusError(isError)
-  }, [])
+  // Live-update: track needs_input changes
+  const prevSessionsRef = useRef<SessionMetadata[]>([])
+  useEffect(() => {
+    const prev = prevSessionsRef.current
+    if (prev.length === 0 && sessions.length > 0) {
+      prevSessionsRef.current = sessions
+      return
+    }
+    const prevIds = new Set(prev.map((s) => s.id))
+    const newSessions = sessions.filter((s) => !prevIds.has(s.id))
+    if (newSessions.length > 0) {
+      pushToast(`New session started: ${newSessions[0].id.slice(0, 8)}`, 'info')
+    }
+    const needsInput = sessions.filter(
+      (s) =>
+        s.status === 'needs_input' &&
+        prev.find((p) => p.id === s.id)?.status !== 'needs_input',
+    )
+    if (needsInput.length > 0) {
+      pushToast(`Session ${needsInput[0].id.slice(0, 8)} needs input`, 'warn')
+    }
+    prevSessionsRef.current = sessions
+  }, [sessions, pushToast])
 
   const onOpen = useCallback((session: SessionMetadata) => {
     setSelectedSession(session)
@@ -84,23 +127,16 @@ function App() {
     setScreen('delegation')
   }, [])
 
-  const onNew = useCallback(() => {
-    setScreen('spawn')
-  }, [])
+  const onNew = useCallback(() => setScreen('spawn'), [])
+  const onAdopt = useCallback(() => setScreen('adopt'), [])
+  const onImport = useCallback(() => setScreen('import'), [])
 
-  const onSpawnDone = useCallback(() => {
-    setScreen('dashboard')
-  }, [])
+  const onSpawnDone = useCallback(() => setScreen('dashboard'), [])
+  const onQuit = useCallback(() => process.exit(0), [])
 
-  const onQuit = useCallback(() => {
-    process.exit(0)
-  }, [])
+  const onBackToDashboard = useCallback(() => setScreen('dashboard'), [])
 
-  const onBackToDashboard = useCallback(() => {
-    setScreen('dashboard')
-  }, [])
-
-  // Global keybinds for top-level screen switching (only when not in command mode or a sub-screen)
+  // Global keybinds for top-level screen switching
   useInput(
     useCallback(
       (input) => {
@@ -110,12 +146,14 @@ function App() {
         else if (input === 'P') setScreen('projects')
         else if (input === ',') setScreen('settings')
         else if (input === 'm') setScreen('metrics')
+        else if (input === 'A') onAdopt()
+        else if (input === 'I') onImport()
       },
-      [commandMode, screen],
+      [commandMode, screen, onAdopt, onImport],
     ),
   )
 
-  // Command palette input handling
+  // Command palette
   useInput(
     useCallback(
       (input, key) => {
@@ -128,6 +166,8 @@ function App() {
           if (cmd === 'quit' || cmd === 'q') process.exit(0)
           else if (cmd === 'dashboard') setScreen('dashboard')
           else if (cmd === 'spawn') setScreen('spawn')
+          else if (cmd === 'adopt') setScreen('adopt')
+          else if (cmd === 'import') setScreen('import')
           else if (cmd === 'metrics') setScreen('metrics')
           else if (cmd === 'schedules') setScreen('schedules')
           else if (cmd === 'projects') setScreen('projects')
@@ -143,6 +183,10 @@ function App() {
       [commandMode, cmdInput],
     ),
   )
+
+  const toastColor = toast
+    ? { error: 'red', warn: 'yellow', info: theme.accent, success: theme.success }[toast.level]
+    : theme.success
 
   return (
     <Box flexDirection="column" padding={0}>
@@ -190,8 +234,28 @@ function App() {
         <SpawnScreen config={config} onDone={onSpawnDone} onStatus={onStatus} />
       )}
 
+      {screen === 'adopt' && (
+        <AdoptWizard config={config} onDone={onSpawnDone} onStatus={onStatus} />
+      )}
+
+      {screen === 'import' && (
+        <ImportWizard config={config} onDone={onSpawnDone} onStatus={onStatus} />
+      )}
+
       {screen === 'schedules' && (
-        <SchedulesScreen config={config} onBack={onBackToDashboard} />
+        <SchedulesScreen
+          config={config}
+          onBack={onBackToDashboard}
+          onNew={() => setScreen('schedule-new')}
+        />
+      )}
+
+      {screen === 'schedule-new' && (
+        <ScheduleWizard
+          config={config}
+          onDone={() => setScreen('schedules')}
+          onStatus={onStatus}
+        />
       )}
 
       {screen === 'projects' && (
@@ -215,7 +279,18 @@ function App() {
         </Box>
       )}
 
-      <StatusBar message={statusMsg} isError={statusError} />
+      <StatusBar
+        message={toast?.message ?? 'Ready'}
+        level={toast?.level}
+        reconnecting={reconnecting}
+      />
+
+      {/* Theme indicator (only when non-default) */}
+      {theme.name !== 'default' && (
+        <Box paddingX={1}>
+          <Text color="gray" dimColor>theme: {theme.name}</Text>
+        </Box>
+      )}
     </Box>
   )
 }

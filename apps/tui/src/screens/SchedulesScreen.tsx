@@ -8,6 +8,7 @@ import { useState } from 'react'
 interface Props {
   config: ApiConfig
   onBack: () => void
+  onNew?: () => void
 }
 
 function nextFireLabel(cron: string): string {
@@ -22,10 +23,10 @@ function nextFireLabel(cron: string): string {
   }
 }
 
-export function SchedulesScreen({ config, onBack }: Props) {
+export function SchedulesScreen({ config, onBack, onNew }: Props) {
   const [cursor, setCursor] = useState(0)
 
-  const { data, error } = useApi<{ schedules: ScheduleEntry[] }>('/api/schedules', config, 10000)
+  const { data, error, loading } = useApi<{ schedules: ScheduleEntry[] }>('/api/schedules', config, 10000)
   const schedules = data?.schedules ?? []
 
   useInput(
@@ -37,9 +38,11 @@ export function SchedulesScreen({ config, onBack }: Props) {
           setCursor((c) => Math.max(c - 1, 0))
         } else if (_input === 'q' || key.escape) {
           onBack()
+        } else if (_input === 'C' && onNew) {
+          onNew()
         }
       },
-      [schedules.length, onBack],
+      [schedules.length, onBack, onNew],
     ),
   )
 
@@ -49,8 +52,12 @@ export function SchedulesScreen({ config, onBack }: Props) {
         <Text bold color="cyan">
           Schedules
         </Text>
-        <Text color="gray">  q/Esc back  j/k nav</Text>
+        <Text color="gray">  q/Esc back  j/k nav  C=new schedule</Text>
       </Box>
+
+      {loading && schedules.length === 0 && (
+        <Box paddingX={1}><Text color="gray" dimColor>Loading schedules…</Text></Box>
+      )}
 
       {error && <Text color="red">Error: {error}</Text>}
 

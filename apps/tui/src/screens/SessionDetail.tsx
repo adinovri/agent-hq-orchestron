@@ -8,6 +8,8 @@ import { ComposeBox } from '../components/ComposeBox.js'
 import { AskUserCard } from '../components/AskUserCard.js'
 import { MetadataEditDialog } from '../components/MetadataEditDialog.js'
 import { ExportDialog } from '../components/ExportDialog.js'
+import { KillConfirmWizard } from '../components/KillConfirmWizard.js'
+import { ReopenModeWizard } from '../components/ReopenModeWizard.js'
 
 interface Props {
   session: SessionMetadata
@@ -33,10 +35,10 @@ interface TranscriptResponse {
 
 type ModalMode =
   | 'none'
-  | 'confirm_kill'
-  | 'confirm_reopen'
-  | 'confirm_fork'
-  | 'confirm_respawn'
+  | 'kill_wizard'
+  | 'reopen_wizard'
+  | 'fork_wizard'
+  | 'respawn_wizard'
   | 'confirm_archive'
   | 'export'
   | 'metadata'
@@ -85,7 +87,7 @@ export function SessionDetail({ session, config, onBack, onStatus, onDiagnostics
   const [clipboardFallback, setClipboardFallback] = useState<string | null>(null)
 
   const transcriptUrl = `/api/sessions/${session.id}/transcript`
-  const { data, error, reload } = useApi<TranscriptResponse>(transcriptUrl, config, 3000)
+  const { data, error, loading: transcriptLoading, reconnecting, reload } = useApi<TranscriptResponse>(transcriptUrl, config, 3000)
 
   const entries = data?.entries ?? []
   const VISIBLE = 20
@@ -102,7 +104,7 @@ export function SessionDetail({ session, config, onBack, onStatus, onDiagnostics
   }, [])
 
   const doLifecycle = useCallback(
-    async (action: 'reopen' | 'fork' | 'respawn' | 'archive' | 'kill') => {
+    async (action: 'reopen' | 'fork' | 'respawn' | 'archive' | 'kill', useTmux?: boolean) => {
       if (busy) return
       setBusy(true)
       setModal('none')
@@ -114,13 +116,16 @@ export function SessionDetail({ session, config, onBack, onStatus, onDiagnostics
           await apiPost(`/api/sessions/${session.id}/archive`, {}, config)
           onStatus(`Archived ${session.id.slice(0, 8)}`)
         } else if (action === 'reopen') {
-          await apiPost(`/api/sessions/${session.id}/reopen`, {}, config)
+          const body = useTmux !== undefined ? { useTmux } : {}
+          await apiPost(`/api/sessions/${session.id}/reopen`, body, config)
           onStatus(`Reopened ${session.id.slice(0, 8)}`)
         } else if (action === 'respawn') {
-          await apiPost(`/api/sessions/${session.id}/respawn`, {}, config)
+          const body = useTmux !== undefined ? { useTmux } : {}
+          await apiPost(`/api/sessions/${session.id}/respawn`, body, config)
           onStatus(`Respawned ${session.id.slice(0, 8)}`)
         } else if (action === 'fork') {
-          await apiPost(`/api/sessions/${session.id}/clone`, {}, config)
+          const body = useTmux !== undefined ? { useTmux } : {}
+          await apiPost(`/api/sessions/${session.id}/clone`, body, config)
           onStatus(`Forked ${session.id.slice(0, 8)} — new session spawned`)
         }
         onBack()
@@ -209,12 +214,11 @@ export function SessionDetail({ session, config, onBack, onStatus, onDiagnostics
       (input, key) => {
         if (busy) return
         if (modal !== 'none') {
-          // dialogs handle their own input via useInput in child components
-          // but confirm dialogs are inline here
-          if (modal === 'confirm_kill' || modal === 'confirm_reopen' || modal === 'confirm_fork' || modal === 'confirm_respawn' || modal === 'confirm_archive') {
+          // wizard dialogs (kill_wizard, reopen/fork/respawn_wizard) handle their own input
+          // only handle simple confirm_archive inline
+          if (modal === 'confirm_archive') {
             if (input === 'y' || key.return) {
-              const action = modal.replace('confirm_', '') as 'kill' | 'reopen' | 'fork' | 'respawn' | 'archive'
-              doLifecycle(action)
+              doLifecycle('archive')
             } else {
               setModal('none')
               onStatus('Action cancelled')
@@ -235,17 +239,17 @@ export function SessionDetail({ session, config, onBack, onStatus, onDiagnostics
         } else if (key.upArrow || input === 'k') {
           scrollUp()
         } else if (input === 'r') {
-          setModal('confirm_reopen')
+          setModal('reopen_wizard')
         } else if (input === 'f') {
-          setModal('confirm_fork')
+          setModal('fork_wizard')
         } else if (input === 'R') {
-          setModal('confirm_respawn')
+          setModal('respawn_wizard')
         } else if (input === 'a') {
           setModal('confirm_archive')
         } else if (input === 's') {
           setModal('confirm_archive') // mark success = archive
         } else if (input === 'K') {
-          setModal('confirm_kill')
+          setModal('kill_wizard')
         } else if (input === 'e') {
           setModal('export')
         } else if (input === 'y') {
@@ -309,12 +313,35 @@ export function SessionDetail({ session, config, onBack, onStatus, onDiagnostics
         <Text color="gray" dimColor wrap="wrap">{keybindHint}</Text>
       </Box>
 
+      {reconnecting && <Box paddingX={1}><Text color="yellow">⟳ reconnecting…</Text></Box>}
       {error && <Box paddingX={1}><Text color="red">Error: {error}</Text></Box>}
+      {transcriptLoading && !data && <Box paddingX={1}><Text color="gray" dimColor>Loading transcript…</Text></Box>}
 
-      {/* Confirm dialogs */}
-      {(modal === 'confirm_kill' || modal === 'confirm_reopen' || modal === 'confirm_fork' || modal === 'confirm_respawn' || modal === 'confirm_archive') && (
+      {/* Kill confirm wizard (2-step) */}
+      {modal === 'kill_wizard' && (
+        <KillConfirmWizard
+          session={session}
+          onConfirm={() => doLifecycle('kill')}
+          onCancel={() => { setModal('none'); onStatus('Kill cancelled') }}
+        />
+      )}
+
+      {/* Reopen/Fork/Respawn mode picker */}
+      {(modal === 'reopen_wizard' || modal === 'fork_wizard' || modal === 'respawn_wizard') && (
+        <ReopenModeWizard
+          action={modal === 'reopen_wizard' ? 'reopen' : modal === 'fork_wizard' ? 'fork' : 'respawn'}
+          onConfirm={(useTmux) => {
+            const action = modal === 'reopen_wizard' ? 'reopen' : modal === 'fork_wizard' ? 'fork' : 'respawn'
+            doLifecycle(action, useTmux)
+          }}
+          onCancel={() => { setModal('none'); onStatus('Action cancelled') }}
+        />
+      )}
+
+      {/* Archive confirm */}
+      {modal === 'confirm_archive' && (
         <Box borderStyle="round" borderColor="yellow" paddingX={1} marginX={1} marginBottom={1}>
-          <Text color="yellow">Confirm {modal.replace('confirm_', '').toUpperCase()} for {session.id.slice(0, 8)}? </Text>
+          <Text color="yellow">Archive {session.id.slice(0, 8)}? </Text>
           <Text color="white">y/Enter=yes  any other key=cancel</Text>
         </Box>
       )}
