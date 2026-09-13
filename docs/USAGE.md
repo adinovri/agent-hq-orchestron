@@ -1,12 +1,15 @@
 # User Manual
 
-Day-to-day workflows for agent-hq-orchestron. Assumes you've already
-finished [DEPLOY.md](DEPLOY.md) and can reach the dashboard.
+Day-to-day workflows for agent-hq-orchestron.
+**First time here?** Jump to [Section 0 — Getting started](#0-getting-started--5-minutes-to-first-session)
+and you'll have a session running in 5 minutes. Once you're comfortable,
+the rest of this manual assumes you've finished [DEPLOY.md](DEPLOY.md).
 
 ---
 
 ## Table of contents
 
+0. [Getting started — 5 minutes to first session](#0-getting-started--5-minutes-to-first-session)
 1. [Concepts in one page](#1-concepts-in-one-page)
 2. [Projects](#2-projects)
 3. [Sessions — the core loop](#3-sessions--the-core-loop)
@@ -28,6 +31,127 @@ finished [DEPLOY.md](DEPLOY.md) and can reach the dashboard.
     - [TUI — orchestron tui](#tui--orchestron-tui)
     - [10.9 CLI vs TUI vs web](#109-cli-vs-tui-vs-web-decision-guide)
 11. [Keyboard & touch shortcuts](#11-keyboard--touch-shortcuts)
+
+---
+
+## 0. Getting started — 5 minutes to first session
+
+**New to orchestron?** This section covers the minimum to get your first
+agent session running. Skip to [Section 1](#1-concepts-in-one-page) once
+you're up and productive.
+
+### What is orchestron?
+
+Orchestron is a local supervisor for AI agent sessions. It runs on your own
+machine and manages Claude Code (and optionally Codex) CLI processes — you
+spawn sessions, watch them work, send follow-up messages, and handle
+approval prompts, all from one dashboard or terminal. You can run many
+sessions in parallel across different projects, schedule them on a cron, and
+reach the dashboard from your phone. No cloud service is involved: every
+agent process runs on your host.
+
+```
+┌────────────────────────────────────────┐
+│   Your browser  http://localhost:3000  │
+└───────────────┬────────────────────────┘
+                │ REST + SSE
+┌───────────────▼────────────────────────┐
+│     orchestron API  (Fastify :8080)    │
+│     manages sessions + transcripts     │
+└───────────────┬────────────────────────┘
+                │ spawn / resume / kill
+    ┌───────────┴────────────┐
+    │   tmux windows         │
+    │   claude --resume …    │
+    │   codex resume …       │
+    └────────────────────────┘
+```
+
+### Prerequisites
+
+| Requirement | Why | Verify |
+|---|---|---|
+| Node 20 LTS | runs orchestron | `node --version` |
+| npm 10+ | bundled with Node 20 | `npm --version` |
+| `claude` CLI | agent harness (required) | `claude --version` |
+| `tmux` 3.2+ | session multiplexing | `tmux -V` |
+| ~500 MB free disk | build output + transcripts | `df -h ~` |
+
+`codex` CLI (`npm i -g @openai/codex`) is optional — only needed for Codex
+sessions.
+
+### Install and run
+
+```bash
+git clone git@github.com:adinovri/agent-hq-orchestron.git
+cd agent-hq-orchestron
+npm install
+npm run build
+npm run dev
+```
+
+> **Build time:** ~30 sec cold; ~2 sec on subsequent runs (Turborepo cache).
+>
+> `npm run dev` starts both the API (`:8080`, hot-reload) and the web UI
+> (`:3000`, HMR). It is good for development and first-time exploration.
+> For a stable long-running setup, follow [DEPLOY.md](DEPLOY.md) instead.
+
+### Your first session
+
+1. Open **http://localhost:3000** in your browser.
+
+2. Click **Spawn** (blue button, top-right).
+
+3. In the dialog, pick a **Model**. For your first session, choose
+   `claude-haiku-4-5` — it is fast and inexpensive while you learn the tool.
+
+4. Type a short **initial prompt**, e.g.:
+   `Summarize what orchestron does in one sentence.`
+
+5. Click **Spawn**. Watch the status chip progress:
+
+   ```
+   spawning  →  running  →  idle
+   ```
+
+6. Click the session card to open the detail view. You will see the live
+   transcript. Once status reaches `idle`, type a follow-up in the input
+   bar at the bottom and press Enter.
+
+That is the full loop: spawn → watch → reply.
+
+### Learn 3 essentials
+
+Three sections cover 90 % of daily use — read them in order:
+
+| Section | What you will learn |
+|---|---|
+| [1 — Concepts](#1-concepts-in-one-page) | Project, Session, Schedule, Note — the four objects orchestron manages |
+| [3 — Session lifecycle](#3-sessions--the-core-loop) | How a session moves between `running`, `idle`, `needs_input`, `sleeping`, and `terminal` |
+| [3 — Reopen / Fork / Respawn](#reopen-vs-fork-vs-respawn) | The three ways to revive or branch a finished session |
+
+### What next?
+
+Once your first session is working, pick the interface that fits your
+workflow:
+
+- **Scripting / automation** → [Section 10 CLI](#10-terminal-interfaces-cli--tui)
+  (`orchestron sessions create`, batch YAML runner, watch mode, REPL)
+- **Keyboard-driven terminal UI** → [Section 10 TUI](#tui--orchestron-tui)
+  (`orchestron tui` — full dashboard in your terminal, no browser needed)
+- **Phone / remote access** → [Section 8 Pairing](#8-pairing--mobile)
+  (set `remoteToken` in `~/.orchestron/config.json`, then scan the QR code)
+
+### Common gotchas
+
+| Symptom | Fix |
+|---|---|
+| **Port 3000 already in use** | Another app owns the port. Run `PORT=3001 npm run dev` or kill the conflict (`lsof -ti:3000 \| xargs kill`). |
+| **Dashboard shows "connection refused"** | The API isn't up — check the terminal running `npm run dev` for errors. |
+| **Remote access from phone fails** | `remoteToken` must be set in `~/.orchestron/config.json`; see [Section 8](#8-pairing--mobile). |
+| **`tmux: command not found`** | Install tmux: `sudo apt install tmux` (Ubuntu/Debian) or `brew install tmux` (Mac). |
+| **Session cost is higher than expected** | You picked Opus or Sonnet. Switch to `claude-haiku-4-5` for exploratory work. |
+| **"Failed to resolve entry" after `git pull`** | Rebuild shared packages: `(cd packages/shared && npm run build)` then restart `npm run dev`. |
 
 ---
 
