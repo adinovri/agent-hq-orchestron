@@ -17,6 +17,16 @@ finished [DEPLOY.md](DEPLOY.md) and can reach the dashboard.
 8. [Pairing & mobile](#8-pairing--mobile)
 9. [Data on disk](#9-data-on-disk)
 10. [Terminal interfaces (CLI + TUI)](#10-terminal-interfaces-cli--tui)
+    - [10.1 Conventions](#101-conventions-every-command-shares)
+    - [10.2 Sessions](#102-sessions)
+    - [10.3 Schedules](#103-schedules)
+    - [10.4 Metrics](#104-metrics)
+    - [10.5 Projects](#105-projects)
+    - [10.6 Watch](#106-watch--tail-a-transcript-live)
+    - [10.7 Batch](#107-batch--yaml-step-runner)
+    - [10.8 REPL](#108-repl--interactive-shell)
+    - [TUI — orchestron tui](#tui--orchestron-tui)
+    - [10.9 CLI vs TUI vs web](#109-cli-vs-tui-vs-web-decision-guide)
 11. [Keyboard & touch shortcuts](#11-keyboard--touch-shortcuts)
 
 ---
@@ -1546,7 +1556,9 @@ run; there is nothing to preserve past a month.
 
 ## 10. Terminal interfaces (CLI + TUI)
 
-Two ways to drive orchestron without opening the browser.
+Two ways to drive orchestron without opening the browser. The CLI is
+script-friendly and CI-ready; the TUI is interactive and terminal-native.
+[§ 10.6](#106-cli-vs-tui-vs-web-decision-guide) has a quick decision guide.
 
 ### CLI — `orchestron`
 
@@ -1568,6 +1580,9 @@ Command groups:
 | `orchestron session` | Sessions — spawn, drive, revive, adopt, import/export |
 | `orchestron schedule` | Cron entries — full CRUD, pause/resume, YAML round trip |
 | `orchestron metrics` | Token and cost query, five group-by axes |
+| `orchestron watch` | Tail a session's transcript in real-time |
+| `orchestron batch` | Run a YAML step file, interpolating outputs between steps |
+| `orchestron repl` | Interactive shell with history and tab-complete |
 | `orchestron qr` | Print pairing QR to terminal (for phone scan) |
 | `orchestron doctor` | Health check — tmux, claude, config, adapters |
 
@@ -1783,20 +1798,228 @@ is why clearing needs its own flag — without one, a project pinned to
 an expensive model could never be un-pinned. `--group ""` clears the
 group.
 
-### TUI — Ink-based dashboard
+#### 10.6 Watch — tail a transcript live
 
-React-Ink terminal UI. Two screens (Dashboard + Session detail). Same
-data as the web dashboard — reads the same API.
+`orchestron watch <sessionId>` polls `GET /api/sessions/:uuid/transcript`
+and streams new entries to stdout as they arrive, role-colored:
+
+```
+[assistant]  Here is the plan …
+[tool_use]   ⚙ Bash  { "command": "npm test" }
+[tool_result] ↳  All 42 tests passed.
+```
+
+```bash
+orchestron watch "$ID"                        # human, role-colored
+orchestron watch "$ID" --interval 2000        # poll every 2 s (default 3 s)
+orchestron watch "$ID" --raw | jq '.role'     # JSON Lines, one entry per line
+```
+
+The process exits cleanly when the session reaches a terminal status
+(`succeeded`, `failed`, `killed`) or returns 404. Combine with batch:
+
+```bash
+SID=$(orchestron session spawn --project "$PID" --prompt "…" --json | jq -r .sessionUuid)
+orchestron watch "$SID"
+```
+
+#### 10.7 Batch — YAML step runner
+
+`orchestron batch <file.yaml>` reads a YAML step file and executes the
+steps in order, feeding each step's parsed JSON output into the
+interpolation context for subsequent steps.
+
+**Step schema:**
+
+```yaml
+steps:
+  - name: spawn          # required; used as the interpolation key
+    cmd: session         # orchestron subcommand group
+    args:                # positional + flags
+      - spawn
+      - --project
+      - "$PID"
+      - --prompt
+      - "run daily audit"
+      - --headless
+      - --json
+    env:                 # optional extra env vars for this step
+      ORCHESTRON_URL: http://127.0.0.1:8090
+    if_prev_success: true  # skip step if previous step failed (default false)
+```
+
+**Interpolation** — reference any field from a prior step's JSON output
+with `${stepName.fieldName}`:
+
+```yaml
+  - name: watch
+    cmd: watch
+    args:
+      - ${spawn.sessionUuid}   # sessionUuid from the spawn step above
+```
+
+**Options:**
+
+```bash
+orchestron batch audit.yaml                  # run, stop on first failure
+orchestron batch audit.yaml --continue-on-error   # run all steps regardless
+orchestron batch audit.yaml --dry-run        # print resolved commands, no exec
+```
+
+Example YAMLs live in [`docs/e2e-tests/cli/batch-examples/`](e2e-tests/cli/batch-examples/):
+`spawn-and-watch.yaml`, `read-only-audit.yaml`.
+
+#### 10.8 REPL — interactive shell
+
+`orchestron repl` opens an interactive prompt for running subcommands
+without re-typing `orchestron` each time.
+
+```
+$ orchestron repl
+orchestron> session list --status idle
+orchestron> sess get $UUID --json          # "sess" = alias for "session"
+orchestron> sch list                       # "sch" = alias for "schedule"
+orchestron> .set default-project abc123    # persists in config for the session
+orchestron> .help
+orchestron> .exit
+```
+
+**Features:**
+
+- **Prompt:** `orchestron> `
+- **History:** persisted to `~/.orchestron/repl_history` across invocations
+- **Tab-complete:** subcommands and their aliases (`sess`, `sch`, `proj`)
+- **Multi-line input:** trail a line with `\` to continue on the next line
+- **Special commands** (prefix `.`):
+  - `.help` — list special commands and common aliases
+  - `.set default-project <id>` — pin a project for the REPL session
+  - `.exit` — quit
+- **Ctrl+C** once cancels the current line; twice exits
+
+The REPL shares the same flag-resolution and `--json` / `--url` /
+`--token` conventions as every other subcommand (§ 10.1).
+
+### TUI — `orchestron tui`
+
+React-Ink terminal UI with full read + write parity to the web
+dashboard. Reads the same API; no browser required.
 
 ```bash
 orchestron tui                            # picks up ~/.orchestron/config.json
-# or manually
 orchestron tui --url http://127.0.0.1:8090 --token "$TOKEN"
 ```
 
-Useful when SSH'd into the server and you don't want to tunnel a browser
-back. Doesn't replace the web UI (no transcript renderer yet); a quick
-scan-and-kill or spawn-and-detach workflow.
+**Theme:** set `ORCHESTRON_TUI_THEME` env var or put presets in
+`~/.orchestron/tui-theme.json`. Presets: `default`, `dark`,
+`high-contrast`.
+
+#### Dashboard
+
+The entry screen lists all sessions with status colors mapped to the
+nine real state machine states. Controls:
+
+| Key | Action |
+|---|---|
+| `/` | Filter bar (substring match on agent, status, project) |
+| `g` | Toggle grouped-by-status view |
+| `n` | Open SpawnWizard (6-step: project → model → effort → mode → tmux → prompt) |
+| `A` | Open AdoptWizard (project + UUID input + 5-layer validation) |
+| `I` | Open ImportWizard (file path → format detect → preview → confirm) |
+| `S` | Schedules screen |
+| `P` | Projects screen (drills into MCP config JSON viewer) |
+| `,` | Settings screen (read-only, from `GET /api/settings`) |
+| `m` | Metrics screen (auto-refreshes every 10 s, ASCII cost/session/token table) |
+| `/` | Command palette (metrics / schedules / projects / settings / dashboard / spawn / quit) |
+| `q` | Quit |
+
+The header shows a `needs_input` stat chip with a count of sessions
+waiting for human input. Sort order is `lastActivityAt` descending.
+
+#### Session detail
+
+Enter / click a session row to open the detail view. The transcript
+polls every 3 s. Entries are styled by role:
+
+| Role | Style |
+|---|---|
+| `assistant` | cyan |
+| `user` | `▸` prefix |
+| `tool_use` | `⚙` prefix |
+| `tool_result` | `↳` prefix |
+| `aside` | `⚠` prefix, dimmed |
+
+**Keybinds in session detail:**
+
+| Key | Action |
+|---|---|
+| `r` | Reopen (opens ReopenModeWizard for mode picker) |
+| `f` | Fork (ReopenModeWizard) |
+| `R` | Respawn (ReopenModeWizard) |
+| `a` | Archive (mark success) |
+| `s` | Mark success (alias for `a`) |
+| `K` | Kill — opens KillConfirmWizard (type `KILL` to confirm) |
+| `e` | Export — opens path input dialog, writes bundle to disk |
+| `y` | Copy session UUID to clipboard (clipboardy with OS fallback) |
+| `M` | Metadata edit — MetadataEditWizard (3 steps: model → effort → confirm) |
+| `d` | Open Diagnostics panel |
+| `D` | Open Delegation graph (ASCII tree) |
+| `i` | Composer mode: Enter = newline, Ctrl+Enter = submit turn |
+
+**AskUserQuestion inline card:** when a transcript entry is
+`tool_use: AskUserQuestion` with no following result, the card renders
+inline with the question and numbered options. Press `1`…`N` to
+highlight, Enter to submit. The answer posts to
+`POST /api/sessions/:uuid/input`.
+
+#### Top-level screens
+
+**SpawnWizard** (`n` from dashboard) — 6-step guided form: pick project,
+choose model, choose effort, pick mode (tmux / headless / follow
+project), toggle useTmux, enter prompt. Confirmation preview before
+submit.
+
+**AdoptWizard** (`A`) — paste a harness UUID and pick a project; a
+**Validate** button runs the 5-layer check (UUID format → record exists
+in API → harness process alive → tmux session found → transcript
+readable) before enabling Submit.
+
+**ImportWizard** (`I`) — enter file path (`.jsonl` or `.tar.gz`);
+wizard detects format, previews metadata, asks for target project, then
+imports.
+
+**Schedules screen** (`S`) — lists all schedules with next-fire preview.
+Press `C` to open **ScheduleWizard**: 7-step form (cron expression →
+cron preset shortcuts → live preview of next 3 fire times → model →
+effort → run mode → prompt). Presets include `daily-9am`, `weekly-mon`,
+`hourly`.
+
+**Projects screen** (`P`) — lists all projects. Enter on a row drills
+into the MCP config JSON viewer for that project.
+
+**Settings screen** (`,`) — read-only view of `GET /api/settings`.
+
+**Metrics screen** (`m`) — ASCII table with cost, session count, token
+usage, and average duration. Auto-refreshes every 10 s.
+
+#### Polish / error handling
+
+- **Error toast:** auto-expires after 5 s; color-coded by severity
+  (red = error, yellow = warning, cyan = info, green = success).
+- **Loading skeleton:** shown during initial data fetch.
+- **Reconnection:** 3-attempt exponential backoff (1 s → 3 s → 8 s)
+  on API connection loss.
+- **Live-update notifications:** banner appears when a new session is
+  created or any session changes to `needs_input`.
+
+### 10.9 CLI vs TUI vs web decision guide
+
+| Use case | Recommended interface |
+|---|---|
+| Automation, CI pipelines, scripting | CLI — `watch`, `batch`, subcommands |
+| Interactive daily use, SSH terminal | TUI — `orchestron tui` |
+| Multi-viewer dashboards, delegation SVG, file upload | Web dashboard |
+| One-off queries, quick session reads | CLI subcommands |
+| Exploring the API interactively | CLI REPL (`orchestron repl`) |
 
 ---
 
