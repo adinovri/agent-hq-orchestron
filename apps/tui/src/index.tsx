@@ -11,6 +11,8 @@ import { SchedulesScreen } from './screens/SchedulesScreen.js'
 import { ProjectsScreen } from './screens/ProjectsScreen.js'
 import { SettingsScreen } from './screens/SettingsScreen.js'
 import { MetricsScreen } from './screens/MetricsScreen.js'
+import { DiagnosticsScreen } from './screens/DiagnosticsScreen.js'
+import { DelegationGraph } from './screens/DelegationGraph.js'
 import { useApi } from './hooks/useApi.js'
 import type { ApiConfig } from './hooks/useApi.js'
 
@@ -28,7 +30,7 @@ const TOKEN = values.token as string | undefined
 
 const config: ApiConfig = { baseUrl: BASE_URL, token: TOKEN }
 
-type Screen = 'dashboard' | 'detail' | 'spawn' | 'schedules' | 'projects' | 'settings' | 'metrics'
+type Screen = 'dashboard' | 'detail' | 'spawn' | 'schedules' | 'projects' | 'settings' | 'metrics' | 'diagnostics' | 'delegation'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('dashboard')
@@ -38,11 +40,13 @@ function App() {
   const [commandMode, setCommandMode] = useState(false)
   const [cmdInput, setCmdInput] = useState('')
 
-  const { data: sessions, error: sessionsError } = useApi<SessionMetadata[]>(
+  // API returns { sessions: [...] }, not a bare array (see CLI session list for same fix)
+  const { data: sessionsData, error: sessionsError } = useApi<{ sessions: SessionMetadata[] }>(
     '/api/sessions',
     config,
     3000,
   )
+  const sessions = sessionsData?.sessions ?? []
 
   const onStatus = useCallback((msg: string, isError = false) => {
     setStatusMsg(msg)
@@ -54,9 +58,30 @@ function App() {
     setScreen('detail')
   }, [])
 
+  const [diagUuid, setDiagUuid] = useState<string | null>(null)
+  const [delegationUuid, setDelegationUuid] = useState<string | null>(null)
+
   const onBack = useCallback(() => {
     setSelectedSession(null)
+    setDiagUuid(null)
+    setDelegationUuid(null)
     setScreen('dashboard')
+  }, [])
+
+  const onBackToDetail = useCallback(() => {
+    setDiagUuid(null)
+    setDelegationUuid(null)
+    setScreen('detail')
+  }, [])
+
+  const onDiagnostics = useCallback((uuid: string) => {
+    setDiagUuid(uuid)
+    setScreen('diagnostics')
+  }, [])
+
+  const onDelegation = useCallback((uuid: string) => {
+    setDelegationUuid(uuid)
+    setScreen('delegation')
   }, [])
 
   const onNew = useCallback(() => {
@@ -131,7 +156,7 @@ function App() {
 
       {screen === 'dashboard' && (
         <Dashboard
-          sessions={sessions ?? []}
+          sessions={sessions}
           config={config}
           onOpen={onOpen}
           onNew={onNew}
@@ -148,7 +173,17 @@ function App() {
           config={config}
           onBack={onBack}
           onStatus={onStatus}
+          onDiagnostics={onDiagnostics}
+          onDelegation={onDelegation}
         />
+      )}
+
+      {screen === 'diagnostics' && diagUuid && (
+        <DiagnosticsScreen uuid={diagUuid} config={config} onBack={onBackToDetail} />
+      )}
+
+      {screen === 'delegation' && delegationUuid && (
+        <DelegationGraph rootUuid={delegationUuid} config={config} onBack={onBackToDetail} />
       )}
 
       {screen === 'spawn' && (
