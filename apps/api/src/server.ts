@@ -293,6 +293,48 @@ fastify.get('/api/health/detail', async () => {
   }
 })
 
+// Server settings envelope — surfaces the runtime config in a TUI/CLI-readable
+// shape without exposing secrets in plaintext. The remoteToken is masked to the
+// last-4 suffix so callers can tell which token is active without lifting it.
+fastify.get('/api/settings', async () => {
+  let remoteToken = 'not set'
+  if (config.remoteToken) {
+    const t = config.remoteToken
+    remoteToken = t.length <= 4 ? '****' : '****' + t.slice(-4)
+  }
+
+  // cleanupPeriodDays lives in the Claude settings file, not in our config.
+  // Read it opportunistically; absent / unreadable → null.
+  let cleanupPeriodDays: number | null = null
+  try {
+    const { readFileSync } = await import('node:fs')
+    const claudeConfigDir = process.env['CLAUDE_CONFIG_DIR'] ?? path.join(os.homedir(), '.claude')
+    const raw = JSON.parse(readFileSync(path.join(claudeConfigDir, 'settings.json'), 'utf8'))
+    if (raw && typeof raw.cleanupPeriodDays === 'number') {
+      cleanupPeriodDays = raw.cleanupPeriodDays
+    }
+  } catch { /* settings.json absent or unreadable — leave null */ }
+
+  return {
+    remoteToken,
+    bindHost: config.bindHost,
+    apiPort: config.port,
+    webPort: Number(process.env['PORT'] ?? 3000),
+    dataDir: config.dataDir,
+    mcpAutoInject: {
+      enabled: !!config.remoteToken,
+      guardrails: {
+        depth: 5,
+        children: 10,
+        rate: 5,
+      },
+    },
+    claudeConfig: {
+      cleanupPeriodDays,
+    },
+  }
+})
+
 // Live web build id — the api reads the web bundle's BUILD_ID file at request
 // time. Clients baked with a stale NEXT_PUBLIC_BUILD_STAMP can poll this to
 // detect a rolling deploy and hard-refresh themselves out of a stuck SW cache.
