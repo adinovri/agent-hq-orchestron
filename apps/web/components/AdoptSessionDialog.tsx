@@ -201,9 +201,10 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
             const cfgDefault = isClaudish ? '~/.claude' : '~/.codex'
             const effectiveCfg = currentProject.configDir ?? cfgDefault
             const usingDefault = !currentProject.configDir
-            // Mangle workspace like Claude does (replace / with -) so the hint
-            // path matches the real jsonl location the user should have.
-            const mangled = currentProject.path.replace(/\//g, '-')
+            // Mangle workspace like Claude does (replace / and . with -) so
+            // the hint path matches the real jsonl location the user should
+            // have — hidden folders like `/.openclaw` become `--openclaw`.
+            const mangled = currentProject.path.replace(/[/.]/g, '-')
             const claudeHint = `${effectiveCfg}/projects/${mangled}/<uuid>.jsonl`
             const codexHint = `${effectiveCfg}/sessions/YYYY/MM/DD/rollout-*-<uuid>.jsonl`
             return (

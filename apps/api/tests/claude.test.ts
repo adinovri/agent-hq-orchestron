@@ -11,7 +11,7 @@ vi.mock('../src/adapters/tmux.js', () => ({
 }))
 
 import * as tmuxMock from '../src/adapters/tmux.js'
-import { ClaudeAdapter } from '../src/adapters/claude.js'
+import { ClaudeAdapter, mangleCwd } from '../src/adapters/claude.js'
 
 const claudeAdapter = new ClaudeAdapter()
 
@@ -120,5 +120,22 @@ describe('claudeAdapter — tmux delegation', () => {
     vi.mocked(tmuxMock.capturePane).mockResolvedValue('loading...')
     const handle = { tmuxName: 'test-session', claudeUuid: 'abc', jsonlPath: '/tmp/abc.jsonl' }
     await expect(claudeAdapter.waitTuiReady(handle, 300)).rejects.toThrow('timeout')
+  })
+})
+
+describe('mangleCwd — matches Claude Code project directory naming', () => {
+  it('replaces / with -', () => {
+    expect(mangleCwd('/home/user/repo')).toBe('-home-user-repo')
+  })
+
+  it('replaces . with - so hidden folders yield -- where /. was', () => {
+    // Matches what Claude Code actually creates under <CLAUDE_CONFIG_DIR>/projects/
+    // for a workspace inside a dot-prefixed dir (e.g. `.openclaw`, `.claude`).
+    expect(mangleCwd('/home/x/.openclaw/agents/nafutech/workspace'))
+      .toBe('-home-x--openclaw-agents-nafutech-workspace')
+  })
+
+  it('replaces every dot, not just leading ones', () => {
+    expect(mangleCwd('/tmp/my.dir/nested')).toBe('-tmp-my-dir-nested')
   })
 })

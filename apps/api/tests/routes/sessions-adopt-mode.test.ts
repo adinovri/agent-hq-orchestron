@@ -6,6 +6,7 @@ import path from 'node:path'
 import { sessionsPlugin } from '../../src/routes/sessions.js'
 import { SessionManager } from '../../src/domain/session-manager.js'
 import { AdapterRegistry } from '../../src/adapters/registry.js'
+import { mangleCwd } from '../../src/adapters/claude.js'
 import { ProjectRegistry } from '../../src/domain/project-registry.js'
 import { DelegationTracker } from '../../src/domain/delegation-tracker.js'
 import { HookRunner } from '../../src/domain/hook-runner.js'
@@ -31,7 +32,7 @@ let harnessUuid: string
 
 /** Where the claude adapter expects the transcript for our fixture. */
 function transcriptPath(uuid: string): string {
-  return path.join(configDir, 'projects', workspace.replace(/\//g, '-'), `${uuid}.jsonl`)
+  return path.join(configDir, 'projects', mangleCwd(workspace), `${uuid}.jsonl`)
 }
 
 interface Harness {

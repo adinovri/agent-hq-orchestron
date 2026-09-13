@@ -751,7 +751,7 @@ export class SessionManager {
       const expandHome = (x: string) => x.startsWith('~/') ? p.join(os.homedir(), x.slice(2)) : x === '~' ? os.homedir() : x
       const sharedTarget = expandHome(this.sharedMemoryDir)
       const baseDir = expandHome(configDir ?? process.env['CLAUDE_CONFIG_DIR'] ?? p.join(os.homedir(), '.claude'))
-      const mangled = expandHome(workspace).replace(/\//g, '-')
+      const mangled = expandHome(workspace).replace(/[/.]/g, '-')
       const memPath = p.join(baseDir, 'projects', mangled, 'memory')
 
       // Make sure the shared pool exists first.

@@ -70,11 +70,13 @@ export function effectiveClaudeConfigDir(explicit?: string): string {
 }
 
 /** Claude's per-workspace directory name: the absolute cwd with every "/"
- *  replaced by "-" (leading dash kept). Persisted on the session record as
- *  `cwdSlug` so the transcript path can be rebuilt later without needing the
- *  project record — the project may have been edited or deleted by then. */
+ *  and every "." replaced by "-" (leading dash kept, so a hidden folder like
+ *  `/home/x/.foo/bar` becomes `-home-x--foo-bar` — two consecutive dashes
+ *  where the `/.` was). Persisted on the session record as `cwdSlug` so the
+ *  transcript path can be rebuilt later without needing the project record —
+ *  the project may have been edited or deleted by then. */
 export function mangleCwd(workspace: string): string {
-  return expandHome(workspace).replace(/\//g, '-')
+  return expandHome(workspace).replace(/[/.]/g, '-')
 }
 
 export function claudeTranscriptPath(workspace: string, configDir: string | undefined, uuid: string): string {
