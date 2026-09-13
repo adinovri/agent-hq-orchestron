@@ -73,3 +73,33 @@ export async function apiDelete(path: string, config: ApiConfig): Promise<void> 
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
+
+export async function apiPatch<T>(
+  path: string,
+  body: unknown,
+  config: ApiConfig,
+): Promise<T> {
+  const res = await fetch(`${config.baseUrl}${path}`, {
+    method: 'PATCH',
+    headers: getHeaders(config.token),
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<T>
+}
+
+export async function apiGetBuffer(
+  path: string,
+  config: ApiConfig,
+): Promise<{ buffer: Buffer; contentType: string; filename: string }> {
+  const res = await fetch(`${config.baseUrl}${path}`, {
+    headers: config.token ? { Authorization: `Bearer ${config.token}` } : {},
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const contentType = res.headers.get('content-type') ?? 'application/octet-stream'
+  const disposition = res.headers.get('content-disposition') ?? ''
+  const filenameMatch = /filename="?([^";]+)"?/.exec(disposition)
+  const filename = filenameMatch?.[1] ?? 'export.jsonl'
+  const ab = await res.arrayBuffer()
+  return { buffer: Buffer.from(ab), contentType, filename }
+}
