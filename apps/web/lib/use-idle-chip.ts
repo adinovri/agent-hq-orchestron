@@ -31,14 +31,21 @@ export function useIdleChip(
   const interval = tickIntervalMs(idleTimeoutMs)
   const [now, setNow] = useState(() => Date.now())
 
+  // The arm-time clock read stays in an effect, and this one cannot be moved.
+  // `now` was captured when the component first mounted, which may be long
+  // before this session went idle, so arming has to re-read it — and reading
+  // the clock is exactly what render is not allowed to do. Moving it into
+  // render swaps this rule for `react-hooks/purity`, which is the more
+  // serious of the two: an impure render can disagree with itself between
+  // passes, whereas this costs one extra pass when a session goes idle.
+  /* eslint-disable react-hooks/set-state-in-effect -- render may not read the clock */
   useEffect(() => {
     if (!idleSince) return
-    // Re-read on arm as well as on tick: `now` was captured when the component
-    // first mounted, which may be long before this session went idle.
     setNow(Date.now())
     const id = setInterval(() => setNow(Date.now()), interval)
     return () => clearInterval(id)
   }, [idleSince, interval])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   if (!idleSince) return null
   return idleChipState(idleSince, idleTimeoutMs, now)

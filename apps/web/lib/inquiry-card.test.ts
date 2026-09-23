@@ -156,3 +156,22 @@ describe('inquiryKey', () => {
     expect(inquiryKey(renamed)).not.toBe(inquiryKey(INQUIRY))
   })
 })
+
+describe('resolveInquiryCard — caller-owned grace window', () => {
+  it('keeps the answered card with no `now`, however old the answer is', () => {
+    // The session page clears `answered` on a timer, so by the time this
+    // function sees one it is still within the window by construction. An
+    // ancient timestamp must not expire it here, or the page would need the
+    // clock reading during render that the timer exists to avoid.
+    const ancient = { inquiry: INQUIRY, at: 0 }
+    const state = resolveInquiryCard({ pending: null, answered: ancient, readOnly: false })
+    expect(state).toEqual({ inquiry: INQUIRY, answered: true })
+  })
+
+  it('still honours readOnly and an absent answer without `now`', () => {
+    expect(resolveInquiryCard({ pending: null, answered: null, readOnly: false })).toBeNull()
+    expect(
+      resolveInquiryCard({ pending: null, answered: { inquiry: INQUIRY, at: 0 }, readOnly: true }),
+    ).toBeNull()
+  })
+})

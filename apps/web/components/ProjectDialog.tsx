@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useId } from 'react'
+import { useState, useId } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -59,6 +59,31 @@ const BLANK: FormState = {
   extraArgs: '',
 }
 
+/** The edit form as it looks for an existing project. Module scope so the
+ *  render-phase seeding below stays a single expression. */
+function formFromProject(project: ProjectMetadata): FormState {
+  const env = project.agentConfig?.env ?? {}
+  return {
+    name: project.name,
+    path: project.path,
+    agentType: project.agentType,
+    defaultModel: project.defaultModel ?? '',
+    defaultEffort: project.defaultEffort ?? '',
+    // `?? true` — a project saved before the toggle existed is a tmux project.
+    defaultUseTmux: project.defaultUseTmux ?? true,
+    claudeConfigDir: env['CLAUDE_CONFIG_DIR'] ?? '',
+    codexHome: env['CODEX_HOME'] ?? '',
+    group: project.group ?? '',
+    tags: (project.tags ?? []).join(', '),
+    extraEnvKey: '',
+    extraEnvVal: '',
+    extraEnvPairs: Object.entries(env)
+      .filter(([k]) => k !== 'CLAUDE_CONFIG_DIR' && k !== 'CODEX_HOME')
+      .map(([key, value]) => ({ key, value })),
+    extraArgs: (project.agentConfig?.extraArgs ?? []).join(', '),
+  }
+}
+
 export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
   /* Ids for the label/control pairs below. Every `<select>` in this app was
    * labelled only by an adjacent `<label>` with no `for`, so a screen reader
@@ -74,35 +99,22 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
   const [advanced, setAdvanced] = useState(false)
   const headlessEnabled = useHeadlessEnabled()
 
-  useEffect(() => {
-    if (!open) return
-    if (project) {
-      const env = project.agentConfig?.env ?? {}
-      setForm({
-        name: project.name,
-        path: project.path,
-        agentType: project.agentType,
-        defaultModel: project.defaultModel ?? '',
-        defaultEffort: project.defaultEffort ?? '',
-        // `?? true` — a project saved before the toggle existed is a tmux project.
-        defaultUseTmux: project.defaultUseTmux ?? true,
-        claudeConfigDir: env['CLAUDE_CONFIG_DIR'] ?? '',
-        codexHome: env['CODEX_HOME'] ?? '',
-        group: project.group ?? '',
-        tags: (project.tags ?? []).join(', '),
-        extraEnvKey: '',
-        extraEnvVal: '',
-        extraEnvPairs: Object.entries(env)
-          .filter(([k]) => k !== 'CLAUDE_CONFIG_DIR' && k !== 'CODEX_HOME')
-          .map(([key, value]) => ({ key, value })),
-        extraArgs: (project.agentConfig?.extraArgs ?? []).join(', '),
-      })
-    } else {
-      setForm(BLANK)
+  // Seed on open, and on a genuine change of which project is being edited.
+  // Keyed on the project id rather than the object, and read during render
+  // rather than from an effect. Both matter: the record arrives from a poll,
+  // so its object identity changes on every refresh, and the effect this
+  // replaces reseeded the form each time — discarding whatever the user had
+  // typed. `'new'` stands for the create case, which has no id.
+  const seedKey = open ? (project?.id ?? 'new') : null
+  const [seededKey, setSeededKey] = useState<string | null>(null)
+  if (seedKey !== seededKey) {
+    setSeededKey(seedKey)
+    if (seedKey !== null) {
+      setForm(project ? formFromProject(project) : BLANK)
+      setError(null)
+      setAdvanced(false)
     }
-    setError(null)
-    setAdvanced(false)
-  }, [open, project])
+  }
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((f) => ({ ...f, [key]: value }))

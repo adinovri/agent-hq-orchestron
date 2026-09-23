@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
+import { subscribeLocalPref, readLocalPref, writeLocalPref } from '@/lib/local-pref'
 import { Palette } from 'lucide-react'
 
 export type Theme = 'orchestron' | 'tycho' | 'light'
@@ -44,22 +45,24 @@ export function ThemeApplier() {
   return null
 }
 
+/** The stored theme, or the default when absent, unreadable or unrecognised. */
+function readStoredTheme(): Theme {
+  const stored = readLocalPref(KEY)
+  return (stored === 'tycho' || stored === 'light' || stored === 'orchestron') ? stored : 'orchestron'
+}
+
 export function ThemeSelect() {
-  const [theme, setTheme] = useState<Theme>('orchestron')
+  // Stored value straight through, no React copy to fall out of step with it.
+  // The mount effect this replaces set state and applied the theme, so the
+  // select showed the default for one frame and the stored choice on the
+  // next; it also duplicated the apply that `ThemeScript` already does.
+  const theme = useSyncExternalStore(subscribeLocalPref, readStoredTheme, () => 'orchestron' as Theme)
 
-  useEffect(() => {
-    let stored: string | null = null
-    try { stored = localStorage.getItem(KEY) } catch { /* ignore */ }
-    const t = (stored === 'tycho' || stored === 'light' || stored === 'orchestron') ? stored : 'orchestron'
-    setTheme(t)
-    applyTheme(t)
-  }, [])
+  // Pure side effect — keeps the document in step with whatever the store
+  // says, including a change made in another tab.
+  useEffect(() => { applyTheme(theme) }, [theme])
 
-  const pick = (t: Theme) => {
-    setTheme(t)
-    applyTheme(t)
-    try { localStorage.setItem(KEY, t) } catch { /* ignore */ }
-  }
+  const pick = (t: Theme) => { writeLocalPref(KEY, t) }
 
   return (
     <div className="flex items-center gap-2">

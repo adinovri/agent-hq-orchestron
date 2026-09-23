@@ -75,6 +75,10 @@ function formatSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`
 }
 
+/** Statuses that mean the session is no longer working on our input, so the
+ *  optimistic "sent" echo has nothing left to stand in for. */
+const SETTLED_STATUSES = ['needs_input', 'idle', 'succeeded', 'failed', 'killed']
+
 export function InputBox({ uuid, status, agentType, useTmux }: Props) {
   // `?? true` — no field means tmux.
   const isTmux = useTmux ?? true
@@ -86,11 +90,15 @@ export function InputBox({ uuid, status, agentType, useTmux }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const qc = useQueryClient()
 
-  useEffect(() => {
-    if (['needs_input', 'idle', 'succeeded', 'failed', 'killed'].includes(status)) {
-      setLastSent(null)
-    }
-  }, [status])
+  // The "sent, waiting" echo clears the moment the session stops running.
+  // Watching the status change during render rather than from an effect: the
+  // echo used to survive one extra painted frame after the session had
+  // already come back, which is precisely the frame the user is looking at.
+  const [prevStatus, setPrevStatus] = useState(status)
+  if (status !== prevStatus) {
+    setPrevStatus(status)
+    if (SETTLED_STATUSES.includes(status)) setLastSent(null)
+  }
 
   // Cleanup preview URLs on unmount / attachment change
   useEffect(() => {

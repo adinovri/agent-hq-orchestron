@@ -4,33 +4,48 @@ import { useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense } from 'react'
 
+/** Shown while `useSearchParams` resolves — the only moment this page is
+ *  genuinely waiting on anything. It used to live behind a `status` of
+ *  'pairing', one render deep, where it could never be seen for more than a
+ *  frame; the Suspense boundary had no fallback at all, so the wait it does
+ *  cover rendered blank. */
+function PairingSpinner() {
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center gap-2 bg-zinc-50 dark:bg-zinc-950 px-4">
+      <div className="w-10 h-10 border-4 border-zinc-300 border-t-zinc-700 rounded-full animate-spin mx-auto" />
+      <p className="text-sm text-zinc-500">Pairing…</p>
+    </div>
+  )
+}
+
 function PairInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const [status, setStatus] = useState<'pairing' | 'done' | 'no_token'>('pairing')
+  const token = searchParams.get('token')
+  // Derived, not stored. The effect below used to set this, which meant the
+  // spinner painted first and the real answer arrived a render later — and
+  // the spinner was the *only* thing the first frame could show, because
+  // there was nothing to decide from yet. `useSearchParams` has already
+  // resolved by the time this component renders at all (the Suspense
+  // boundary below is what waits), so the answer is available immediately.
+  const status: 'done' | 'no_token' = token ? 'done' : 'no_token'
   const [showInstall, setShowInstall] = useState(false)
   const [deferredPrompt, setDeferredPrompt] = useState<Event | null>(null)
 
   useEffect(() => {
-    const token = searchParams.get('token')
-    if (!token) {
-      setStatus('no_token')
-      return
-    }
+    if (!token) return
 
     // Persist to localStorage so all tabs (and PWA install) share the token.
     // Also mirror to sessionStorage for any legacy callers still reading it.
     try { localStorage.setItem('orchestron_token', token) } catch { /* blocked */ }
     try { sessionStorage.setItem('orchestron_token', token) } catch { /* blocked */ }
 
-    setStatus('done')
-
     const timer = setTimeout(() => {
       router.push('/dashboard')
     }, 1_200)
 
     return () => clearTimeout(timer)
-  }, [searchParams, router])
+  }, [token, router])
 
   useEffect(() => {
     function handleBeforeInstall(e: Event) {
@@ -53,12 +68,6 @@ function PairInner() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-6 bg-zinc-50 dark:bg-zinc-950 px-4">
       <div className="text-center space-y-2">
-        {status === 'pairing' && (
-          <>
-            <div className="w-10 h-10 border-4 border-zinc-300 border-t-zinc-700 rounded-full animate-spin mx-auto" />
-            <p className="text-sm text-zinc-500">Pairing…</p>
-          </>
-        )}
         {status === 'done' && (
           <>
             <div className="text-4xl">✓</div>
@@ -112,7 +121,7 @@ declare global {
 
 export default function PairPage() {
   return (
-    <Suspense>
+    <Suspense fallback={<PairingSpinner />}>
       <PairInner />
     </Suspense>
   )

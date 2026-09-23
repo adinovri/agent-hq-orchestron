@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useId } from 'react'
+import { useState, useId } from 'react'
 import { Button } from '@/components/ui/button'
 import type { AgentType, EffortLevel } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
@@ -98,7 +98,16 @@ export function SessionActionDialog({
   const [useTmux, setUseTmux] = useState(true)
   const headlessEnabled = useHeadlessEnabled()
 
-  useEffect(() => {
+  // Reset on the open transition, during render rather than in an effect.
+  // The effect version needed a second pass before the cleared form could
+  // paint, which the compiler lint flags as a cascading render. Comparing
+  // against the previous `open` is React's documented "adjust state when a
+  // prop changes" pattern and fires exactly once per open. It also drops the
+  // `current*` props from the trigger: a poll refreshing the record while the
+  // dialog was open used to reseed the form under the user's hands.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
     if (open) {
       setModel(currentModel ?? '')
       setEffort(currentEffort ?? '')
@@ -109,7 +118,7 @@ export function SessionActionDialog({
       // starting on the session's own values.
       setUseTmux(sessionUseTmux)
     }
-  }, [open, currentModel, currentEffort, sessionUseTmux])
+  }
 
   // Same as Cancel, which is disabled while the action is in flight — for
   // Escape, for the backdrop, and for the × alike (NF25).

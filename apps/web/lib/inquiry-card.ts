@@ -66,7 +66,11 @@ export function resolveInquiryCard(args: {
   pending: Inquiry | null | undefined
   answered: AnsweredInquiry | null
   readOnly: boolean
-  now: number
+  /** Omit when the caller owns the grace window itself — it then holds
+   *  `answered` only while the card should still be on screen, and there is
+   *  nothing left for a clock to decide. The session page does exactly that
+   *  with a timer, which also keeps `Date.now()` out of its render. */
+  now?: number
   graceMs?: number
 }): InquiryCardState | null {
   const { pending, answered, readOnly, now } = args
@@ -79,7 +83,7 @@ export function resolveInquiryCard(args: {
     return { inquiry: pending, answered: isAnswered }
   }
 
-  if (answered && now - answered.at < graceMs) {
+  if (answered && (now === undefined || now - answered.at < graceMs)) {
     return { inquiry: answered.inquiry, answered: true }
   }
 

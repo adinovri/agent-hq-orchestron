@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useSyncExternalStore } from 'react'
 import { LayoutDashboard, FolderKanban, BarChart3, Network, Settings, Clock } from 'lucide-react'
 
 const NAV_LINKS = [
@@ -14,17 +14,26 @@ const NAV_LINKS = [
   { href: '/settings', label: 'Settings', icon: Settings },
 ]
 
+const STANDALONE_QUERY = '(display-mode: standalone)'
+
+/** Subscribe to display-mode changes. Module scope keeps the reference stable
+ *  across renders, which is what stops React resubscribing every time. */
+function subscribeStandalone(onChange: () => void): () => void {
+  const mq = window.matchMedia(STANDALONE_QUERY)
+  mq.addEventListener('change', onChange)
+  return () => mq.removeEventListener('change', onChange)
+}
+
+function isStandalone(): boolean {
+  return window.matchMedia(STANDALONE_QUERY).matches
+}
+
 export function NavBar() {
   const pathname = usePathname()
-  const [pwaInstalled, setPwaInstalled] = useState(false)
-
-  useEffect(() => {
-    const mq = window.matchMedia('(display-mode: standalone)')
-    setPwaInstalled(mq.matches)
-    const handler = (e: MediaQueryListEvent) => setPwaInstalled(e.matches)
-    mq.addEventListener('change', handler)
-    return () => mq.removeEventListener('change', handler)
-  }, [])
+  // A media query is an external store, so read it as one. Mirroring it into
+  // state from a mount effect meant the badge was always one render behind
+  // the truth on first paint, for no gain.
+  const pwaInstalled = useSyncExternalStore(subscribeStandalone, isStandalone, () => false)
 
   const buildStamp = process.env.NEXT_PUBLIC_BUILD_STAMP ?? 'unknown'
 

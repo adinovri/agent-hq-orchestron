@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useSyncExternalStore } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { subscribeLocalPref, readLocalPref, writeLocalPref } from '@/lib/local-pref'
 import { Button } from '@/components/ui/button'
 import { FilterBar, FilterState } from '@/components/FilterBar'
 import { SessionList } from '@/components/SessionList'
@@ -17,7 +18,6 @@ import { noticeMutationError } from '@/lib/notice'
 import { throwIfNotOk, mutationErrorMessage } from '@/lib/api-error'
 import type { SessionMetadata, ProjectMetadata } from '@agent-hq-orchestron/shared'
 import { Plus, Rocket, Inbox, Rows3, FolderTree } from 'lucide-react'
-import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 
 function fuzzyMatch(haystack: string, needle: string): boolean {
@@ -37,6 +37,8 @@ const DEFAULT_FILTERS: FilterState = {
   search: '', statuses: [], project: '', tags: [], from: '', to: '',
 }
 
+const GROUP_BY_KEY = 'orchestron.dashboard.groupBy'
+
 export default function DashboardPage() {
   const qc = useQueryClient()
   const router = useRouter()
@@ -45,18 +47,16 @@ export default function DashboardPage() {
   const [adoptOpen, setAdoptOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [killingIds, setKillingIds] = useState<Set<string>>(new Set())
-  const [groupBy, setGroupBy] = useState<'project' | 'none'>('none')
-
-  // Persist grouping preference locally (per browser).
-  useEffect(() => {
-    try {
-      const v = localStorage.getItem('orchestron.dashboard.groupBy')
-      if (v === 'project' || v === 'none') setGroupBy(v)
-    } catch { /* private mode */ }
-  }, [])
-  useEffect(() => {
-    try { localStorage.setItem('orchestron.dashboard.groupBy', groupBy) } catch { /* noop */ }
-  }, [groupBy])
+  // Grouping preference, per browser. localStorage is the state — there is no
+  // React copy to keep in step, so the toggle cannot paint 'none' on the
+  // first frame and correct itself on the second the way the mount-effect
+  // version did.
+  const groupBy = useSyncExternalStore(
+    subscribeLocalPref,
+    () => (readLocalPref(GROUP_BY_KEY) === 'project' ? 'project' : 'none'),
+    () => 'none' as const,
+  )
+  const setGroupBy = (value: 'project' | 'none') => writeLocalPref(GROUP_BY_KEY, value)
 
   const { data: sessions = [], isLoading: sessionsLoading } = useQuery<SessionMetadata[]>({
     queryKey: ['sessions'],

@@ -113,7 +113,16 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
     })
   }
 
-  // Cleanup preview URLs on close
+  // Cleanup preview URLs on close.
+  //
+  // This one stays an effect, deliberately. Revoking an object URL is a side
+  // effect, so it cannot move into render with the other resets below — and
+  // the revoke has to read the list *before* it is emptied, which rules out
+  // clearing the state in render and revoking here on a later commit: by then
+  // `attachments` is already `[]` and every blob leaks for the life of the
+  // document. Keeping both halves in one effect is what keeps them ordered.
+  /* eslint-disable react-hooks/set-state-in-effect -- the reset is sequenced
+     with the revoke above it; splitting them leaks every blob. */
   useEffect(() => {
     if (!open) {
       attachments.forEach(a => a.preview && URL.revokeObjectURL(a.preview))
@@ -121,24 +130,25 @@ export function SpawnDialog({ open, onClose, projects, templates, onSpawned }: P
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const selectedTemplate = templates.find((t) => t.name === template)
   const varSpec = selectedTemplate?.variables ?? {}
 
-  // Auto-select first project when opening if only one exists
-  useEffect(() => {
-    if (open && !projectId && projects.length === 1) {
-      setProjectId(projects[0]!.id)
-    }
-  }, [open, projectId, projects])
-
-  // Reset state when closing
-  useEffect(() => {
-    if (!open) {
+  // Open and close transitions, handled during render rather than in two
+  // effects that each cost a second pass before the user saw the result.
+  // Opening with exactly one project picks it; closing clears the error and
+  // the tmux override so the next open starts neutral.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) {
+      if (!projectId && projects.length === 1) setProjectId(projects[0]!.id)
+    } else {
       setError(null)
       setUseTmuxOverride(null)
     }
-  }, [open])
+  }
 
   // Body scroll lock while open
   useEffect(() => {

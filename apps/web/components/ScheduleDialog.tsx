@@ -138,21 +138,33 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
   // Rehydrate local state each time the dialog reopens with a different
   // `initial`. useState only captures its argument on first mount, and this
   // component stays mounted (parent renders it with open={!!editing}), so
-  // without this effect the Edit dialog kept showing whatever state was
-  // there at first mount (empty for the create case).
-  useEffect(() => {
-    if (!open) return
-    setProjectId(initial?.projectId ?? '')
-    setCron(initial?.cron ?? '0 9 * * 1')
-    setPrompt(initial?.prompt ?? '')
-    setEnabled(initial?.enabled ?? true)
-    setModel(initial?.model ?? '')
-    setEffort(initial?.effort ?? '')
-    setUseTmuxOverride(initial?.useTmux ?? null)
-    setError(null)
-    // Track by identity so switching between Edit rows also rehydrates.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initial?.id])
+  // without this the Edit dialog kept showing whatever state was there at
+  // first mount (empty for the create case).
+  //
+  // Done during render rather than in an effect: as an effect the stale
+  // values from the previous row painted for one frame before being replaced.
+  // Keyed by `initial.id`, so switching straight from one Edit row to another
+  // rehydrates too; `'new'` stands for the create case, which has no id.
+  const seedKey = open ? (initial?.id ?? 'new') : null
+  const [seededKey, setSeededKey] = useState<string | null>(null)
+  if (seedKey !== seededKey) {
+    setSeededKey(seedKey)
+    if (seedKey !== null) {
+      setProjectId(initial?.projectId ?? '')
+      setCron(initial?.cron ?? '0 9 * * 1')
+      setPrompt(initial?.prompt ?? '')
+      setEnabled(initial?.enabled ?? true)
+      setModel(initial?.model ?? '')
+      setEffort(initial?.effort ?? '')
+      setUseTmuxOverride(initial?.useTmux ?? null)
+      setError(null)
+      // A project picked for us only makes sense when the schedule does not
+      // name one and there is exactly one to pick.
+      if (!initial?.projectId && projects.length === 1) setProjectId(projects[0]!.id)
+    } else {
+      setError(null)
+    }
+  }
 
   // Human-readable cron description + next-3-fire preview.
   const cronPreview = useMemo(() => {
@@ -183,12 +195,10 @@ export function ScheduleDialog({ open, onClose, projects, onCreated, initial }: 
     return { human, nextRuns, error: null }
   }, [cron])
 
+  // Body scroll lock. Pure side effect now — clearing the error moved into
+  // the close branch of the transition above.
   useEffect(() => {
-    if (open && !projectId && projects.length === 1) setProjectId(projects[0]!.id)
-  }, [open, projectId, projects])
-
-  useEffect(() => {
-    if (!open) { setError(null); return }
+    if (!open) return
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = '' }
   }, [open])

@@ -3,7 +3,8 @@
 import { SessionMetadata } from '@agent-hq-orchestron/shared'
 import { SessionCard } from './SessionCard'
 import { Folder, ChevronDown, ChevronRight } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
+import { subscribeLocalPref, notifyLocalPrefChange } from '@/lib/local-pref'
 
 /** Derive the parent→children map + a short human label per parent from
  *  the flat session list. Used to surface list-level tree hints
@@ -147,6 +148,9 @@ function loadCollapsedSet(): Set<string> {
 
 function saveCollapsedSet(s: Set<string>): void {
   try { localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(Array.from(s))) } catch { /* noop */ }
+  // A write in this tab fires no `storage` event, so the groups reading this
+  // set through `useSyncExternalStore` are told by hand.
+  notifyLocalPrefChange()
 }
 
 interface ProjectGroupProps {
@@ -162,18 +166,23 @@ interface ProjectGroupProps {
 }
 
 function ProjectGroup({ projectId, items, projectNames, projectDefaults, killingIds, onKill, descendantCount, parentLabel, parentTitle }: ProjectGroupProps) {
-  const [collapsed, setCollapsed] = useState<boolean>(false)
-  // Hydrate collapsed state from localStorage after mount (avoids SSR mismatch).
-  useEffect(() => {
-    setCollapsed(loadCollapsedSet().has(projectId))
-  }, [projectId])
+  // Read straight from storage instead of mirroring it into state after
+  // mount. The mount effect could not run before the first paint, so a group
+  // the user had collapsed rendered open and then snapped shut. The server
+  // snapshot is `false`, which is also what the markup says, so hydration
+  // still matches. The snapshot is a boolean — a primitive — which is what
+  // keeps React from looping on a fresh Set every render.
+  const collapsed = useSyncExternalStore(
+    subscribeLocalPref,
+    () => loadCollapsedSet().has(projectId),
+    () => false,
+  )
 
   const toggle = () => {
     const set = loadCollapsedSet()
     if (set.has(projectId)) set.delete(projectId)
     else set.add(projectId)
     saveCollapsedSet(set)
-    setCollapsed(set.has(projectId))
   }
 
   const name = projectNames?.get(projectId) ?? projectId.slice(0, 8)

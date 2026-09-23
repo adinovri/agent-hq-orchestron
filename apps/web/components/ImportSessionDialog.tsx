@@ -64,14 +64,25 @@ export function ImportSessionDialog({ open, onClose, projects }: Props) {
   const [useTmuxOverride, setUseTmuxOverride] = useState<boolean | null>(null)
   const headlessEnabled = useHeadlessEnabled()
 
-  useEffect(() => {
+  // Reset on the open transition, during render rather than in an effect.
+  // The effect version needed a second pass before the cleared form could
+  // paint, which the compiler lint flags as a cascading render. Comparing
+  // against the previous `open` is React's documented "adjust state when a
+  // prop changes" pattern and fires exactly once per open.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
     if (open) {
       setProjectId(eligible[0]?.id ?? '')
       setFile(null)
       setUseTmuxOverride(null)
-      if (inputRef.current) inputRef.current.value = ''
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }
+
+  // Clearing the file input is a DOM write, not state, so it stays in an
+  // effect — render must not touch the document.
+  useEffect(() => {
+    if (open && inputRef.current) inputRef.current.value = ''
   }, [open])
 
   const currentProject = eligible.find((p) => p.id === projectId)

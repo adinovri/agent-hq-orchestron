@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useId } from 'react'
+import { useState, useId } from 'react'
 import { Button } from '@/components/ui/button'
 import type { AgentType, EffortLevel, SessionStatus } from '@agent-hq-orchestron/shared'
 import { modelsFor, effortsFor } from '@/lib/models'
@@ -63,13 +63,22 @@ export function SessionMetadataEditDialog({
   // field, and those are all tmux sessions.
   const currentUseTmuxResolved = currentUseTmux ?? true
 
-  useEffect(() => {
+  // Seed the form on the open transition, and only there. As an effect this
+  // cost a second render pass to paint, and — because the effect also listed
+  // the `current*` props — a poll refreshing the session record mid-edit
+  // reseeded the form and threw away whatever the user had just picked.
+  // Comparing against the previous `open` is React's documented "adjust state
+  // when a prop changes" pattern: it runs during render, so there is no
+  // cascading pass, and it fires exactly once per open.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
     if (open) {
       setModel(currentModel ?? '')
       setEffort(currentEffort ?? '')
       setUseTmux(currentUseTmux ?? true)
     }
-  }, [open, currentModel, currentEffort, currentUseTmux])
+  }
 
   // `!pending` mirrors the Cancel button, which this dialog already
   // disables mid-save. Escape, the backdrop and the × must not be three more

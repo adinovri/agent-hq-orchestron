@@ -99,11 +99,11 @@ export default function SessionDetailPage({ params }: PageProps) {
   useEffect(() => {
     if (!answeredInquiry || pendingInquiry) return
     const remaining = answeredInquiry.at + INQUIRY_ANSWER_GRACE_MS - Date.now()
-    if (remaining <= 0) {
-      setAnsweredInquiry(null)
-      return
-    }
-    const timer = setTimeout(() => setAnsweredInquiry(null), remaining)
+    // `Math.max(0, …)` rather than clearing on the spot when the window has
+    // already lapsed: an already-expired card leaves on the next tick instead
+    // of inside this effect, so the effect never sets state synchronously and
+    // never costs a cascading render. Same frame to the eye.
+    const timer = setTimeout(() => setAnsweredInquiry(null), Math.max(0, remaining))
     return () => clearTimeout(timer)
   }, [answeredInquiry, pendingInquiry])
 
@@ -286,11 +286,15 @@ export default function SessionDetailPage({ params }: PageProps) {
 
   // Survives the moment the server clears `pendingInquiry`, so a submitted
   // card switches to "Answer sent" instead of vanishing mid-confirmation.
+  // No `now`: the timer above owns the grace window and clears
+  // `answeredInquiry` the moment it lapses, so there is nothing here for a
+  // clock to decide. Reading one during render made the output depend on when
+  // React happened to re-render — impure, and wrong in both directions: the
+  // card outlived its window whenever nothing else triggered a render.
   const inquiryCard = resolveInquiryCard({
     pending: session.pendingInquiry,
     answered: answeredInquiry,
     readOnly,
-    now: Date.now(),
   })
 
   return (

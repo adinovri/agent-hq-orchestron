@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useId } from 'react'
+import { useState, useId } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { apiFetch } from '@/lib/fetcher'
@@ -68,15 +68,21 @@ export function AdoptSessionDialog({ open, onClose, projects }: Props) {
   const [useTmuxOverride, setUseTmuxOverride] = useState<boolean | null>(null)
   const headlessEnabled = useHeadlessEnabled()
 
-  useEffect(() => {
+  // Reset on the open transition, during render rather than in an effect.
+  // The effect version needed a second pass before the cleared form could
+  // paint, which the compiler lint flags as a cascading render. Comparing
+  // against the previous `open` is React's documented "adjust state when a
+  // prop changes" pattern and fires exactly once per open.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (open !== wasOpen) {
+    setWasOpen(open)
     if (open) {
       setProjectId(eligible[0]?.id ?? '')
       setUuid('')
       setValidation(null)
       setUseTmuxOverride(null)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }
 
   const currentProject = eligible.find((p) => p.id === projectId)
   // `?? true`: a project with no stored preference means tmux.
