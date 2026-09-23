@@ -22,7 +22,7 @@ import { SessionManager } from '../domain/session-manager.js'
 const UPLOAD_ROOT = '/tmp/orchestron/uploads'
 
 /** Redact the operator's home dir (and username) from a filesystem path
- *  before echoing it in an error response. `/home/scriberion/.orchestron/…`
+ *  before echoing it in an error response. `/home/you/.orchestron/…`
  *  becomes `~/.orchestron/…` — still diagnostic for the operator, no
  *  longer a host/user fingerprint for an unauthenticated (or authed but
  *  hostile) caller. */
@@ -40,7 +40,7 @@ function sanitizeFilename(name: string): string {
   return base.replace(/[^\w.\-]/g, '_').slice(0, 120) || 'file'
 }
 import { HookRunner } from '../domain/hook-runner.js'
-import { TemplateResolver, TemplateValidationError } from '../domain/template-resolver.js'
+import { TemplateResolver, TemplateValidationError, TemplateNotFoundError } from '../domain/template-resolver.js'
 import { DelegationTracker } from '../domain/delegation-tracker.js'
 import { ProjectRegistry, ProjectNotFoundError } from '../domain/project-registry.js'
 
@@ -468,6 +468,13 @@ export function sessionsPlugin(
           initialPrompt = await templateResolver.resolve(template, { project, vars })
         } catch (err) {
           if (err instanceof TemplateValidationError) {
+            return reply.code(422).send({ error: err.message })
+          }
+          // A name the resolver refuses — missing file, or one that failed
+          // the bare-filename guard — is bad input, not a server fault. It
+          // used to escape this catch and surface as a 500, which told a
+          // caller probing template names that they had hit something.
+          if (err instanceof TemplateNotFoundError) {
             return reply.code(422).send({ error: err.message })
           }
           throw err

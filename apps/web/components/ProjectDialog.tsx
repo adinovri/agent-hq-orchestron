@@ -286,7 +286,7 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
                 type="text"
                 value={form.claudeConfigDir}
                 onChange={(e) => set('claudeConfigDir', e.target.value)}
-                placeholder="~/ClaudeConfigs/adi.novriansyah"
+                placeholder="~/ClaudeConfigs/<profile>"
                 className={inputCls}
               />
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
@@ -327,7 +327,7 @@ export function ProjectDialog({ open, onClose, project, onSaved }: Props) {
               type="text"
               value={form.tags}
               onChange={(e) => set('tags', e.target.value)}
-              placeholder="java, spring, nanovest"
+              placeholder="java, spring, backend"
               className={inputCls}
             />
           </div>

@@ -13,7 +13,7 @@ import {
   BootGuardError,
   type Config,
 } from '@agent-hq-orchestron/shared'
-import authPlugin from './plugins/auth.js'
+import authPlugin, { timingSafeCompare } from './plugins/auth.js'
 import { SessionManager } from './domain/session-manager.js'
 import { ProjectRegistry } from './domain/project-registry.js'
 import { DelegationTracker } from './domain/delegation-tracker.js'
@@ -146,9 +146,23 @@ await fastify.register(rateLimit, {
   max: 600,
   timeWindow: '1 minute',
   allowList: ['127.0.0.1', '::1'],   // loopback (dev/proxy) exempt
+  // Only the real token earns a token-scoped bucket; everything else is
+  // counted against the caller's IP.
+  //
+  // Keying on whatever the caller presented — `bearer:${auth.slice(7,15)}`,
+  // as this did — handed the budget to the attacker. This hook runs before
+  // the auth preHandler, so an unauthenticated flooder only had to vary the
+  // Authorization header to mint a fresh 600/min allowance per made-up
+  // token, which is precisely the ceiling the limiter exists to impose.
+  // Legitimate callers are unaffected: there is one token, so they all
+  // shared a single bucket under the old prefix too.
   keyGenerator: (req) => {
     const auth = req.headers.authorization ?? ''
-    return auth.startsWith('Bearer ') ? `bearer:${auth.slice(7, 15)}` : req.ip
+    const presented = auth.startsWith('Bearer ') ? auth.slice(7) : ''
+    if (presented && config.remoteToken && timingSafeCompare(presented, config.remoteToken)) {
+      return 'bearer:valid'
+    }
+    return req.ip
   },
 })
 

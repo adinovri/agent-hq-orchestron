@@ -52,8 +52,8 @@ const ESC_DISMISS_RE = /Esc to cancel|esc to (cancel|dismiss|close)/
  * Claude convention: `<CLAUDE_CONFIG_DIR>/projects/<mangled-cwd>/<session-uuid>.jsonl`
  * Where <mangled-cwd> replaces "/" with "-", keeping leading "-".
  *
- * Example: cwd=/home/scriberion, configDir=/home/scriberion/ClaudeConfigs/adi.novriansyah
- * → /home/scriberion/ClaudeConfigs/adi.novriansyah/projects/-home-scriberion/<uuid>.jsonl
+ * Example: cwd=/home/you, configDir=/home/you/ClaudeConfigs/work
+ * → /home/you/ClaudeConfigs/work/projects/-home-you/<uuid>.jsonl
  */
 function expandHome(p: string): string {
   if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2))
@@ -137,7 +137,7 @@ function buildArgv(opts: {
   argv.push('--permission-mode', 'bypassPermissions')
 
   // Auto-allow the 10 orchestron MCP tools so an agent under a managed
-  // policy that overrides bypassPermissions (e.g. Nanovest Team plan's
+  // policy that overrides bypassPermissions (an enterprise plan setting
   // `disableBypassPermissionsMode: "disable"`) doesn't freeze on every
   // spawn_session / note_set call waiting for approval. These tools all
   // route through the orchestron API which enforces its own guardrails

@@ -1,6 +1,6 @@
 # Scaffold Plan — agent-hq-orchestron
 
-**Target:** `/home/scriberion/Works/agent-hq-orchestron/`
+**Target:** `/home/you/Works/agent-hq-orchestron/`
 **Package manager:** **npm** (npm workspaces, not pnpm)
 **Data folder:** `~/.config/agent-hq-orchestron/`
 **Push:** Local only for now — future push to Adi's public GitHub with credit to Tycho reference

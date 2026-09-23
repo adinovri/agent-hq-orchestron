@@ -611,16 +611,16 @@ if anything misbehaves. Report back so this section can be tightened.
 
 ```bash
 sudo tailscale up
-tailscale ip -4   # note the IP, e.g. 100.71.6.23
+tailscale ip -4   # note the IP, e.g. 100.64.0.1
 ```
 
 Set the bind host — either in `~/.orchestron/config.json`:
 ```json
-{ "bindHost": "100.71.6.23" }
+{ "bindHost": "100.64.0.1" }
 ```
 Or inline on the API systemd unit (add to the `[Service]` block):
 ```ini
-Environment="ORCHESTRON_BIND_HOST=100.71.6.23"
+Environment="ORCHESTRON_BIND_HOST=100.64.0.1"
 ```
 
 Restart both services:
@@ -635,7 +635,7 @@ systemctl --user restart orchestron-api.service orchestron-web.service
 orchestron qr
 ```
 
-Render QR di terminal berisi `https://100.71.6.23:8080/pair?token=<hex>`. Scan dari HP → auto-open Web UI dengan token pre-filled ke sessionStorage → PWA install prompt.
+Render QR di terminal berisi `https://100.64.0.1:8080/pair?token=<hex>`. Scan dari HP → auto-open Web UI dengan token pre-filled ke sessionStorage → PWA install prompt.
 
 **Warning:** QR contains full-access token — jangan screen-share saat generate.
 
@@ -657,7 +657,7 @@ crontab -e
 Kalau laptop **tidak** perlu jalanin orchestron sendiri — akses semua via browser/PWA ke server.
 
 - Server-side: setup Scenario B
-- Laptop-side: **tidak install apa-apa**. Buka https://100.71.6.23:8080/pair?token=<hex> di browser once → PWA installable → shortcut jadi native app di dock.
+- Laptop-side: **tidak install apa-apa**. Buka https://100.64.0.1:8080/pair?token=<hex> di browser once → PWA installable → shortcut jadi native app di dock.
 
 Trade-off: server / Tailscale down = complete outage. Airplane mode = tidak bisa work.
 
@@ -683,7 +683,7 @@ Use case: lu kerja di kafe → laptop only (server unreachable). Balik ke rumah 
 **Server** (setup pertama):
 - Follow Scenario B (Section 6) sepenuhnya
 - Bind ke Tailscale IP + Bearer token + systemd service
-- Contoh URL: `https://100.71.6.23:8080`
+- Contoh URL: `https://100.64.0.1:8080`
 
 **Laptop** (setup kedua):
 - Follow Scenario A (Section 5, prefer 5b production build untuk stability)
@@ -694,7 +694,7 @@ Use case: lu kerja di kafe → laptop only (server unreachable). Balik ke rumah 
 ### Cara akses
 
 - **Sessions di laptop**: buka `http://localhost:3010` di browser laptop
-- **Sessions di server**: buka `https://100.71.6.23:8080` (Tailscale HTTPS) di browser mana aja — laptop, HP via PWA, tablet
+- **Sessions di server**: buka `https://100.64.0.1:8080` (Tailscale HTTPS) di browser mana aja — laptop, HP via PWA, tablet
 - **Pilih mana yang jalankan session**: sadar sebelum spawn. Rule of thumb:
   - **Short interactive session** yang lu supervise langsung → laptop
   - **Long-running session** yang mau lu tinggal + monitor via HP → server
@@ -731,12 +731,12 @@ orchestron doctor
 
 # API health
 curl -H "Authorization: Bearer $ORCHESTRON_REMOTE_TOKEN" \
-  http://100.71.6.23:8080/api/health
+  http://100.64.0.1:8080/api/health
 
 # Web UI — via Tailscale Serve (recommended, HTTPS + PWA-ready):
 open https://<hostname>.<tailnet>.ts.net/
 # Or, if you exposed web directly on a tailnet IP + firewalled off public:
-open http://100.71.6.23:3010
+open http://100.64.0.1:3010
 
 # Verify test suite passes
 npm test
@@ -752,11 +752,11 @@ modes are accepted:
 # Preferred — mint a one-shot 60-second ticket, then open the stream:
 TICKET=$(curl -s -X POST \
   -H "Authorization: Bearer $ORCHESTRON_REMOTE_TOKEN" \
-  http://100.71.6.23:8080/api/sse-ticket | jq -r .ticket)
-curl -N "http://100.71.6.23:8080/api/stream?ticket=$TICKET"
+  http://100.64.0.1:8080/api/sse-ticket | jq -r .ticket)
+curl -N "http://100.64.0.1:8080/api/stream?ticket=$TICKET"
 
 # Legacy — long-lived remoteToken directly (still accepted):
-curl -N "http://100.71.6.23:8080/api/stream?token=$ORCHESTRON_REMOTE_TOKEN"
+curl -N "http://100.64.0.1:8080/api/stream?token=$ORCHESTRON_REMOTE_TOKEN"
 ```
 
 Tickets are single-use, expire in 60 s, and live in the API's memory
@@ -769,8 +769,8 @@ Expected `/api/health` response:
 {
   "ok": true,
   "tmux": "tmux 3.4",
-  "storage": "/home/adi/.orchestron",
-  "bindHost": "100.71.6.23",
+  "storage": "/home/you/.orchestron",
+  "bindHost": "100.64.0.1",
   "remoteAuth": "enabled",
   "maxConcurrent": 8
 }
@@ -784,10 +784,10 @@ Via CLI:
 ```bash
 # Claude-backed project
 orchestron project add \
-  --name nanovest-backend \
-  --path ~/Works/nanovest-backend \
+  --name acme-backend \
+  --path ~/Works/acme-backend \
   --agent claude \
-  --config-dir ~/ClaudeConfigs/adi.novriansyah
+  --config-dir ~/ClaudeConfigs/work
 
 # Codex-backed project — --config-dir maps to CODEX_HOME, so a custom
 # path lets you isolate model/trust/auth from your personal ~/.codex.
@@ -810,7 +810,7 @@ lists whichever adapters are enabled + have their binary on `PATH`).
 CLI:
 ```bash
 orchestron session spawn \
-  --project nanovest-backend \
+  --project acme-backend \
   --template refactor \
   --var target=CryptoBuyService.java
 ```
@@ -942,7 +942,7 @@ API bound to a non-loopback interface (e.g. tailscale IP).
 Watch the web journal on start:
 ```
 journalctl --user -u orchestron-web.service | grep 'next.config'
-# → [next.config] Rewriting /api/* → http://100.82.168.18:8090
+# → [next.config] Rewriting /api/* → http://100.64.0.2:8090
 ```
 
 ### PWA / Service Worker stuck on old bundle

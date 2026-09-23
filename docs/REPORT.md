@@ -74,7 +74,7 @@ tycho/
 
 ## 3. Claude-CLI-Bridge Pattern (OpenClaw)
 
-Dibaca dari `/home/scriberion/Codes/claude-cli-bridge/`:
+Dibaca dari `/home/you/Codes/claude-cli-bridge/`:
 
 ### Arsitektur Bridge
 ```
@@ -255,8 +255,8 @@ export async function spawnAgentSession(config: AgentConfig): Promise<AgentSessi
 - Detect `stop_reason=end_turn` → mark session done → `tmux kill-session`
 
 **Pattern sudah proven di production:**
-- `/home/scriberion/Codes/claude-cli-bridge/` (Python) — dipakai OpenClaw
-- `/home/scriberion/.local/bin/nafu-bg-claude` (Python) — dipakai Adi setiap hari
+- `/home/you/Codes/claude-cli-bridge/` (Python) — dipakai OpenClaw
+- `/home/you/.local/bin/nafu-bg-claude` (Python) — dipakai Adi setiap hari
 - Node.js port cukup translate 1:1 (sama API tmux CLI)
 
 **Ekstensi ke CLI lain:**

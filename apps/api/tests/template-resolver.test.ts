@@ -171,3 +171,51 @@ describe('TemplateResolver — git context', () => {
     expect(result).toBe('Branch: ""')
   })
 })
+
+describe('TemplateResolver — name guard', () => {
+  /** A file that is deliberately NOT in the templates dir. Reaching it is the
+   *  whole point of the traversal, so every case below asserts against it. */
+  function writeOutsideTemplates(name: string, content: string): string {
+    const p = path.join(tmpDir, `${name}.md`)
+    fs.writeFileSync(p, content, 'utf8')
+    return p
+  }
+
+  it('cannot escape the templates dir with ../', async () => {
+    writeOutsideTemplates('CLAUDE', 'PRIVATE INSTRUCTIONS')
+    // Unguarded this resolved to <tmpDir>/CLAUDE.md and returned its body as
+    // the session's initial prompt.
+    await expect(resolver.resolve('../CLAUDE')).rejects.toThrowError(TemplateNotFoundError)
+  })
+
+  it('cannot escape with a deep relative path', async () => {
+    await expect(
+      resolver.resolve('../../../../etc/ssl/openssl'),
+    ).rejects.toThrowError(TemplateNotFoundError)
+  })
+
+  it('rejects an absolute-looking name', async () => {
+    // `path.join` never treats a later absolute segment as a reset, so this
+    // one did not escape even before the guard — it is locked down so a
+    // future switch to `path.resolve` cannot quietly turn it into one.
+    const outside = writeOutsideTemplates('abs', 'PRIVATE')
+    await expect(
+      resolver.resolve(outside.replace(/\.md$/, '')),
+    ).rejects.toThrowError(TemplateNotFoundError)
+  })
+
+  it('rejects names carrying a dot, so a sibling .md cannot be addressed', async () => {
+    await expect(resolver.resolve('.env')).rejects.toThrowError(TemplateNotFoundError)
+    await expect(resolver.resolve('a.b')).rejects.toThrowError(TemplateNotFoundError)
+  })
+
+  it('rejects an empty name and one past 64 chars', async () => {
+    await expect(resolver.resolve('')).rejects.toThrowError(TemplateNotFoundError)
+    await expect(resolver.resolve('x'.repeat(65))).rejects.toThrowError(TemplateNotFoundError)
+  })
+
+  it('still resolves ordinary names, including dashes and underscores', async () => {
+    writeTemplate('code-review_v2', '---\nname: code-review_v2\n---\nBody here')
+    expect(await resolver.resolve('code-review_v2')).toBe('Body here')
+  })
+})

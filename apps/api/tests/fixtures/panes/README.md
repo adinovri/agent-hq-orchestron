@@ -32,9 +32,9 @@ file parks `running` forever, invisible to the dashboard and unanswerable by
 
 Two things follow, and both are about evidence rather than regexes.
 
-**`Edit` cannot be captured on a Nanovest-managed host.** The managed policy
-(`remote-settings.json`) allowlists `Edit` org-wide, so an Edit never prompts —
-verified live. `Write` is not allowlisted, which is why the capture, the
+**`Edit` cannot be captured on a managed host.** The managed policy
+(`remote-settings.json`) on the host these panes came from allowlists `Edit`
+org-wide, so an Edit never prompts — verified live. `Write` is not allowlisted, which is why the capture, the
 fixture and the fix all rest on the create-file family. Anyone who wants the
 Edit variant needs a host without that policy.
 

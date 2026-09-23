@@ -221,7 +221,7 @@ Response (201 Created):
   "parentSessionId": null,
   "claudeSessionUuid": "550e8400-e29b-41d4-a716-446655440000",
   "tmuxName": "agent-a1b2c3d4",
-  "jsonlPath": "/home/adi/.claude/projects/-home-adi-Works-x/550e8400-....jsonl",
+  "jsonlPath": "/home/you/.claude/projects/-home-you-Works-x/550e8400-....jsonl",
   "startedAt": "2026-08-15T10:30:00Z",
   "streamUrl": "/api/stream/sess-xyz789"
 }
@@ -337,7 +337,7 @@ export const claudeAdapter: AgentAdapter = {
 
 **Enforcement:** Adapter contract test verify argv **tidak pernah** mengandung `-p` atau `--print`. Runtime assertion sebelum spawn.
 
-**⚠️ Managed-policy caveat (Claude Team/Enterprise plans):** the `--permission-mode bypassPermissions` flag can be **silently overridden** by a `disableBypassPermissionsMode: "disable"` entry in the config-dir's `remote-settings.json` (org-managed subscription). When overridden the session runs in the default gated mode instead. Real-world consequences observed with Nanovest Team plan config-dir on 2026-09-06:
+**⚠️ Managed-policy caveat (Claude Team/Enterprise plans):** the `--permission-mode bypassPermissions` flag can be **silently overridden** by a `disableBypassPermissionsMode: "disable"` entry in the config-dir's `remote-settings.json` (org-managed subscription). When overridden the session runs in the default gated mode instead. Real-world consequences observed with a managed Team-plan config-dir on 2026-09-06:
 
 - Common tool calls still auto-approve via the user's `settings.json` `permissions.allow` list (Bash, Read, Write, Edit, MultiEdit, WebFetch, WebSearch, common MCP servers) so most workflows look identical to bypass.
 - Actions **outside** the allowlist (nested `claude` spawn attempts, `.env` reads, `sudo *`, `chmod *`, `curl * | sh`, `.github/workflows/*` edits, `**/secrets/**`) hit the classifier gate. Orchestron has no dashboard UI to answer a TUI approval prompt today, so such a session appears stuck as `running` with no visible progress.
@@ -387,13 +387,13 @@ Setiap project di `~/.orchestron/projects/<name>.json` punya `agentConfig` field
 
 ```
 {
-  "name": "nanovest-backend",
-  "path": "/home/adi/Works/nanovest-backend",
+  "name": "acme-backend",
+  "path": "/home/you/Works/acme-backend",
   "agentConfig": {
     "adapter": "claude",
     "model": "claude-opus-4-7",
     "env": {
-      "CLAUDE_CONFIG_DIR": "/home/adi/ClaudeConfigs/adi.novriansyah",
+      "CLAUDE_CONFIG_DIR": "/home/you/ClaudeConfigs/work",
       "ANTHROPIC_MODEL": "claude-opus-4-7"
     },
     "extraArgs": ["--permission-mode", "bypassPermissions"]
@@ -401,7 +401,7 @@ Setiap project di `~/.orchestron/projects/<name>.json` punya `agentConfig` field
 }
 ```
 
-**Precedence saat spawn:** `agentConfig.env` > adapter default env > `process.env`. Contoh use case: Adi punya multiple Claude config dir (per-persona: `adi.novriansyah`, `scriberion`, dst) — pilih per-project tanpa export env global.
+**Precedence saat spawn:** `agentConfig.env` > adapter default env > `process.env`. Contoh use case: Adi punya multiple Claude config dir (per-persona: `work`, `personal`, dst) — pilih per-project tanpa export env global.
 
 #### CLI untuk manage adapter
 
@@ -476,6 +476,7 @@ end
 
 ```
 // ~/.orchestron/hooks/pre-spawn/enforce-no-secrets.ts
+// Example only — orchestron ships no hooks. Drop this file in yourself to arm it.
 import { readFile } from 'node:fs/promises';
 const payload = JSON.parse(await readFile(0, 'utf8'));  // stdin
 const banned = ['sk-ant-', 'sk-', 'ghp_', 'AKIA'];
@@ -569,7 +570,7 @@ Follow the project's style guide. Small diffs preferred.
 
 ```
 orchestron session spawn \
-  --project nanovest-backend \
+  --project acme-backend \
   --template refactor \
   --var target=CryptoBuyService.java
 
@@ -670,7 +671,7 @@ API->>FS: delete worktrees/{uuid}.json
 
 ```
 orchestron session spawn \
-  --project nanovest-backend \
+  --project acme-backend \
   --template review-pr \
   --snapshot pr:123 \
   --var pr=123
@@ -695,7 +696,7 @@ orchestron session spawn \
 
 #### Bitbucket-specific notes (Adi workflow)
 
-* Adi mostly kerja di Bitbucket (Nanovest, NanoFutures) → `bb` adapter Priority-1 untuk implementasi. GitHub `gh` tetap Phase 1 karena orchestron sendiri di GitHub (dogfood).
+* Adi mostly kerja di Bitbucket (work repos) → `bb` adapter Priority-1 untuk implementasi. GitHub `gh` tetap Phase 1 karena orchestron sendiri di GitHub (dogfood).
 * `bb` CLI: pakai `~/Codes/bb-cli` kalau ada; fallback ke `curl https://api.bitbucket.org/2.0/...` dgn `BITBUCKET_APP_PASSWORD` env.
 
 ### Observability & Metrics (FR-18)
@@ -714,7 +715,7 @@ File-based metrics store, di-aggregate on-demand — bukan time-series DB (overk
 GET /api/metrics?groupBy=project&from=2026-08-01&to=2026-09-01
 → {
   "buckets": [
-    {"key": "nanovest-backend", "sessions": 47, "tokens": 12_400_000, "cost_usd": 21.47, "avg_duration_ms": 380_000},
+    {"key": "acme-backend", "sessions": 47, "tokens": 12_400_000, "cost_usd": 21.47, "avg_duration_ms": 380_000},
     {"key": "nafutech-workspace", "sessions": 23, "tokens": 8_100_000, "cost_usd": 14.02, ...}
   ],
   "total": {"sessions": 70, "tokens": 20_500_000, "cost_usd": 35.49}
@@ -1070,12 +1071,12 @@ date at
 ```
 {
   "uuid": "01j8x2p3-...",
-  "projectId": "proj_nanovest_be",
+  "projectId": "proj_acme_be",
   "adapter": "claude",
   "model": "claude-opus-4-7",
   "status": "completed",
   "tmuxName": "agent-a7b3c1d2",
-  "jsonlPath": "/home/adi/ClaudeConfigs/adi.novriansyah/projects/nanovest-backend/01j8x2p3.jsonl",
+  "jsonlPath": "/home/you/ClaudeConfigs/work/projects/acme-backend/01j8x2p3.jsonl",
   "tokenInput": 4200, "tokenOutput": 1850,
   "costUsd": 0.083,
   "startedAt": "2026-09-03T07:22:14Z",
@@ -1100,7 +1101,7 @@ Consolidated security posture — konsisten dgn positioning "local-first single-
 | Bearer token in transit | Token leaked via HTTP request log / query string | HTTPS mandatory di remote mode (Tailscale HTTPS auto-cert). WS/SSE query param logged only saat DEBUG level |
 | Timing attack on token compare | Attacker infer token via response time diff | `crypto.timingSafeEqual` untuk semua Bearer compare |
 | Prompt injection via transcript | Malicious content di JSONL render Markdown → XSS di Web UI | Next.js sanitize markdown via `rehype-sanitize`. CSP strict: `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'` |
-| Secret leakage via prompt | User accidentally paste API key ke prompt → tersimpan di JSONL selamanya | Optional built-in `pre-spawn` hook `enforce-no-secrets.ts` — regex banned prefix (`sk-ant-`, `ghp_`, `AKIA`). Enabled by default, disable via `orchestron config set hooks.pre-spawn.enforce-no-secrets false` |
+| Secret leakage via prompt | User accidentally paste API key ke prompt → tersimpan di JSONL selamanya | **Not mitigated out of the box.** Sample `pre-spawn` hook `enforce-no-secrets.ts` (§ Hooks) — regex banned prefix (`sk-ant-`, `ghp_`, `AKIA`) — is example code the operator installs into `~/.orchestron/hooks/pre-spawn/` themselves. Nothing ships enabled by default; an install with an empty hooks dir screens nothing |
 | Custom hook / adapter code execution | User install malicious hook script yang punya full-file-system access | **Not mitigated** — hook runs sebagai OS user. Documented sebagai user responsibility (sama seperti VS Code extension trust model) |
 | Git worktree escape | Session di snapshot mode escape read-only via symlink | Worktree buat di `/tmp/orchestron-worktree/` yang OS user own. Symlink escape masih terbatas ke file yang user bisa read anyway. Not a defense boundary — safety net, not security boundary |
 
@@ -1121,7 +1122,7 @@ Consolidated security posture — konsisten dgn positioning "local-first single-
 | Bearer `preHandler` hook | Fastify global middleware | Preventive |
 | WS/SSE token via `preValidation` | Upgrade handler | Preventive |
 | Markdown sanitize + CSP | Next.js render pipeline | Preventive |
-| Secret regex hook | Built-in pre-spawn hook | Preventive (opt-out) |
+| Secret regex hook | Sample pre-spawn hook, operator-installed (not shipped) | Preventive (opt-in) |
 | Argv assertion (no `-p`) | Adapter contract test + runtime | Preventive |
 | Cleanup ledger orphan scan | Boot-time scanner | Corrective |
 | Hook exec logging | `~/.orchestron/logs/hooks-*.jsonl` | Detective |
@@ -1488,7 +1489,7 @@ Bukan "merge state", tapi laptop UI bisa *view* session yang running di server v
 {
   "peers": {
     "home-server": {
-      "url": "https://server.adi.ts.net:3001",
+      "url": "https://server.example.ts.net:3001",
       "token": "<server's ORCHESTRON_REMOTE_TOKEN>",
       "label": "Home Server"
     }

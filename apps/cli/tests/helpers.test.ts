@@ -253,10 +253,10 @@ describe('host and token resolution', () => {
   })
 
   it('prefers --url, then $ORCHESTRON_URL, then config, then the fallback', () => {
-    fs.writeFileSync(configPath, JSON.stringify({ bindHost: '100.82.168.18', port: 8090 }))
+    fs.writeFileSync(configPath, JSON.stringify({ bindHost: '100.64.0.1', port: 8090 }))
     expect(resolveApiBase({ url: 'http://flag:1' }, process.env)).toBe('http://flag:1')
     expect(resolveApiBase({}, { ...process.env, ORCHESTRON_URL: 'http://env:2' })).toBe('http://env:2')
-    expect(resolveApiBase({}, process.env)).toBe('http://100.82.168.18:8090')
+    expect(resolveApiBase({}, process.env)).toBe('http://100.64.0.1:8090')
     fs.writeFileSync(configPath, '{}')
     expect(resolveApiBase({}, process.env)).toBe(FALLBACK_BASE)
   })

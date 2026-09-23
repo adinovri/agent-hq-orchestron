@@ -11,13 +11,13 @@ import {
 
 const claudeProject: ProjectFormOption = {
   id: 'p1', name: 'Claude project', agentType: 'claude',
-  path: '/home/adi/Works/orchestron',
-  configDir: '/home/adi/ClaudeConfigs/adi',
+  path: '/home/you/Works/orchestron',
+  configDir: '/home/you/ClaudeConfigs/adi',
   defaultModel: 'claude-opus-5', defaultEffort: 'high', defaultUseTmux: false,
 }
 
 const bareCodexProject: ProjectFormOption = {
-  id: 'p2', name: 'Codex project', agentType: 'codex', path: '/home/adi/Works/other',
+  id: 'p2', name: 'Codex project', agentType: 'codex', path: '/home/you/Works/other',
 }
 
 describe('projectFieldDefaults', () => {
@@ -99,8 +99,8 @@ describe('projectInfoRows', () => {
     expect(rows.map(r => r.key)).toEqual(['agent', 'workspace', 'configDir', 'model', 'effort'])
     expect(rows.map(r => [r.label, r.value])).toEqual([
       ['agent', 'claude'],
-      ['workspace', '/home/adi/Works/orchestron'],
-      ['claude config dir', '/home/adi/ClaudeConfigs/adi'],
+      ['workspace', '/home/you/Works/orchestron'],
+      ['claude config dir', '/home/you/ClaudeConfigs/adi'],
       ['default model', 'claude-opus-5'],
       ['default effort', 'high'],
     ])

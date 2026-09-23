@@ -1497,7 +1497,7 @@ calls can't TOCTOU-race the guardrail check.
 **Auto-allowlist for the 10 orchestron MCP tools.** Orchestron passes
 `--allowedTools mcp__orchestron__…` to every claude spawn, so agents
 under a managed policy that overrides `--permission-mode
-bypassPermissions` (e.g. Nanovest Team plan's
+bypassPermissions` (e.g. a managed Team plan's
 `disableBypassPermissionsMode: "disable"`) don't freeze on a
 per-invocation approval modal for `spawn_session` / `note_set` /
 `send_input`. The allowlist is bounded to first-party orchestron tools

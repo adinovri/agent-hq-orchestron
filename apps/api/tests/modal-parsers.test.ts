@@ -57,11 +57,13 @@ describe('parseNativeToolModal (NF20)', () => {
   })
 
   it('keeps the conversation above the modal out of the title', () => {
-    // The fixture has five lines of Nanovest banner and the echoed user
-    // prompt above the separator. None of it is modal content.
+    // The fixture has five lines of org banner and the echoed user prompt
+    // above the separator. None of it is modal content. (The banner is a
+    // synthetic stand-in for the real managed-Claude one this pane was
+    // captured with — same five-line shape, no employer named.)
     const prompt = parseNativeToolModal(pane(NATIVE))
     expect(prompt?.title).not.toContain('Run the shell command')
-    expect(prompt?.detail ?? '').not.toContain('Message from Nanovest')
+    expect(prompt?.detail ?? '').not.toContain('Message from Example Org')
   })
 
   it('still finds the modal when the separator rule is absent', () => {
@@ -105,8 +107,8 @@ describe('parseNativeToolModal — file approvals (NF22)', () => {
    *
    * This fixture is a REAL CAPTURE (claude 2.1.268, session `013368f7` of the
    * batch-11 sweep), which is the whole reason the fix was allowed to be
-   * written. `Edit` could not be the probe on that host: the Nanovest managed
-   * policy allowlists `Edit` org-wide so it never prompts. `Write` is not
+   * written. `Edit` could not be the probe on that host: its managed policy
+   * allowlists `Edit` org-wide so it never prompts. `Write` is not
    * allowlisted, so `Write`/create is the family this rests on.
    */
   it('detects the Write approval that parked a session on running', () => {

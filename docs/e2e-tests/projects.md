@@ -236,7 +236,7 @@ which is why the header count does not move.
 
 1. With the five fixtures plus `e2e-scratch` registered, give two
    projects a **Group** (`backend`) and one a couple of **Tags**
-   (`java, nanovest`) via the pencil.
+   (`java, backend`) via the pencil.
 2. Type `haiku` into the search box.
 3. Clear it and type a **path** fragment instead (`ws-headless`).
 4. Pick `backend` from the group select.

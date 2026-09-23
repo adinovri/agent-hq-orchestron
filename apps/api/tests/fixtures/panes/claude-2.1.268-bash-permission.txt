@@ -1,6 +1,6 @@
-▎ Message from Nanovest:
-▎ Welcome to Nanovest Managed Claude Code! Visit our Slack channel
-▎ (https://nanovestio.slack.com/archives/C087BS09GA2) for our Agentic
+▎ Message from Example Org:
+▎ Welcome to Example Org Managed Claude Code! Visit our internal channel
+▎ (https://example.invalid/agentic-engineering) for our Agentic
 ▎ Engineering cultures: in-house plugins, procedures, guides, workflows, tips,
 ▎ and tricks.
   +1 more · /status

@@ -24,6 +24,16 @@ export interface ResolveOptions {
   vars?: Record<string, string | number | boolean>
 }
 
+/** Template names flow into `path.join(templatesDir, \`${name}.md\`)`. The
+ *  name arrives from the request body (`SpawnSessionBodySchema.template`) and
+ *  from schedule entries, neither of which constrains it beyond `z.string()`,
+ *  so `../../../../home/x/.claude/CLAUDE` escapes the templates dir and reads
+ *  any `*.md` on the host — straight into the new session's initial prompt,
+ *  and from there into its transcript. Same class of hole the project and
+ *  schedule id routes already gate with a regex; this one was missed.
+ *  Bare filename only: no slashes, no dots, no control characters. */
+const TEMPLATE_NAME_RE = /^[\w-]{1,64}$/
+
 export class TemplateResolver {
   private readonly templatesDir: string
 
@@ -32,6 +42,11 @@ export class TemplateResolver {
   }
 
   async resolve(name: string, options: ResolveOptions = {}): Promise<string> {
+    // Reject before constructing the path, and report it as "not found"
+    // rather than "invalid" so a caller probing the filesystem learns
+    // nothing from the difference between the two answers.
+    if (!TEMPLATE_NAME_RE.test(name)) throw new TemplateNotFoundError(name)
+
     const filePath = path.join(this.templatesDir, `${name}.md`)
 
     let raw: string
