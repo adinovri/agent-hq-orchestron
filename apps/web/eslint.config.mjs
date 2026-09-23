@@ -12,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Serwist writes these into `public/` on every build. They are
+    // gitignored generated output, not source — linting them reported
+    // errors in code nobody here wrote or can fix.
+    "public/sw.js",
+    "public/sw.js.map",
+    "public/swe-worker-*.js",
   ]),
 ]);
 

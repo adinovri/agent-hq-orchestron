@@ -50,7 +50,14 @@ class FakeElement implements FocusableLike {
    *  answering `null` and making a test pass for the wrong reason. */
   closest(selectors: string): FakeElement | null {
     if (selectors !== DIALOG_SCOPE_SELECTOR) throw new Error(`unsupported selector: ${selectors}`)
-    for (let el: FakeElement | null = this; el; el = el.parent) {
+    return FakeElement.nearestDialog(this)
+  }
+
+  /** Walks `parent` upward from `start`. Split out because taking the node as
+   *  a parameter, rather than seeding a loop variable from `this`, is what
+   *  keeps `@typescript-eslint/no-this-alias` satisfied. Same traversal. */
+  private static nearestDialog(start: FakeElement): FakeElement | null {
+    for (let el: FakeElement | null = start; el; el = el.parent) {
       if (el.attrs.get('role') === 'dialog') return el
       if (el.attrs.get('data-slot') === 'dialog-content') return el
     }

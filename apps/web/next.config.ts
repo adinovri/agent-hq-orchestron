@@ -79,6 +79,7 @@ function computeBuildStamp(): string {
   if (explicit) return explicit
   try {
     // execSync is synchronous — fine at build config load
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const sha = require('node:child_process')
       .execSync('git rev-parse --short=8 HEAD', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
       .trim()

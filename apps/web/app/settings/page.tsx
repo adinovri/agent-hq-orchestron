@@ -206,7 +206,7 @@ export default function SettingsPage() {
       <Section title="Appearance" icon={<Palette className="w-4 h-4" />}>
         <div className="py-3 space-y-2">
           <p className="text-sm text-zinc-600 dark:text-zinc-400">
-            Switch between the default Orchestron dark theme, Tycho's warm-orange dark, or a light theme. Saved per-browser.
+            Switch between the default Orchestron dark theme, Tycho&apos;s warm-orange dark, or a light theme. Saved per-browser.
           </p>
           <ThemeSelect />
         </div>

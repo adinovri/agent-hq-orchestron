@@ -16,19 +16,24 @@ function toDateStr(d: Date): string {
   return d.toISOString().slice(0, 10)
 }
 
+/** Hoisted out of the component on purpose. It reads the clock, and inside a
+ *  component body the React Compiler lint cannot tell that the only caller is
+ *  an onClick handler rather than render — it has to assume the worst. Out
+ *  here it is plainly a handler helper. Same behaviour, `onChange` passed in. */
+function applyPreset(days: number, onChange: Props['onChange']) {
+  const end = new Date()
+  const start = new Date(Date.now() - days * 86_400_000)
+  onChange(toDateStr(start), toDateStr(end))
+}
+
 export function DateRangePicker({ from, to, onChange }: Props) {
-  function applyPreset(days: number) {
-    const end = new Date()
-    const start = new Date(Date.now() - days * 86_400_000)
-    onChange(toDateStr(start), toDateStr(end))
-  }
 
   return (
     <div className="flex flex-wrap items-center gap-2">
       {PRESETS.map((p) => (
         <button
           key={p.label}
-          onClick={() => applyPreset(p.days)}
+          onClick={() => applyPreset(p.days, onChange)}
           className="px-3 py-1.5 text-xs rounded border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
         >
           Last {p.label}
