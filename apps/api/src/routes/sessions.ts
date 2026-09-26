@@ -82,7 +82,7 @@ interface RolloutParsed {
  *  Native 1M tier (per Anthropic docs, cached 2026-09-08):
  *    - Fable 5 / 5.1 (`claude-fable-5*`)
  *    - Mythos 5 / 5.1 (`claude-mythos-5*`)
- *    - Opus 5, 4.8, 4.7, 4.6 (`claude-opus-4-6` and later)
+ *    - Opus 5.5, 5, 4.8, 4.7, 4.6 (`claude-opus-4-6` and later)
  *    - Sonnet 5, 4.6 (`claude-sonnet-4-6` and later)
  *
  *  Native 200K:

@@ -7,7 +7,8 @@ export interface ModelOption {
 
 /** Claude model catalog (Claude 5 + prior generation). */
 export const CLAUDE_MODELS: ModelOption[] = [
-  { value: 'claude-opus-5', label: 'Opus 5 (most capable)' },
+  { value: 'claude-opus-5-5', label: 'Opus 5.5 (most capable)' },
+  { value: 'claude-opus-5', label: 'Opus 5' },
   { value: 'claude-sonnet-5', label: 'Sonnet 5' },
   { value: 'claude-fable-5-1', label: 'Fable 5.1 (fast experimental)' },
   { value: 'claude-fable-5', label: 'Fable 5' },

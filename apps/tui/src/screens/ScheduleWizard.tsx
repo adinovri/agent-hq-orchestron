@@ -27,6 +27,7 @@ const CRON_PRESETS = [
 
 const MODELS = [
   { label: '— project default —', value: '' },
+  { label: 'claude-opus-5-5', value: 'claude-opus-5-5' },
   { label: 'claude-opus-5', value: 'claude-opus-5' },
   { label: 'claude-sonnet-5', value: 'claude-sonnet-5' },
   { label: 'claude-fable-5-1', value: 'claude-fable-5-1' },

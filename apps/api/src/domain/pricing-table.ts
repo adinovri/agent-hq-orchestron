@@ -15,6 +15,7 @@ const HAIKU_TIER:  ModelPricing = { inputPer1M: 0.80, outputPer1M: 4.0,  cacheRe
 
 const PRICING: Record<string, ModelPricing> = {
   // Claude 5 family
+  'claude-opus-5-5':  OPUS_TIER,
   'claude-opus-5':    OPUS_TIER,
   'claude-sonnet-5':  SONNET_TIER,
   'claude-fable-5-1': HAIKU_TIER,    // Fable = fast-tier (best guess until confirmed)
