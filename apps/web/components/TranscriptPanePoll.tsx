@@ -77,7 +77,7 @@ function ResumeMetaEntry({ entry, role }: { entry: Entry; role: ResumeMetaRole }
 }
 
 function EntryView({ entry, uuid, answered, prev }: { entry: Entry; uuid: string; answered: boolean; prev?: Entry }) {
-  const [expanded, setExpanded] = useState(entry.kind !== 'tool_result')
+  const [expanded, setExpanded] = useState(false)
 
   if (entry.kind === 'tool_use' && entry.toolName === 'AskUserQuestion') {
     return <AskUserQuestionCard uuid={uuid} contentJson={entry.content} answered={answered} />
