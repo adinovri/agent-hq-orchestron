@@ -83,7 +83,7 @@ interface RolloutParsed {
  *    - Fable 5 / 5.1 (`claude-fable-5*`)
  *    - Mythos 5 / 5.1 (`claude-mythos-5*`)
  *    - Opus 5.5, 5, 4.8, 4.7, 4.6 (`claude-opus-4-6` and later)
- *    - Sonnet 5, 4.6 (`claude-sonnet-4-6` and later)
+ *    - Sonnet 5.5, 5, 4.6 (`claude-sonnet-4-6` and later)
  *
  *  Native 200K:
  *    - Haiku 4.5 (`claude-haiku-4-5`)
