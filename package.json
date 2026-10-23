@@ -19,13 +19,13 @@
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
+    "react": "19.2.9",
+    "react-dom": "19.2.9",
     "typescript": "^5.5.4",
     "vitest": "^4.1.11"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "dependencies": {
     "@fastify/websocket": "^11.3.0",

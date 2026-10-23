@@ -45,8 +45,9 @@ orchestron doctor
 git clone git@github.com:adinovri/agent-hq-orchestron.git
 cd agent-hq-orchestron
 
-# Node 20 required
-node --version   # v20.x.x
+# Node 22, 24 or 26 — a line that still gets security releases (20 and 25
+# are EOL). The reference server runs 26; .nvmrc pins that.
+node --version   # v22.23.4+, v24.22.1+ or v26.12.1+
 
 # Install deps for all workspaces
 npm install
